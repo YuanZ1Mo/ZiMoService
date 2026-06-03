@@ -1,0 +1,537 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>16.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{86e929aa-9078-43d6-b224-1727991820ca}</ProjectGuid>
+    <RootNamespace>ZiMoService</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
+    <ProjectName>ZiMoService</ProjectName>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v142</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+    <UseOfMfc>false</UseOfMfc>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="Shared">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <LinkIncremental>true</LinkIncremental>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <LinkIncremental>false</LinkIncremental>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath)</IncludePath>
+    <IntDir>temp</IntDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <LinkIncremental>true</LinkIncremental>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <LinkIncremental>false</LinkIncremental>
+    <IntDir>temp\</IntDir>
+    <OutDir>$(SolutionDir)$(Configuration)\</OutDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>NDEBUG;_CONSOLE;ZIMO_SERVICE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <AdditionalIncludeDirectories>.;$(ProjectDir)..\ZiMoPublic\libevent\include;$(ProjectDir)..\ZiMoPublic\openssl\include;$(ProjectDir)..\ZiMoPublic\define;$(ProjectDir)..\ZiMoPublic\dump;$(ProjectDir)..\ZiMoPublic\json;$(ProjectDir)..\ZiMoPublic\net;$(ProjectDir)..\ZiMoPublic\service;$(ProjectDir)..\ZiMoPublic\spdlog;$(ProjectDir)..\ZiMoPublic\ssl;$(ProjectDir)..\ZiMoPublic\tap;$(ProjectDir)..\ZiMoPublic\util;$(ProjectDir)..\ZiMoPublic\websocket;$(ProjectDir)..\ZiMoPublic;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <Optimization>Disabled</Optimization>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <ForcedIncludeFiles>stdafx.h</ForcedIncludeFiles>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <UACExecutionLevel>RequireAdministrator</UACExecutionLevel>
+      <MinimumRequiredVersion>
+      </MinimumRequiredVersion>
+      <AdditionalDependencies>Iphlpapi.lib;ws2_32.lib;wsock32.lib;event.lib;event_core.lib;event_extra.lib;libcrypto.lib;libssl.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(ProjectDir)..\ZiMoPublic\libevent\lib;$(ProjectDir)..\ZiMoPublic\openssl\lib\VC\x86\MT</AdditionalLibraryDirectories>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>NDEBUG;_CONSOLE;ZIMO_SERVICE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <AdditionalIncludeDirectories>.;$(ProjectDir)..\ZiMoPublic;$(ProjectDir)..\ZiMoPublic\libevent\include;$(ProjectDir)..\ZiMoPublic\openssl\include;$(ProjectDir)..\ZiMoPublic\define;$(ProjectDir)..\ZiMoPublic\dump;$(ProjectDir)..\ZiMoPublic\json;$(ProjectDir)..\ZiMoPublic\net;$(ProjectDir)..\ZiMoPublic\service;$(ProjectDir)..\ZiMoPublic\spdlog;$(ProjectDir)..\ZiMoPublic\ssl;$(ProjectDir)..\ZiMoPublic\tap;$(ProjectDir)..\ZiMoPublic\util;$(ProjectDir)..\ZiMoPublic\websocket;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <Optimization>Disabled</Optimization>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(ProjectDir)..\ZiMoPublic\libevent\lib;$(ProjectDir)..\ZiMoPublic\openssl\lib\VC\x64\MT;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>Iphlpapi.lib;ws2_32.lib;wsock32.lib;event.lib;event_core.lib;event_extra.lib;event_openssl.lib;libcrypto.lib;libssl.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <UACExecutionLevel>RequireAdministrator</UACExecutionLevel>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClInclude Include="..\ZiMoPublic\define\zm_simple_define.h" />
+    <ClInclude Include="..\ZiMoPublic\define\zm_version_define.h" />
+    <ClInclude Include="..\ZiMoPublic\json\json.hpp" />
+    <ClInclude Include="..\ZiMoPublic\json\zm_json.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\evconfig-private.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\evdns.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\event.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\event2\buffer.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\event2\bufferevent.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\event2\bufferevent_compat.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\event2\bufferevent_ssl.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\event2\bufferevent_struct.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\event2\buffer_compat.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\event2\dns.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\event2\dns_compat.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\event2\dns_struct.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\event2\event-config.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\event2\event.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\event2\event_compat.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\event2\event_struct.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\event2\http.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\event2\http_compat.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\event2\http_struct.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\event2\keyvalq_struct.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\event2\listener.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\event2\rpc.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\event2\rpc_compat.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\event2\rpc_struct.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\event2\tag.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\event2\tag_compat.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\event2\thread.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\event2\util.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\event2\visibility.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\event2\watch.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\event2\ws.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\evhttp.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\evrpc.h" />
+    <ClInclude Include="..\ZiMoPublic\libevent\include\evutil.h" />
+    <ClInclude Include="..\ZiMoPublic\net\zm_net_dns.h" />
+    <ClInclude Include="..\ZiMoPublic\net\zm_net_http.h" />
+    <ClInclude Include="..\ZiMoPublic\net\zm_net_ip.h" />
+    <ClInclude Include="..\ZiMoPublic\net\zm_net_socket.h" />
+    <ClInclude Include="..\ZiMoPublic\net\zm_net_tap.h" />
+    <ClInclude Include="..\ZiMoPublic\net\zm_net_tap_dnr.h" />
+    <ClInclude Include="..\ZiMoPublic\net\zm_net_tap_hub.h" />
+    <ClInclude Include="..\ZiMoPublic\net\zm_net_tap_jrpc.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\aes.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\asn1.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\asn1err.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\asn1t.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\async.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\asyncerr.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\bio.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\bioerr.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\blowfish.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\bn.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\bnerr.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\buffer.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\buffererr.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\byteorder.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\camellia.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\cast.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\cmac.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\cmp.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\cmperr.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\cmp_util.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\cms.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\cmserr.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\comp.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\comperr.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\conf.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\conferr.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\configuration.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\conftypes.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\conf_api.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\core.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\core_dispatch.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\core_names.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\core_object.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\crmf.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\crmferr.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\crypto.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\cryptoerr.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\cryptoerr_legacy.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\ct.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\cterr.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\decoder.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\decodererr.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\des.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\dh.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\dherr.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\dsa.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\dsaerr.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\dtls1.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\ebcdic.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\ec.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\ecdh.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\ecdsa.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\ecerr.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\ech.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\encoder.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\encodererr.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\engine.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\engineerr.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\err.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\ess.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\esserr.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\evp.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\evperr.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\e_os2.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\e_ostime.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\fipskey.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\fips_names.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\hmac.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\hpke.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\http.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\httperr.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\idea.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\indicator.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\kdf.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\kdferr.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\lhash.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\macros.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\md2.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\md4.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\md5.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\mdc2.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\ml_kem.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\modes.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\objects.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\objectserr.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\obj_mac.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\ocsp.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\ocsperr.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\opensslconf.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\opensslv.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\ossl_typ.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\params.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\param_build.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\pem.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\pem2.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\pemerr.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\pkcs12.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\pkcs12err.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\pkcs7.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\pkcs7err.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\posix_time.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\proverr.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\provider.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\prov_ssl.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\quic.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\rand.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\randerr.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\rc2.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\rc4.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\rc5.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\ripemd.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\rsa.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\rsaerr.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\safestack.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\seed.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\self_test.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\sha.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\srp.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\srtp.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\ssl.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\ssl2.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\ssl3.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\sslerr.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\sslerr_legacy.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\stack.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\store.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\storeerr.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\symhacks.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\thread.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\tls1.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\trace.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\ts.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\tserr.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\txt_db.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\types.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\ui.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\uierr.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\whrlpool.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\x509.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\x509err.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\x509v3.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\x509v3err.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\x509_acert.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\x509_vfy.h" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\__DECC_INCLUDE_EPILOGUE.H" />
+    <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\__DECC_INCLUDE_PROLOGUE.H" />
+    <ClInclude Include="..\ZiMoPublic\service\zm_service_base.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\async.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\async_logger-inl.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\async_logger.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\cfg\argv.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\cfg\env.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\cfg\helpers-inl.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\cfg\helpers.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\common-inl.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\common.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\details\backtracer-inl.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\details\backtracer.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\details\circular_q.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\details\console_globals.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\details\file_helper-inl.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\details\file_helper.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\details\fmt_helper.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\details\log_msg-inl.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\details\log_msg.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\details\log_msg_buffer-inl.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\details\log_msg_buffer.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\details\mpmc_blocking_q.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\details\null_mutex.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\details\os-inl.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\details\os.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\details\periodic_worker-inl.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\details\periodic_worker.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\details\registry-inl.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\details\registry.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\details\synchronous_factory.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\details\tcp_client-windows.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\details\tcp_client.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\details\thread_pool-inl.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\details\thread_pool.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\details\udp_client-windows.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\details\udp_client.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\details\windows_include.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\fmt\bin_to_hex.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\fmt\bundled\args.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\fmt\bundled\base.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\fmt\bundled\chrono.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\fmt\bundled\color.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\fmt\bundled\compile.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\fmt\bundled\core.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\fmt\bundled\format-inl.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\fmt\bundled\format.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\fmt\bundled\os.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\fmt\bundled\ostream.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\fmt\bundled\printf.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\fmt\bundled\ranges.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\fmt\bundled\std.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\fmt\bundled\xchar.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\fmt\chrono.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\fmt\compile.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\fmt\fmt.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\fmt\ostr.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\fmt\ranges.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\fmt\std.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\fmt\xchar.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\formatter.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\fwd.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\logger-inl.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\logger.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\mdc.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\pattern_formatter-inl.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\pattern_formatter.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\android_sink.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\ansicolor_sink-inl.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\ansicolor_sink.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\base_sink-inl.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\base_sink.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\basic_file_sink-inl.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\basic_file_sink.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\callback_sink.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\daily_file_sink.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\dist_sink.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\dup_filter_sink.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\hourly_file_sink.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\kafka_sink.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\mongo_sink.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\msvc_sink.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\null_sink.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\ostream_sink.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\qt_sinks.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\ringbuffer_sink.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\rotating_file_sink-inl.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\rotating_file_sink.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\sink-inl.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\sink.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\stdout_color_sinks-inl.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\stdout_color_sinks.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\stdout_sinks-inl.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\stdout_sinks.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\syslog_sink.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\systemd_sink.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\tcp_sink.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\udp_sink.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\wincolor_sink-inl.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\wincolor_sink.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\sinks\win_eventlog_sink.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\spdlog-inl.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\spdlog.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\stopwatch.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\tweakme.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\version.h" />
+    <ClInclude Include="..\ZiMoPublic\spdlog\zm_logger.h" />
+    <ClInclude Include="..\ZiMoPublic\ssl\zm_ssl_ctx.h" />
+    <ClInclude Include="..\ZiMoPublic\ssl\zm_ssl_fingerprint.h" />
+    <ClInclude Include="..\ZiMoPublic\util\zm_util_container.h" />
+    <ClInclude Include="..\ZiMoPublic\util\zm_util_file.h" />
+    <ClInclude Include="..\ZiMoPublic\util\zm_util_libevent.h" />
+    <ClInclude Include="..\ZiMoPublic\util\zm_util_str.h" />
+    <ClInclude Include="..\ZiMoPublic\util\zm_util_sys.h" />
+    <ClInclude Include="..\ZiMoPublic\util\zm_util_thread.h" />
+    <ClInclude Include="..\ZiMoPublic\util\zm_util_win_os.h" />
+    <ClInclude Include="..\ZiMoPublic\websocket\zm_websocket_server.h" />
+    <ClInclude Include="..\ZiMoPublic\websocket\zm_websocket_utils.h" />
+    <ClInclude Include="control_module.h" />
+    <ClInclude Include="dock_runloop.h" />
+    <ClInclude Include="http_server.h" />
+    <ClInclude Include="message_callback.h" />
+    <ClInclude Include="message_server.h" />
+    <ClInclude Include="name_define.h" />
+    <ClInclude Include="net_dock.h" />
+    <ClInclude Include="resource.h" />
+    <ClInclude Include="service_center.h" />
+    <ClInclude Include="service_global.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\ZiMoPublic\net\zm_net_dns.cpp" />
+    <ClCompile Include="..\ZiMoPublic\net\zm_net_http.cpp" />
+    <ClCompile Include="..\ZiMoPublic\net\zm_net_ip.cpp" />
+    <ClCompile Include="..\ZiMoPublic\net\zm_net_socket.cpp" />
+    <ClCompile Include="..\ZiMoPublic\net\zm_net_tap.cpp" />
+    <ClCompile Include="..\ZiMoPublic\net\zm_net_tap_dnr.cpp" />
+    <ClCompile Include="..\ZiMoPublic\net\zm_net_tap_hub.cpp" />
+    <ClCompile Include="..\ZiMoPublic\net\zm_net_tap_jrpc.cpp" />
+    <ClCompile Include="..\ZiMoPublic\openssl\include\openssl\applink.c" />
+    <ClCompile Include="..\ZiMoPublic\service\zm_service_base.cpp" />
+    <ClCompile Include="..\ZiMoPublic\spdlog\zm_logger.cpp" />
+    <ClCompile Include="..\ZiMoPublic\ssl\zm_ssl_ctx.cpp" />
+    <ClCompile Include="..\ZiMoPublic\ssl\zm_ssl_fingerprint.cpp" />
+    <ClCompile Include="..\ZiMoPublic\util\zm_util_container.cpp" />
+    <ClCompile Include="..\ZiMoPublic\util\zm_util_file.cpp" />
+    <ClCompile Include="..\ZiMoPublic\util\zm_util_libevent.cpp" />
+    <ClCompile Include="..\ZiMoPublic\util\zm_util_str.cpp" />
+    <ClCompile Include="..\ZiMoPublic\util\zm_util_sys.cpp" />
+    <ClCompile Include="..\ZiMoPublic\util\zm_util_thread.cpp" />
+    <ClCompile Include="..\ZiMoPublic\util\zm_util_win_os.cpp" />
+    <ClCompile Include="..\ZiMoPublic\websocket\zm_websocket_server.cpp" />
+    <ClCompile Include="..\ZiMoPublic\websocket\zm_websocket_utils.cpp" />
+    <ClCompile Include="control_module.cpp" />
+    <ClCompile Include="dock_runloop.cpp" />
+    <ClCompile Include="http_server.cpp" />
+    <ClCompile Include="message_callback.cpp" />
+    <ClCompile Include="message_server.cpp" />
+    <ClCompile Include="net_dock.cpp" />
+    <ClCompile Include="service_center.cpp" />
+    <ClCompile Include="service_global.cpp" />
+    <ClCompile Include="service_main.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="resource.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="resource\images\icon\haro_icon.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\ZiMoPublic\spdlog\README.md" />
+    <None Include="..\ZiMoPublic\spdlog\spdlog_guide.md" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>
