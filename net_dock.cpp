@@ -177,6 +177,7 @@ void NetDock::OpenHttpServer()
     {
         _tapDelegate_JRPC = new ZmTapDelegateJRPC();
         _tapDelegate_JRPC->StartTapDelegate(nullptr, nullptr, nullptr, ZM_DELEGATE_MODE_PROXY_INTERNAL_JRPC);
+        _tapDelegate_JRPC->SetJrpcRequsetReadCB(_tapDelegateJrpcRequsetReadCB);
     }
 
     if (nullptr == _tapDomainNameResolver)

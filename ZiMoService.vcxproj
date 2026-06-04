@@ -479,14 +479,12 @@
     <ClInclude Include="..\ZiMoPublic\websocket\zm_websocket_utils.h" />
     <ClInclude Include="control_module.h" />
     <ClInclude Include="dock_runloop.h" />
-    <ClInclude Include="http_server.h" />
-    <ClInclude Include="message_callback.h" />
-    <ClInclude Include="message_server.h" />
     <ClInclude Include="name_define.h" />
     <ClInclude Include="net_dock.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="service_center.h" />
     <ClInclude Include="service_global.h" />
+    <ClInclude Include="service_portal.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\ZiMoPublic\net\zm_net_dns.cpp" />
@@ -513,13 +511,11 @@
     <ClCompile Include="..\ZiMoPublic\websocket\zm_websocket_utils.cpp" />
     <ClCompile Include="control_module.cpp" />
     <ClCompile Include="dock_runloop.cpp" />
-    <ClCompile Include="http_server.cpp" />
-    <ClCompile Include="message_callback.cpp" />
-    <ClCompile Include="message_server.cpp" />
     <ClCompile Include="net_dock.cpp" />
     <ClCompile Include="service_center.cpp" />
     <ClCompile Include="service_global.cpp" />
     <ClCompile Include="service_main.cpp" />
+    <ClCompile Include="service_portal.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="resource.rc" />

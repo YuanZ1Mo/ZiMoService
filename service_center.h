@@ -3,7 +3,11 @@
 
 #include "zm_service_base.h"
 #include "name_define.h"
-#include "net_dock.h"
+
+
+class NetDock;
+class ServicePortal;
+
 
 // ZiMo 服务主控中心
 // 管理消息服务、会话变更、电源事件、关机等生命周期
@@ -46,6 +50,7 @@ private:
 
 private:
     NetDock* m_netDock;
+    ServicePortal* m_servicePortal;
 };
 
 #endif // SERVICE_CENTER_H_

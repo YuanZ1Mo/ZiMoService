@@ -5,6 +5,9 @@
 #include "zm_net_socket.h"
 #include "zm_logger.h"
 
+#include "net_dock.h"
+#include "service_portal.h"
+
 #include <Wtsapi32.h>
 #pragma comment(lib, "Wtsapi32.lib")
 
@@ -54,8 +57,13 @@ void ServiceCenter::OnStart(DWORD /*argc*/, TCHAR** /*argv[]*/)
     //initMessageServer();
     //initHttpServer();
 
+    m_servicePortal = new ServicePortal();
+
+
     m_netDock = new NetDock();
     m_netDock->Init();
+    m_netDock->SetJrpcRequsetReadCB(std::bind(&ServicePortal::JrpcRequsetReadCB, m_servicePortal,
+        std::placeholders::_1, std::placeholders::_2));
     m_netDock->OpenWebSocketServer();
     m_netDock->OpenHttpServer();
 }

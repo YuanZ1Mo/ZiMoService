@@ -27,7 +27,10 @@ public:
     void OpenHttpServer();
     void CloseHttpServer();
 
-
+    void SetJrpcRequsetReadCB(TapDelegateJrpcRequsetReadCB cb)
+    {
+        _tapDelegateJrpcRequsetReadCB = cb;
+    }
 
 
     /** 调度到_dock_runloop创建的LibEvent主线程中执行 */
@@ -62,7 +65,7 @@ private:
     ZmTapHubProxy* _tapHubProxy;
     uint16_t _hubProxyPort;
 
-
+    TapDelegateJrpcRequsetReadCB _tapDelegateJrpcRequsetReadCB;
 };
 
 #endif // NET_DOCK_H
