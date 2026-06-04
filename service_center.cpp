@@ -62,7 +62,7 @@ void ServiceCenter::OnStart(DWORD /*argc*/, TCHAR** /*argv[]*/)
 
     m_netDock = new NetDock();
     m_netDock->Init();
-    m_netDock->SetJrpcRequsetReadCB(std::bind(&ServicePortal::JrpcRequsetReadCB, m_servicePortal,
+    m_netDock->SetJrpcRequestReadCB(std::bind(&ServicePortal::JrpcRequestReadCB, m_servicePortal,
         std::placeholders::_1, std::placeholders::_2));
     m_netDock->OpenWebSocketServer();
     m_netDock->OpenHttpServer();

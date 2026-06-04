@@ -26,9 +26,9 @@ public:
     void OpenHttpServer();
     void CloseHttpServer();
 
-    void SetJrpcRequsetReadCB(TapDelegateJrpcRequsetReadCB cb)
+    void SetJrpcRequestReadCB(TapDelegateJrpcRequestReadCB cb)
     {
-        _tapDelegateJrpcRequsetReadCB = cb;
+        _tapDelegateJrpcRequestReadCB = cb;
     }
 
 
@@ -63,7 +63,7 @@ private:
     ZmTapHubProxy* _tapHubProxy;
     uint16_t _hubProxyPort;
 
-    TapDelegateJrpcRequsetReadCB _tapDelegateJrpcRequsetReadCB;
+    TapDelegateJrpcRequestReadCB _tapDelegateJrpcRequestReadCB;
 };
 
 #endif // NET_DOCK_H

@@ -10,7 +10,7 @@ public:
 
 
 public:
-	void JrpcRequsetReadCB(ZM_TAP_CTX* tap, const char* reqData);
+	void JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData);
 
 
 private:

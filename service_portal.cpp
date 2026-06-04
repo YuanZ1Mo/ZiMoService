@@ -31,7 +31,7 @@ void ServicePortal::Response(ZM_TAP_CTX* tap, const ZMJSON& jsResult)
     }
 }
 
-void ServicePortal::JrpcRequsetReadCB(ZM_TAP_CTX* tap, const char* reqData)
+void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 {
 
     ZMJSON rsp = { { "isOk", 1 } };
