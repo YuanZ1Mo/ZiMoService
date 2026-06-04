@@ -177,9 +177,6 @@
     <ClCompile Include="dock_runloop.cpp">
       <Filter>头文件</Filter>
     </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_tap_dnr.cpp">
-      <Filter>源文件\Public\net</Filter>
-    </ClCompile>
     <ClCompile Include="..\ZiMoPublic\net\zm_net_tap_hub.cpp">
       <Filter>源文件\Public\net</Filter>
     </ClCompile>
@@ -1134,9 +1131,6 @@
       <Filter>头文件\Public\net</Filter>
     </ClInclude>
     <ClInclude Include="..\ZiMoPublic\net\zm_net_tap_jrpc.h">
-      <Filter>头文件\Public\net</Filter>
-    </ClInclude>
-    <ClInclude Include="..\ZiMoPublic\net\zm_net_tap_dnr.h">
       <Filter>头文件\Public\net</Filter>
     </ClInclude>
     <ClInclude Include="service_portal.h">

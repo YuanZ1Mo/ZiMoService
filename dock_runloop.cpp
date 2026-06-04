@@ -4,6 +4,8 @@
 //#include "zm_simple_define.h"
 #include "zm_util_sys.h"
 #include "zm_util_libevent.h"
+#include "zm_net_dns.h"
+#include "zm_util_str.h"
 
 
 enum { CONTROL_LOOP_SUCCESS = 0x0200, };
@@ -114,6 +116,31 @@ void DockRunLoop::Run()
         event_active(_eventCtrl, CONTROL_LOOP_SUCCESS, 0);
 
         _evdnsbase = evdns_base_new(_evbase, 0);
+
+        // 从系统获取 DNS 服务器并配置到 evdns_base，使 evdns_getaddrinfo 可正常工作
+        {
+            std::string dns_addrs = ZmNetDNS::GetDNSAddresses();
+            if (!dns_addrs.empty())
+            {
+                char* addrs_buf = _strdup(dns_addrs.c_str());
+                if (addrs_buf)
+                {
+                    char* cursor = addrs_buf;   // zm_strsep 会修改它
+                    char* token = zm_strsep(&cursor, ",");
+                    while (token)
+                    {
+                        while (*token == ' ') token++;
+                        if (*token)
+                        {
+                            evdns_base_nameserver_ip_add(_evdnsbase, token);
+                            DEFAULT_LOG_INFO("Add DNS nameserver to evdns_base: {}", token);
+                        }
+                        token = zm_strsep(&cursor, ",");
+                    }
+                    free(addrs_buf);
+                }
+            }
+        }
 
         //EV_PERSIST保证定时器循环触发
         _eventTimer = event_new(_evbase, -1, EV_TIMEOUT | EV_PERSIST, DockRunLoop::OnTimerCB, nullptr);

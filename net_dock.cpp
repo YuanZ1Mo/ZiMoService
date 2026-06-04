@@ -176,13 +176,9 @@ void NetDock::OpenHttpServer()
     if (nullptr == _tapDelegate_JRPC)
     {
         _tapDelegate_JRPC = new ZmTapDelegateJRPC();
-        _tapDelegate_JRPC->StartTapDelegate(nullptr, nullptr, nullptr, ZM_DELEGATE_MODE_PROXY_INTERNAL_JRPC);
+        _tapDelegate_JRPC->SetEvDns(_evdnsbase);
+        _tapDelegate_JRPC->StartTapDelegate(_evbase, ZM_DELEGATE_MODE_PROXY_INTERNAL_JRPC);
         _tapDelegate_JRPC->SetJrpcRequsetReadCB(_tapDelegateJrpcRequsetReadCB);
-    }
-
-    if (nullptr == _tapDomainNameResolver)
-    {
-        _tapDomainNameResolver = new ZmTapDomainNameResolver(); 
     }
 
     if (nullptr == _tapHubProxy)
@@ -194,8 +190,8 @@ void NetDock::OpenHttpServer()
 
         _tapHubProxy = new ZmTapHubProxy();
         _tapHubProxy->SetJrpcDelegate(_tapDelegate_JRPC);
-        _tapHubProxy->SetDomainNameResolver(_tapDomainNameResolver);
-        _tapHubProxy->StartTapDelegate(_tapContext, _evbase, _evdnsbase, ZM_DELEGATE_MODE_PROXY_INTERNAL_HUB);
+        _tapHubProxy->SetEvDns(_evdnsbase);
+        _tapHubProxy->StartTapDelegate(_tapContext, _evbase, ZM_DELEGATE_MODE_PROXY_INTERNAL_HUB);
         _hubProxyPort = _tapHubProxy->AddDummpy(0);
     }
 

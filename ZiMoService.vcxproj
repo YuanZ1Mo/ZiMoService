@@ -211,7 +211,7 @@
     <ClInclude Include="..\ZiMoPublic\net\zm_net_ip.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_socket.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_tap.h" />
-    <ClInclude Include="..\ZiMoPublic\net\zm_net_tap_dnr.h" />
+
     <ClInclude Include="..\ZiMoPublic\net\zm_net_tap_hub.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_tap_jrpc.h" />
     <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\aes.h" />
@@ -492,7 +492,7 @@
     <ClCompile Include="..\ZiMoPublic\net\zm_net_ip.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_socket.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_tap.cpp" />
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_tap_dnr.cpp" />
+
     <ClCompile Include="..\ZiMoPublic\net\zm_net_tap_hub.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_tap_jrpc.cpp" />
     <ClCompile Include="..\ZiMoPublic\openssl\include\openssl\applink.c" />

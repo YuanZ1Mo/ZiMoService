@@ -10,7 +10,6 @@
 #include "dock_runloop.h"
 
 #include "zm_net_tap_hub.h"
-#include "zm_net_tap_dnr.h"
 #include "zm_net_tap_jrpc.h"
 
 class NetDock
@@ -61,7 +60,6 @@ private:
 
 
     ZmTapDelegateJRPC* _tapDelegate_JRPC;
-    ZmTapDomainNameResolver* _tapDomainNameResolver;
     ZmTapHubProxy* _tapHubProxy;
     uint16_t _hubProxyPort;
 
