@@ -59,13 +59,13 @@ void NetDock::CloseWebSocketServer()
 }
 
 
-/** Dispatch JSONRpc into LibEvent main thread，复用持久连接减少 TCP 握手开销 */
+/** Dispatch JSONRpc into LibEvent main thread */
 bool NetDock::SendToHubProxy(const char* reqjs, std::string& rspjs)
 {
-    std::lock_guard<std::mutex> lock(_hubConnMutex);
+    ZmNetSocketTCP conn;
+    const char* host = "127.0.0.1";
 
-    /** 连接不存在或已断开时自动重连 */
-    if (!_hubConn.IsConnected() && !_hubConn.Open("127.0.0.1", _hubProxyPort))
+    if (!conn.Open(host, _hubProxyPort))
     {
         DEFAULT_LOG_ERROR("Connect HubProxy failed");
         return false;
@@ -77,19 +77,17 @@ bool NetDock::SendToHubProxy(const char* reqjs, std::string& rspjs)
     uint32_t         qlen = (uint32_t)strlen(reqjs);
     msgh->len = (uint32_t)htonl(qlen);
 
-    if (_hubConn.Send(head, 8) < 0 || _hubConn.Send(reqjs, qlen) < 0)
+    if (conn.Send(head, 8) < 0 || conn.Send(reqjs, qlen) < 0)
     {
-        DEFAULT_LOG_ERROR("Socket send failed, closing persistent connection");
-        _hubConn.Close();
+        DEFAULT_LOG_ERROR("Socket send failed, sendCode");
         return false;
     }
 
     /** 使用 RecvAll 循环读取防止 TCP 分包导致只读到部分长度头 */
     uint32_t rsp_len = 0;
-    if (4 != _hubConn.RecvAll(&rsp_len, 4))
+    if (4 != conn.RecvAll(&rsp_len, 4))
     {
         DEFAULT_LOG_ERROR("Receive response header failed");
-        _hubConn.Close();
         return false;
     }
 
@@ -98,14 +96,12 @@ bool NetDock::SendToHubProxy(const char* reqjs, std::string& rspjs)
     if (rsp_len > ZM_BUF_SIZE_4M)
     {
         DEFAULT_LOG_ERROR("Response too large: {} bytes (max {})", rsp_len, (size_t)ZM_BUF_SIZE_4M);
-        _hubConn.Close();
         return false;
     }
     ZmByteBuffer buf(rsp_len);
-    if ((int)rsp_len != _hubConn.RecvAll(buf.Head(), rsp_len))
+    if ((int)rsp_len != conn.RecvAll(buf.Head(), rsp_len))
     {
         DEFAULT_LOG_ERROR("Receive response body failed");
-        _hubConn.Close();
         return false;
     }
 
