@@ -4,6 +4,7 @@
 #include "zm_websocket_server.h"
 #include "zm_net_http.h"
 
+#include <mutex>
 
 #include "service_global.h"
 
@@ -11,6 +12,7 @@
 
 #include "zm_net_tap_hub.h"
 #include "zm_net_tap_jrpc.h"
+#include "zm_net_socket.h"
 
 class NetDock
 {
@@ -64,6 +66,9 @@ private:
     uint16_t _hubProxyPort;
 
     TapDelegateJrpcRequestReadCB _tapDelegateJrpcRequestReadCB;
+
+    ZmNetSocketTCP _hubConn;        /** 到 Hub 代理的持久连接，减少每请求 TCP 握手开销 */
+    std::mutex     _hubConnMutex;   /** 序列化对 _hubConn 的访问 */
 };
 
 #endif // NET_DOCK_H

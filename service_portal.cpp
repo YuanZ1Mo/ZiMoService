@@ -27,7 +27,7 @@ void ServicePortal::Response(ZM_TAP_CTX* tap, const ZMJSON& jsResult)
     }
     else
     {
-        tap->tap_context->Drop(tap);
+        tap->Drop();
     }
 }
 
