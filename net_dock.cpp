@@ -24,14 +24,29 @@ void NetDock::UnInit()
     m_unInited = true;
 
     // ★ 关闭顺序严格不可变：
-    //   ① 前端服务器先停 — 不再产生新的请求（Worker 线程终止，不再有 SendToHubProxy 调用）
+    //   ① 前端服务器先停 — 不再产生新的请求（Worker 线程终止，不再有 ScheduleTaskInLoop 调用）
     //   ② Hub 路由层再停 — 释放 TAP 组件（其 event/bufferevent 均注册在 _evbase 上）
-    //   ③ DockRunLoop 最后停 — 退出事件循环，freeEventObjects 安全清理 _evbase
+    //   ③ 取消残留的调度任务 — 释放未触发的 ctx（正常情况此集合已空，兜底用）
+    //   ④ DockRunLoop 最后停 — 退出事件循环，freeEventObjects 安全清理 _evbase
     CloseHttpJsonRpcServer();
     CloseSocks5Server();
     CloseWebSocketServer();
 
     CloseHub();
+
+    // 前端已停，不会再有新的 ScheduleTaskInLoop 调用。清理可能残留的 ctx
+    {
+        std::lock_guard<std::mutex> lock(m_scheduleMutex);
+        for (auto* ctx : m_pendingScheduleCtx)
+        {
+            if (ctx->ev_schedule)
+            {
+                event_free(ctx->ev_schedule);
+            }
+            delete ctx;
+        }
+        m_pendingScheduleCtx.clear();
+    }
 
     if (m_dockRunloop)
     {
@@ -142,58 +157,62 @@ void NetDock::SetJrpcRequestReadCB(TapDelegateJrpcRequestReadCB cb)
     m_jrpcRequestReadCB = cb;
 }
 
-typedef struct struct_schedule_ctx
-{
-    event* ev_schedule;
-    std::function<void(void*)>  fn_run;
-    std::function<void(void*)>  fn_cb;
-    void* param;
-
-    // 默认构造函数
-    struct_schedule_ctx() {
-        ev_schedule = nullptr;
-        param = nullptr;
-    }
-
-}ZM_SCHEDULE_CTX;
-
 bool NetDock::ScheduleTaskInLoop(std::function<void(void*)> fn_run, std::function<void(void*)> fn_cb, void* param)
 {
     if (m_dockRunloop->IsLooped())
     {
         ZM_SCHEDULE_CTX* ctx = new ZM_SCHEDULE_CTX();
+        ctx->ev_schedule = nullptr;
         ctx->fn_run = fn_run;
         ctx->fn_cb = fn_cb;
         ctx->param = param;
+        ctx->owner = this;
+
         // fd=-1 表示纯手动触发事件，events=0 不监听任何 I/O
         ctx->ev_schedule = event_new(m_evbase,
             -1, 0, NetDock::OnScheduleEventCB, ctx);
         event_add(ctx->ev_schedule, NULL);
-        // 立即激活一次性调度事件，EV_TIMEOUT 表示用后即弃
+
+        // 记录到 pending 集合，供 UnInit 在关闭前取消未触发的任务
+        {
+            std::lock_guard<std::mutex> lock(m_scheduleMutex);
+            m_pendingScheduleCtx.insert(ctx);
+        }
+
+        // 立即激活一次性调度事件
         event_active(ctx->ev_schedule, EV_TIMEOUT, 0);
-        /** TODO: 需要将ctx存储起来，以便事件还未触发时可取消和删除 */
         return true;
     }
     return false;
 }
 
-void NetDock::OnScheduleEventCB(evutil_socket_t fd, short what, void* ctx)
+void NetDock::OnScheduleEventCB(evutil_socket_t fd, short what, void* pctx)
 {
-    if (ctx)
+    if (!pctx)
+        return;
+
+    ZM_SCHEDULE_CTX* scheduleCtx = (ZM_SCHEDULE_CTX*)pctx;
+    NetDock* self = (NetDock*)scheduleCtx->owner;
+
+    // 从 pending 集合移除
+    if (self)
     {
-        ZM_SCHEDULE_CTX* scheduleCtx = (ZM_SCHEDULE_CTX*)ctx;
-        if (scheduleCtx->ev_schedule)
-        {
-            event_free(scheduleCtx->ev_schedule);
-        }
-        if (scheduleCtx->fn_run)
-        {
-            scheduleCtx->fn_run(scheduleCtx->param);
-        }
-        if (scheduleCtx->fn_cb)
-        {
-            scheduleCtx->fn_cb(scheduleCtx->param);
-        }
-        delete scheduleCtx;
+        std::lock_guard<std::mutex> lock(self->m_scheduleMutex);
+        self->m_pendingScheduleCtx.erase(scheduleCtx);
     }
+
+    // 执行任务
+    if (scheduleCtx->ev_schedule)
+    {
+        event_free(scheduleCtx->ev_schedule);
+    }
+    if (scheduleCtx->fn_run)
+    {
+        scheduleCtx->fn_run(scheduleCtx->param);
+    }
+    if (scheduleCtx->fn_cb)
+    {
+        scheduleCtx->fn_cb(scheduleCtx->param);
+    }
+    delete scheduleCtx;
 }

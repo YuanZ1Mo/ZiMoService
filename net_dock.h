@@ -6,6 +6,9 @@
 #include "hub_proxy_manager.h"
 #include "http_jsonrpc_manager.h"
 
+#include <mutex>
+#include <unordered_set>
+
 /**
  * @brief 网络层生命周期编排者
  *
@@ -64,6 +67,16 @@ private:
     /** @brief 调度事件回调，在 libevent 线程中执行 fn_run → fn_cb 后释放 ctx */
     static void OnScheduleEventCB(evutil_socket_t fd, short what, void* ctx);
 
+    /** @brief 调度任务上下文，event_new → OnScheduleEventCB → delete */
+    typedef struct ZM_SCHEDULE_CTX
+    {
+        event*                      ev_schedule;     ///< libevent 调度事件
+        std::function<void(void*)>  fn_run;          ///< 在事件循环线程执行的任务
+        std::function<void(void*)>  fn_cb;           ///< 任务完成后的回调
+        void*                       param;           ///< 透传参数
+        void*                       owner;           ///< NetDock*，用于回调中访问 pending 集合
+    } ZM_SCHEDULE_CTX;
+
     DockRunLoop*           m_dockRunloop;         ///< libevent 事件循环线程
     event_base*            m_evbase;              ///< 缓存的 event_base（从 DockRunLoop 获取）
     MessageServerManager*  m_messageServerMgr;    ///< WebSocket 服务器管理器
@@ -71,6 +84,9 @@ private:
     HttpJsonRpcManager*    m_httpJsonRpcMgr;      ///< HTTP JSON-RPC 前端
     TapDelegateJrpcRequestReadCB m_jrpcRequestReadCB;  ///< JRPC 外部回调，OpenHub 时注入
     bool                   m_unInited;            ///< 防止 UnInit 重复执行
+
+    std::mutex                    m_scheduleMutex;       ///< 保护 m_pendingScheduleCtx
+    std::unordered_set<ZM_SCHEDULE_CTX*> m_pendingScheduleCtx;  ///< 未触发的调度任务
 };
 
 #endif // NET_DOCK_H
