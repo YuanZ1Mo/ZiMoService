@@ -58,9 +58,15 @@ void ServiceCenter::OnStart(DWORD /*argc*/, TCHAR** /*argv[]*/)
 
     m_servicePortal = new ServicePortal();
 
-
     m_netDock = new NetDock();
     m_netDock->Init();
+
+    // 将 libevent 线程调度能力注入 ServicePortal，支持异步 JRPC 响应
+    // 业务层在 Worker 线程中处理完成后，通过 ResponseResultAsync 安全回写响应
+    m_servicePortal->SetScheduleFn(
+        std::bind(&NetDock::ScheduleTaskInLoop, m_netDock,
+            std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+
     m_netDock->SetJrpcRequestReadCB(std::bind(&ServicePortal::JrpcRequestReadCB, m_servicePortal,
         std::placeholders::_1, std::placeholders::_2));
     m_netDock->OpenWebSocketServer();
@@ -71,9 +77,14 @@ void ServiceCenter::OnStart(DWORD /*argc*/, TCHAR** /*argv[]*/)
 void ServiceCenter::OnStop()
 {
     // ★ 关闭顺序：
-    //   ① NetDock 先释放 — 内部按 前端→Hub→DockRunLoop 顺序清理
+    //   ① 先清除 ServicePortal 的 ScheduleFn — 防止 NetDock 析构后
+    //      仍在执行的异步任务通过悬空 std::function 访问已释放的 NetDock
+    //   ② NetDock 释放 — 内部按 前端→Hub→DockRunLoop 顺序清理
     //      TAP delegate 销毁后不再持有 JrpcRequestReadCB 回调
-    //   ② ServicePortal 后释放 — 此时回调已无持有者，安全删除
+    //   ③ ServicePortal 释放 — 此时回调已无持有者，安全删除
+    if (m_servicePortal)
+        m_servicePortal->SetScheduleFn(nullptr);
+
     if (m_netDock)
     {
         delete m_netDock;
