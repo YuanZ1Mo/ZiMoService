@@ -166,6 +166,13 @@
       <AdditionalDependencies>Iphlpapi.lib;ws2_32.lib;wsock32.lib;event.lib;event_core.lib;event_extra.lib;event_openssl.lib;libcrypto.lib;libssl.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <UACExecutionLevel>RequireAdministrator</UACExecutionLevel>
     </Link>
+    <CustomBuildStep>
+      <Command>
+      </Command>
+    </CustomBuildStep>
+    <PreBuildEvent>
+      <Command>sc stop ZM_Svc</Command>
+    </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="..\ZiMoPublic\define\zm_simple_define.h" />
@@ -211,7 +218,6 @@
     <ClInclude Include="..\ZiMoPublic\net\zm_net_ip.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_socket.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_tap.h" />
-
     <ClInclude Include="..\ZiMoPublic\net\zm_net_tap_hub.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_tap_jrpc.h" />
     <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\aes.h" />
@@ -480,6 +486,8 @@
     <ClInclude Include="control_module.h" />
     <ClInclude Include="dock_runloop.h" />
     <ClInclude Include="name_define.h" />
+    <ClInclude Include="http_jsonrpc_manager.h" />
+    <ClInclude Include="message_server_manager.h" />
     <ClInclude Include="net_dock.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="service_center.h" />
@@ -492,7 +500,6 @@
     <ClCompile Include="..\ZiMoPublic\net\zm_net_ip.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_socket.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_tap.cpp" />
-
     <ClCompile Include="..\ZiMoPublic\net\zm_net_tap_hub.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_tap_jrpc.cpp" />
     <ClCompile Include="..\ZiMoPublic\openssl\include\openssl\applink.c" />
@@ -511,6 +518,8 @@
     <ClCompile Include="..\ZiMoPublic\websocket\zm_websocket_utils.cpp" />
     <ClCompile Include="control_module.cpp" />
     <ClCompile Include="dock_runloop.cpp" />
+    <ClCompile Include="http_jsonrpc_manager.cpp" />
+    <ClCompile Include="message_server_manager.cpp" />
     <ClCompile Include="net_dock.cpp" />
     <ClCompile Include="service_center.cpp" />
     <ClCompile Include="service_global.cpp" />

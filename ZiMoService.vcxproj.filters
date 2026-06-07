@@ -171,20 +171,26 @@
     <ClCompile Include="..\ZiMoPublic\net\zm_net_tap.cpp">
       <Filter>源文件\Public\net</Filter>
     </ClCompile>
-    <ClCompile Include="net_dock.cpp">
-      <Filter>头文件</Filter>
-    </ClCompile>
-    <ClCompile Include="dock_runloop.cpp">
-      <Filter>头文件</Filter>
-    </ClCompile>
     <ClCompile Include="..\ZiMoPublic\net\zm_net_tap_hub.cpp">
       <Filter>源文件\Public\net</Filter>
     </ClCompile>
     <ClCompile Include="..\ZiMoPublic\net\zm_net_tap_jrpc.cpp">
       <Filter>源文件\Public\net</Filter>
     </ClCompile>
+    <ClCompile Include="dock_runloop.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
     <ClCompile Include="service_portal.cpp">
-      <Filter>头文件</Filter>
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="http_jsonrpc_manager.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="message_server_manager.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="net_dock.cpp">
+      <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -1117,6 +1123,12 @@
     </ClInclude>
     <ClInclude Include="..\ZiMoPublic\net\zm_net_tap.h">
       <Filter>头文件\Public\net</Filter>
+    </ClInclude>
+    <ClInclude Include="http_jsonrpc_manager.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="message_server_manager.h">
+      <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="net_dock.h">
       <Filter>头文件</Filter>
