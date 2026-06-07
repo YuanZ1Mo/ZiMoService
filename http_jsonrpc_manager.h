@@ -6,16 +6,21 @@
 #include "zm_net_tap_jrpc.h"
 #include "zm_net_http.h"
 
+#include <event2/util.h>
+
 /**
  * @brief HTTP JSON-RPC 管道管理器
  *
  * 管理从 HTTP 服务器到 TAP Hub 代理的完整请求处理管道：
- *   ZmJsonRpcServer → OnHttpJsonrpcEx → SendToHubProxy（TCP 短连接）
+ *   ZmJsonRpcServer → OnHttpJsonrpcEx → SendToHubProxy（bufferevent pair 进程内交付）
  *     → ZmTapHubProxy → ZmTapDelegateJRPC → 外部回调
  */
 class HttpJsonRpcManager
 {
 public:
+    /** @brief 在事件循环线程中执行任务的回调类型 */
+    using ScheduleFn = std::function<bool(std::function<void(void*)>, std::function<void(void*)>, void*)>;
+
     HttpJsonRpcManager();
     ~HttpJsonRpcManager();
 
@@ -29,6 +34,10 @@ public:
     bool Open(event_base* evbase, evdns_base* evdnsbase,
               TapDelegateJrpcRequestReadCB cb);
 
+    /** @brief 设置事件循环线程调度回调，用于 SendToHubProxy 中跨线程交付 bufferevent
+     *  @param fn 调度函数，签名与 NetDock::ScheduleTaskInLoop 一致 */
+    void SetScheduleFn(ScheduleFn fn) { m_scheduleFn = fn; }
+
     /** @brief 关闭管道：释放 HTTP 服务器和所有 TAP 组件 */
     void Close();
 
@@ -40,7 +49,7 @@ private:
     int OnHttpJsonrpcEx(ZmHttpdTask* task, const std::string& method,
                         const ZMJSON& params, ZMJSON& result, ZMJSON& error);
 
-    /** @brief 通过 TCP 短连接向本地 Hub Proxy 发送 JRPC 请求并等待响应
+    /** @brief 通过 bufferevent pair 向 Hub Proxy 交付 JRPC 请求并等待响应
      *  @param reqjs  请求 JSON 字符串
      *  @param rspjs  输出：响应 JSON 字符串
      *  @return true 成功，false 失败 */
@@ -55,6 +64,7 @@ private:
 
     event_base*         m_evbase;            ///< 外部传入的 libevent 事件循环基
     evdns_base*         m_evdnsbase;         ///< 外部传入的 libevent DNS 解析基
+    ScheduleFn          m_scheduleFn;        ///< 事件循环线程调度回调
 };
 
 #endif // HTTP_JSONRPC_MANAGER_H

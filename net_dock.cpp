@@ -59,6 +59,10 @@ void NetDock::OpenHttpServer()
     if (!m_httpJsonRpcMgr)
     {
         m_httpJsonRpcMgr = new HttpJsonRpcManager();
+        // 注入事件循环调度能力，使 HttpJsonRpcManager 可以跨线程交付 bufferevent
+        m_httpJsonRpcMgr->SetScheduleFn(
+            std::bind(&NetDock::ScheduleTaskInLoop, this,
+                std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
         m_httpJsonRpcMgr->Open(
             m_evbase,
             m_dockRunloop->GetEventDnsBase(),

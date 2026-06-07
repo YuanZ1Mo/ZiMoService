@@ -4,6 +4,9 @@
 #include "zm_net_socket.h"
 #include "zm_logger.h"
 
+#include <mutex>
+#include <condition_variable>
+
 HttpJsonRpcManager::HttpJsonRpcManager()
     : m_tapContext(nullptr)
     , m_tapDelegateJRPC(nullptr)
@@ -103,57 +106,105 @@ void HttpJsonRpcManager::Close()
     m_evdnsbase = nullptr;
 }
 
-/** 通过 TCP 短连接向本地 Hub Proxy 发送 JRPC 请求并等待响应 */
+/**
+ * @brief 通过 bufferevent pair 向 Hub Proxy 交付 JRPC 请求并等待响应
+ *
+ * 使用 evutil_socketpair 创建一对互联 socket，替代原来的 TCP 短连接：
+ *   fd[0] — Worker 线程端：写入请求、读取响应
+ *   fd[1] — 事件循环线程端：注入 Hub Proxy，按正常 TAP 管道处理
+ *
+ * 相比 TCP 短连接的收益：
+ *   1. 无 TCP 三次握手 / 四次挥手
+ *   2. 无端口耗尽风险（不走 listen backlog）
+ *   3. 数据在 kernel socket buffer 中传递，零网络栈开销
+ */
 bool HttpJsonRpcManager::SendToHubProxy(const char* reqjs, std::string& rspjs)
 {
-    if (0 == m_hubProxyPort)
+    if (!m_scheduleFn)
     {
-        DEFAULT_LOG_ERROR("HubProxy port not ready");
+        DEFAULT_LOG_ERROR("Schedule function not set, cannot deliver request");
         return false;
     }
 
-    ZmNetSocketTCP conn;
-    const char* host = "127.0.0.1";
-
-    if (!conn.Open(host, m_hubProxyPort))
+    // 1. 创建 socket pair（内存级互联）
+    evutil_socket_t fd[2];
+    if (evutil_socketpair(AF_INET, SOCK_STREAM, 0, fd) < 0)
     {
-        DEFAULT_LOG_ERROR("Connect HubProxy failed");
+        DEFAULT_LOG_ERROR("evutil_socketpair failed");
         return false;
     }
 
-    // 8字节数据帧格式，用于扩展 sock5
+    // 2. Worker 端：发送 JRPC 请求帧到 fd[0]（数据进入 kernel buffer，等待 fd[1] 读取）
     char             head[8] = { 'J', 'R', 'P', 'C', '\x0', '\x0', '\x0', '\x0' };
     ZM_EXT_TLV_HEAD* msgh = ((ZM_EXT_TLV_HEAD*)head);
     uint32_t         qlen = (uint32_t)strlen(reqjs);
     msgh->len = (uint32_t)htonl(qlen);
 
-    if (conn.Send(head, 8) < 0 || conn.Send(reqjs, qlen) < 0)
+    if (send(fd[0], head, 8, 0) < 0 || send(fd[0], reqjs, qlen, 0) < 0)
     {
-        DEFAULT_LOG_ERROR("Socket send failed");
+        DEFAULT_LOG_ERROR("bufferevent pair send request failed");
+        evutil_closesocket(fd[0]);
+        evutil_closesocket(fd[1]);
         return false;
     }
 
-    /** 使用 RecvAll 循环读取防止 TCP 分包导致只读到部分长度头 */
+    // 3. 在事件循环线程中为 fd[1] 创建 TAP 并注入 Hub Proxy
+    std::mutex              mtx;
+    std::condition_variable cv;
+    bool                    tapReady = false;
+
+    bool scheduled = m_scheduleFn(
+        [fd_1 = fd[1], this, &mtx, &cv, &tapReady](void*) {
+            ZmTapContextEventHandler::OnPairAcceptConn(m_evbase, m_tapContext, m_tapHubProxy, fd_1);
+            {
+                std::lock_guard<std::mutex> lock(mtx);
+                tapReady = true;
+            }
+            cv.notify_one();
+        },
+        nullptr, nullptr);
+
+    if (!scheduled)
+    {
+        DEFAULT_LOG_ERROR("Schedule to event loop failed, event loop not running");
+        evutil_closesocket(fd[0]);
+        evutil_closesocket(fd[1]);
+        return false;
+    }
+
+    // 等待 TAP 设置完成（事件循环线程处理完 fd[1] 注入后通知）
+    {
+        std::unique_lock<std::mutex> lock(mtx);
+        cv.wait(lock, [&tapReady] { return tapReady; });
+    }
+
+    // 4. Worker 端：从 fd[0] 读取响应（阻塞等待事件循环线程写入 fd[1] 的数据到达）
     uint32_t rsp_len = 0;
-    if (4 != conn.RecvAll(&rsp_len, 4))
+    if (4 != recv(fd[0], (char*)&rsp_len, 4, MSG_WAITALL))
     {
         DEFAULT_LOG_ERROR("Receive response header failed");
+        evutil_closesocket(fd[0]);
         return false;
     }
 
-    /** 使用 RecvAll 循环读取防止 TCP 分包导致只读到部分响应体 */
     rsp_len = ntohl(rsp_len);
     if (rsp_len > ZM_BUF_SIZE_4M)
     {
         DEFAULT_LOG_ERROR("Response too large: {} bytes (max {})", rsp_len, (size_t)ZM_BUF_SIZE_4M);
+        evutil_closesocket(fd[0]);
         return false;
     }
+
     ZmByteBuffer buf(rsp_len);
-    if ((int)rsp_len != conn.RecvAll(buf.Head(), rsp_len))
+    if ((int)rsp_len != recv(fd[0], (char*)buf.Head(), rsp_len, MSG_WAITALL))
     {
         DEFAULT_LOG_ERROR("Receive response body failed");
+        evutil_closesocket(fd[0]);
         return false;
     }
+
+    // Worker 端关闭 fd[0]，事件循环端 fd[1] 由 BEV_OPT_CLOSE_ON_FREE 随 bufferevent 释放
+    evutil_closesocket(fd[0]);
 
     rspjs = std::string(buf.Str());
     return !rspjs.empty();
