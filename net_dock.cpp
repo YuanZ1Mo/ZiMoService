@@ -54,6 +54,9 @@ void NetDock::UnInit()
         delete m_dockRunloop;
         m_dockRunloop = nullptr;
     }
+
+    // evbase 由 DockRunLoop 内部释放，NetDock 持有的裸指针置空防止误用
+    m_evbase = nullptr;
 }
 
 void NetDock::Init()
@@ -159,7 +162,7 @@ void NetDock::SetJrpcRequestReadCB(TapDelegateJrpcRequestReadCB cb)
 
 bool NetDock::ScheduleTaskInLoop(std::function<void(void*)> fn_run, std::function<void(void*)> fn_cb, void* param)
 {
-    if (m_dockRunloop->IsLooped())
+    if (m_evbase && m_dockRunloop && m_dockRunloop->IsLooped())
     {
         ZM_SCHEDULE_CTX* ctx = new ZM_SCHEDULE_CTX();
         ctx->ev_schedule = nullptr;

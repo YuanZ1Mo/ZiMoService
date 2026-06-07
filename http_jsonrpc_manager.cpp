@@ -155,7 +155,8 @@ bool HttpJsonRpcManager::SendToHubProxy(const char* reqjs, std::string& rspjs)
 
     evutil_closesocket(fd[0]);
 
-    rspjs = std::string(buf.Str());
+    // 直接用 Size() 构造，避免 std::string(const char*) 内部的 strlen 扫描
+    rspjs = std::string(buf.Str(), buf.Size());
     return !rspjs.empty();
 }
 
