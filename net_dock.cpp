@@ -6,6 +6,7 @@ NetDock::NetDock()
     : m_dockRunloop(nullptr)
     , m_evbase(nullptr)
     , m_messageServerMgr(nullptr)
+    , m_hubProxyMgr(nullptr)
     , m_httpJsonRpcMgr(nullptr)
 {
 }
@@ -13,7 +14,9 @@ NetDock::NetDock()
 NetDock::~NetDock()
 {
     CloseWebSocketServer();
-    CloseHttpServer();
+    CloseHttpJsonRpcServer();
+    CloseSocks5Server();
+    CloseHub();
 
     if (m_dockRunloop)
     {
@@ -54,23 +57,47 @@ void NetDock::CloseWebSocketServer()
     }
 }
 
-void NetDock::OpenHttpServer()
+void NetDock::OpenHub()
 {
-    if (!m_httpJsonRpcMgr)
+    if (!m_hubProxyMgr)
     {
-        m_httpJsonRpcMgr = new HttpJsonRpcManager();
-        // 注入事件循环调度能力，使 HttpJsonRpcManager 可以跨线程交付 bufferevent
-        m_httpJsonRpcMgr->SetScheduleFn(
-            std::bind(&NetDock::ScheduleTaskInLoop, this,
-                std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
-        m_httpJsonRpcMgr->Open(
+        m_hubProxyMgr = new HubProxyManager();
+        m_hubProxyMgr->Open(
             m_evbase,
             m_dockRunloop->GetEventDnsBase(),
             m_jrpcRequestReadCB);
     }
 }
 
-void NetDock::CloseHttpServer()
+void NetDock::CloseHub()
+{
+    if (m_hubProxyMgr)
+    {
+        m_hubProxyMgr->Close();
+        delete m_hubProxyMgr;
+        m_hubProxyMgr = nullptr;
+    }
+}
+
+void NetDock::OpenHttpJsonRpcServer()
+{
+    if (!m_hubProxyMgr)
+    {
+        DEFAULT_LOG_ERROR("OpenHttpJsonRpcServer warning: Hub not started, call OpenHub() first");
+    }
+
+    if (!m_httpJsonRpcMgr)
+    {
+        m_httpJsonRpcMgr = new HttpJsonRpcManager();
+        // 注入事件循环调度能力
+        m_httpJsonRpcMgr->SetScheduleFn(
+            std::bind(&NetDock::ScheduleTaskInLoop, this,
+                std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        m_httpJsonRpcMgr->Open(m_hubProxyMgr);
+    }
+}
+
+void NetDock::CloseHttpJsonRpcServer()
 {
     if (m_httpJsonRpcMgr)
     {
@@ -78,6 +105,21 @@ void NetDock::CloseHttpServer()
         delete m_httpJsonRpcMgr;
         m_httpJsonRpcMgr = nullptr;
     }
+}
+
+void NetDock::OpenSocks5Server()
+{
+    if (!m_hubProxyMgr)
+    {
+        DEFAULT_LOG_ERROR("OpenSocks5Server warning: Hub not started, call OpenHub() first");
+
+    }
+    // TODO: 后续实现 SOCKS5
+}
+
+void NetDock::CloseSocks5Server()
+{
+    // TODO: 后续实现
 }
 
 void NetDock::SetJrpcRequestReadCB(TapDelegateJrpcRequestReadCB cb)

@@ -65,7 +65,8 @@ void ServiceCenter::OnStart(DWORD /*argc*/, TCHAR** /*argv[]*/)
     m_netDock->SetJrpcRequestReadCB(std::bind(&ServicePortal::JrpcRequestReadCB, m_servicePortal,
         std::placeholders::_1, std::placeholders::_2));
     m_netDock->OpenWebSocketServer();
-    m_netDock->OpenHttpServer();
+    m_netDock->OpenHub();
+    m_netDock->OpenHttpJsonRpcServer();
 }
 
 void ServiceCenter::OnStop()

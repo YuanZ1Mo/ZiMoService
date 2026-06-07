@@ -186,6 +186,9 @@
     <ClCompile Include="http_jsonrpc_manager.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="hub_proxy_manager.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
     <ClCompile Include="message_server_manager.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
@@ -1125,6 +1128,9 @@
       <Filter>头文件\Public\net</Filter>
     </ClInclude>
     <ClInclude Include="http_jsonrpc_manager.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="hub_proxy_manager.h">
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="message_server_manager.h">

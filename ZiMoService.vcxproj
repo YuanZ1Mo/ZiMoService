@@ -488,6 +488,7 @@
     <ClInclude Include="dock_runloop.h" />
     <ClInclude Include="name_define.h" />
     <ClInclude Include="http_jsonrpc_manager.h" />
+    <ClInclude Include="hub_proxy_manager.h" />
     <ClInclude Include="message_server_manager.h" />
     <ClInclude Include="net_dock.h" />
     <ClInclude Include="resource.h" />
@@ -520,6 +521,7 @@
     <ClCompile Include="control_module.cpp" />
     <ClCompile Include="dock_runloop.cpp" />
     <ClCompile Include="http_jsonrpc_manager.cpp" />
+    <ClCompile Include="hub_proxy_manager.cpp" />
     <ClCompile Include="message_server_manager.cpp" />
     <ClCompile Include="net_dock.cpp" />
     <ClCompile Include="service_center.cpp" />
