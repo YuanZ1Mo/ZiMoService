@@ -29,7 +29,6 @@ bool HttpJsonRpcManager::Open(HubProxyManager* hubMgr)
     {
         m_httpServerJRPC = new ZmJsonRpcServer(ZM_HTTPSERVER_ROOT_URI, ZM_HTTP_SERVER_PORT);
         m_httpServerJRPC->Start();
-
         m_httpServerJRPC->SetJsonRpcCBEx(std::bind(&HttpJsonRpcManager::OnHttpJsonrpcEx, this,
             std::placeholders::_1, std::placeholders::_2,
             std::placeholders::_3, std::placeholders::_4, std::placeholders::_5));
@@ -79,7 +78,7 @@ bool HttpJsonRpcManager::SendToHubProxy(const char* reqjs, std::string& rspjs)
         return false;
     }
 
-    // 2. Worker 端：发送 JRPC 请求帧到 fd[0]
+    // 2. Worker 端：发送 JRPC 请求帧到 fd[0]（数据进入 kernel buffer，等待 fd[1] 读取）
     char             head[8] = { 0 };
     ZM_EXT_TLV_HEAD* msgh = ((ZM_EXT_TLV_HEAD*)head);
     memcpy(msgh->tag, ZM_JRPC_MAGIC, 4);
@@ -96,7 +95,7 @@ bool HttpJsonRpcManager::SendToHubProxy(const char* reqjs, std::string& rspjs)
 
     // 3. 在事件循环线程中将 fd[1] 注入 Hub Proxy
     //    捕获 hubMgr 裸指针而非 this，避免 HttpJsonRpcManager 先于 lambda 被释放导致 UAF
-    //    生命周期保证：NetDock::~NetDock 中 CloseHub() 在 CloseHttpJsonRpcServer() 之后调用
+    //    生命周期保证：NetDock::UnInit 中 CloseHub 在 CloseHttpJsonRpcServer 之后调用
     auto* hubMgr = m_hubMgr;
     std::mutex              mtx;
     std::condition_variable cv;
@@ -121,13 +120,13 @@ bool HttpJsonRpcManager::SendToHubProxy(const char* reqjs, std::string& rspjs)
         return false;
     }
 
-    // 等待 TAP 设置完成
+    // 等待 TAP 设置完成（事件循环线程处理完 fd[1] 注入后通知）
     {
         std::unique_lock<std::mutex> lock(mtx);
         cv.wait(lock, [&tapReady] { return tapReady; });
     }
 
-    // 4. Worker 端：从 fd[0] 读取响应
+    // 4. Worker 端：从 fd[0] 读取响应（阻塞等待事件循环线程写入 fd[1] 的数据到达）
     uint32_t rsp_len = 0;
     if (4 != recv(fd[0], (char*)&rsp_len, 4, MSG_WAITALL))
     {
@@ -152,9 +151,10 @@ bool HttpJsonRpcManager::SendToHubProxy(const char* reqjs, std::string& rspjs)
         return false;
     }
 
+    // Worker 端关闭 fd[0]，事件循环端 fd[1] 由 BEV_OPT_CLOSE_ON_FREE 随 bufferevent 释放
     evutil_closesocket(fd[0]);
 
-    // 直接用 Size() 构造，避免 std::string(const char*) 内部的 strlen 扫描
+    // 用 Size() 构造避免 std::string(const char*) 内部的 strlen 扫描
     rspjs = std::string(buf.Str(), buf.Size());
     return !rspjs.empty();
 }
@@ -196,13 +196,9 @@ int HttpJsonRpcManager::OnHttpJsonrpcEx(ZmHttpdTask* task, const std::string& me
     }
 
     if (repjson["result"].is_object())
-    {
         result = repjson["result"];
-    }
     if (repjson["error"].is_object())
-    {
         error = repjson["error"];
-    }
 
     return code;
 }

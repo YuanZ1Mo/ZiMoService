@@ -1,5 +1,4 @@
 #include "net_dock.h"
-
 #include "zm_logger.h"
 
 NetDock::NetDock()
@@ -17,6 +16,16 @@ NetDock::~NetDock()
     UnInit();
 }
 
+void NetDock::Init()
+{
+    if (!m_dockRunloop)
+    {
+        m_dockRunloop = new DockRunLoop();
+        if (m_dockRunloop->Loop())
+            m_evbase = m_dockRunloop->GetEventBase();
+    }
+}
+
 void NetDock::UnInit()
 {
     if (m_unInited)
@@ -31,7 +40,6 @@ void NetDock::UnInit()
     CloseHttpJsonRpcServer();
     CloseSocks5Server();
     CloseWebSocketServer();
-
     CloseHub();
 
     // 前端已停，不会再有新的 ScheduleTaskInLoop 调用。清理可能残留的 ctx
@@ -40,9 +48,7 @@ void NetDock::UnInit()
         for (auto* ctx : m_pendingScheduleCtx)
         {
             if (ctx->ev_schedule)
-            {
                 event_free(ctx->ev_schedule);
-            }
             delete ctx;
         }
         m_pendingScheduleCtx.clear();
@@ -59,24 +65,10 @@ void NetDock::UnInit()
     m_evbase = nullptr;
 }
 
-void NetDock::Init()
-{
-    if (!m_dockRunloop)
-    {
-        m_dockRunloop = new DockRunLoop();
-        if (m_dockRunloop->Loop())
-        {
-            m_evbase = m_dockRunloop->GetEventBase();
-        }
-    }
-}
-
 void NetDock::OpenWebSocketServer()
 {
     if (!m_messageServerMgr)
-    {
         m_messageServerMgr = new MessageServerManager();
-    }
     m_messageServerMgr->Open();
 }
 
@@ -95,10 +87,7 @@ void NetDock::OpenHub()
     if (!m_hubProxyMgr)
     {
         m_hubProxyMgr = new HubProxyManager();
-        m_hubProxyMgr->Open(
-            m_evbase,
-            m_dockRunloop->GetEventDnsBase(),
-            m_jrpcRequestReadCB);
+        m_hubProxyMgr->Open(m_evbase, m_dockRunloop->GetEventDnsBase(), m_jrpcRequestReadCB);
     }
 }
 
@@ -116,13 +105,13 @@ void NetDock::OpenHttpJsonRpcServer()
 {
     if (!m_hubProxyMgr)
     {
-        DEFAULT_LOG_ERROR("OpenHttpJsonRpcServer warning: Hub not started, call OpenHub() first");
+        DEFAULT_LOG_ERROR("OpenHttpJsonRpcServer failed: Hub not started, call OpenHub() first");
     }
 
     if (!m_httpJsonRpcMgr)
     {
         m_httpJsonRpcMgr = new HttpJsonRpcManager();
-        // 注入事件循环调度能力
+        // 注入事件循环调度能力，使 HttpJsonRpcManager 可跨线程交付 bufferevent pair
         m_httpJsonRpcMgr->SetScheduleFn(
             std::bind(&NetDock::ScheduleTaskInLoop, this,
                 std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
@@ -144,10 +133,9 @@ void NetDock::OpenSocks5Server()
 {
     if (!m_hubProxyMgr)
     {
-        DEFAULT_LOG_ERROR("OpenSocks5Server warning: Hub not started, call OpenHub() first");
-
+        DEFAULT_LOG_ERROR("OpenSocks5Server failed: Hub not started, call OpenHub() first");
     }
-    // TODO: 后续实现 SOCKS5
+    // TODO: 后续实现 SOCKS5 前端
 }
 
 void NetDock::CloseSocks5Server()
@@ -172,8 +160,7 @@ bool NetDock::ScheduleTaskInLoop(std::function<void(void*)> fn_run, std::functio
         ctx->owner = this;
 
         // fd=-1 表示纯手动触发事件，events=0 不监听任何 I/O
-        ctx->ev_schedule = event_new(m_evbase,
-            -1, 0, NetDock::OnScheduleEventCB, ctx);
+        ctx->ev_schedule = event_new(m_evbase, -1, 0, NetDock::OnScheduleEventCB, ctx);
         event_add(ctx->ev_schedule, NULL);
 
         // 记录到 pending 集合，供 UnInit 在关闭前取消未触发的任务
@@ -182,7 +169,7 @@ bool NetDock::ScheduleTaskInLoop(std::function<void(void*)> fn_run, std::functio
             m_pendingScheduleCtx.insert(ctx);
         }
 
-        // 立即激活一次性调度事件
+        // 立即激活一次性调度事件，EV_TIMEOUT 表示用后即弃
         event_active(ctx->ev_schedule, EV_TIMEOUT, 0);
         return true;
     }
@@ -204,18 +191,12 @@ void NetDock::OnScheduleEventCB(evutil_socket_t fd, short what, void* pctx)
         self->m_pendingScheduleCtx.erase(scheduleCtx);
     }
 
-    // 执行任务
+    // 执行 fn_run → fn_cb 后释放 ctx
     if (scheduleCtx->ev_schedule)
-    {
         event_free(scheduleCtx->ev_schedule);
-    }
     if (scheduleCtx->fn_run)
-    {
         scheduleCtx->fn_run(scheduleCtx->param);
-    }
     if (scheduleCtx->fn_cb)
-    {
         scheduleCtx->fn_cb(scheduleCtx->param);
-    }
     delete scheduleCtx;
 }

@@ -1,5 +1,4 @@
 #include "hub_proxy_manager.h"
-
 #include "zm_logger.h"
 
 HubProxyManager::HubProxyManager()
@@ -39,9 +38,7 @@ bool HubProxyManager::Open(event_base* evbase, evdns_base* evdnsbase,
     if (nullptr == m_tapHubProxy)
     {
         if (nullptr == m_tapContext)
-        {
             m_tapContext = new ZmTapContext();
-        }
 
         m_tapHubProxy = new ZmTapHubProxy();
         m_tapHubProxy->SetJrpcDelegate(m_tapDelegateJRPC);
