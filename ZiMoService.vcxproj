@@ -485,13 +485,13 @@
     <ClInclude Include="..\ZiMoPublic\websocket\zm_websocket_server.h" />
     <ClInclude Include="..\ZiMoPublic\websocket\zm_websocket_utils.h" />
     <ClInclude Include="dock_runloop.h" />
-    <ClInclude Include="name_define.h" />
     <ClInclude Include="http_jsonrpc_manager.h" />
     <ClInclude Include="hub_proxy_manager.h" />
     <ClInclude Include="message_server_manager.h" />
     <ClInclude Include="net_dock.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="service_center.h" />
+    <ClInclude Include="service_define.h" />
     <ClInclude Include="service_global.h" />
     <ClInclude Include="service_portal.h" />
   </ItemGroup>
@@ -523,7 +523,6 @@
     <ClCompile Include="message_server_manager.cpp" />
     <ClCompile Include="net_dock.cpp" />
     <ClCompile Include="service_center.cpp" />
-    <ClCompile Include="service_global.cpp" />
     <ClCompile Include="service_main.cpp" />
     <ClCompile Include="service_portal.cpp" />
   </ItemGroup>
