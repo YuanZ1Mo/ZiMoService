@@ -1,4 +1,4 @@
-﻿#ifndef ZM_NAME_DEFINE_H
+#ifndef ZM_NAME_DEFINE_H
 #define ZM_NAME_DEFINE_H
 
 //服务信息
