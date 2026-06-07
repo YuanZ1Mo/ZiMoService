@@ -484,7 +484,6 @@
     <ClInclude Include="..\ZiMoPublic\util\zm_util_win_os.h" />
     <ClInclude Include="..\ZiMoPublic\websocket\zm_websocket_server.h" />
     <ClInclude Include="..\ZiMoPublic\websocket\zm_websocket_utils.h" />
-    <ClInclude Include="control_module.h" />
     <ClInclude Include="dock_runloop.h" />
     <ClInclude Include="name_define.h" />
     <ClInclude Include="http_jsonrpc_manager.h" />
@@ -518,7 +517,6 @@
     <ClCompile Include="..\ZiMoPublic\util\zm_util_win_os.cpp" />
     <ClCompile Include="..\ZiMoPublic\websocket\zm_websocket_server.cpp" />
     <ClCompile Include="..\ZiMoPublic\websocket\zm_websocket_utils.cpp" />
-    <ClCompile Include="control_module.cpp" />
     <ClCompile Include="dock_runloop.cpp" />
     <ClCompile Include="http_jsonrpc_manager.cpp" />
     <ClCompile Include="hub_proxy_manager.cpp" />

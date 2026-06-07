@@ -28,6 +28,8 @@ public:
             SERVICE_ERROR_NORMAL,
             SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SESSIONCHANGE
             | SERVICE_ACCEPT_POWEREVENT | SERVICE_ACCEPT_SHUTDOWN)
+        , m_netDock(nullptr)
+        , m_servicePortal(nullptr)
     {
     }
 

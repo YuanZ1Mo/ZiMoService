@@ -8,14 +8,29 @@ NetDock::NetDock()
     , m_messageServerMgr(nullptr)
     , m_hubProxyMgr(nullptr)
     , m_httpJsonRpcMgr(nullptr)
+    , m_unInited(false)
 {
 }
 
 NetDock::~NetDock()
 {
-    CloseWebSocketServer();
+    UnInit();
+}
+
+void NetDock::UnInit()
+{
+    if (m_unInited)
+        return;
+    m_unInited = true;
+
+    // ★ 关闭顺序严格不可变：
+    //   ① 前端服务器先停 — 不再产生新的请求（Worker 线程终止，不再有 SendToHubProxy 调用）
+    //   ② Hub 路由层再停 — 释放 TAP 组件（其 event/bufferevent 均注册在 _evbase 上）
+    //   ③ DockRunLoop 最后停 — _evbase 上已无 TAP 事件，freeEventObjects 安全清理
     CloseHttpJsonRpcServer();
     CloseSocks5Server();
+    CloseWebSocketServer();
+
     CloseHub();
 
     if (m_dockRunloop)

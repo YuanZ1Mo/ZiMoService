@@ -79,7 +79,7 @@ void DockRunLoop::Control(short events)
 
     std::unique_lock<std::mutex> lock(_mutex_loop);
 
-    if (IsRunning())
+    if (IsRunning() || IsStopping())
     {
         if (_eventCtrl)
         {

@@ -26,6 +26,9 @@ public:
     /** @brief 初始化事件循环线程，阻塞直到 loop 就绪 */
     void Init();
 
+    /** @brief 反初始化：按正确顺序关闭所有组件（可多次调用，析构时自动调用） */
+    void UnInit();
+
     /** @brief 启动 WebSocket 服务器 */
     void OpenWebSocketServer();
     /** @brief 停止 WebSocket 服务器 */
@@ -67,6 +70,7 @@ private:
     HubProxyManager*       m_hubProxyMgr;         ///< TAP Hub 路由层（多协议前端共享）
     HttpJsonRpcManager*    m_httpJsonRpcMgr;      ///< HTTP JSON-RPC 前端
     TapDelegateJrpcRequestReadCB m_jrpcRequestReadCB;  ///< JRPC 外部回调，OpenHub 时注入
+    bool                              m_unInited;            ///< 防止 UnInit 重复执行
 };
 
 #endif // NET_DOCK_H

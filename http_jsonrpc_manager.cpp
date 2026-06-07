@@ -94,14 +94,17 @@ bool HttpJsonRpcManager::SendToHubProxy(const char* reqjs, std::string& rspjs)
     }
 
     // 3. 在事件循环线程中将 fd[1] 注入 Hub Proxy
+    //    捕获 hubMgr 裸指针而非 this，避免 HttpJsonRpcManager 先于 lambda 被释放导致 UAF
+    //    生命周期保证：NetDock::~NetDock 中 CloseHub() 在 CloseHttpJsonRpcServer() 之后调用
+    auto* hubMgr = m_hubMgr;
     std::mutex              mtx;
     std::condition_variable cv;
     bool                    tapReady = false;
 
     bool scheduled = m_scheduleFn(
-        [fd_1 = fd[1], this, &mtx, &cv, &tapReady](void*) {
+        [fd_1 = fd[1], hubMgr, &mtx, &cv, &tapReady](void*) {
             ZmTapContextEventHandler::OnPairAcceptConn(
-                m_hubMgr->EvBase(), m_hubMgr->TapContext(), m_hubMgr->HubProxy(), fd_1);
+                hubMgr->EvBase(), hubMgr->TapContext(), hubMgr->HubProxy(), fd_1);
             {
                 std::lock_guard<std::mutex> lock(mtx);
                 tapReady = true;

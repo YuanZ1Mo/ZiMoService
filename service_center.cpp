@@ -1,6 +1,5 @@
 #include "service_center.h"
 
-#include "control_module.h"
 #include "service_global.h"
 #include "zm_net_socket.h"
 #include "zm_logger.h"
@@ -71,8 +70,21 @@ void ServiceCenter::OnStart(DWORD /*argc*/, TCHAR** /*argv[]*/)
 
 void ServiceCenter::OnStop()
 {
-    //unInitMessageServer();
-    //unInitHttpServer();
+    // ★ 关闭顺序：
+    //   ① NetDock 先释放 — 内部按 前端→Hub→DockRunLoop 顺序清理
+    //      TAP delegate 销毁后不再持有 JrpcRequestReadCB 回调
+    //   ② ServicePortal 后释放 — 此时回调已无持有者，安全删除
+    if (m_netDock)
+    {
+        delete m_netDock;
+        m_netDock = nullptr;
+    }
+
+    if (m_servicePortal)
+    {
+        delete m_servicePortal;
+        m_servicePortal = nullptr;
+    }
 }
 
 void ServiceCenter::OnShutdown(DWORD /*evtType*/, WTSSESSION_NOTIFICATION* /*notification*/)
