@@ -1,6 +1,6 @@
 #include "http_jsonrpc_manager.h"
 
-#include "name_define.h"
+#include "service_define.h"
 #include "zm_logger.h"
 
 #include <mutex>
@@ -104,8 +104,7 @@ bool HttpJsonRpcManager::SendToHubProxy(const char* reqjs, std::string& rspjs)
 
     bool scheduled = m_scheduleFn(
         [fd_1 = fd[1], hubMgr, &mtx, &cv, &tapReady](void*) {
-            ZmTapContextEventHandler::OnPairAcceptConn(
-                hubMgr->EvBase(), hubMgr->TapContext(), hubMgr->HubProxy(), fd_1);
+            ZmTapContextEventHandler::OnPairAcceptConn(hubMgr->HubProxy(), fd_1);
             {
                 std::lock_guard<std::mutex> lock(mtx);
                 tapReady = true;

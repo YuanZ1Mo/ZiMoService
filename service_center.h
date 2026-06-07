@@ -2,7 +2,7 @@
 #define SERVICE_CENTER_H
 
 #include "zm_service_base.h"
-#include "name_define.h"
+#include "service_define.h"
 
 
 class NetDock;

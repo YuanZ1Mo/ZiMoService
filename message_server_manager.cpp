@@ -1,5 +1,5 @@
 #include "message_server_manager.h"
-#include "name_define.h"
+#include "service_define.h"
 
 MessageServerManager::MessageServerManager()
     : m_messageServer(nullptr)
