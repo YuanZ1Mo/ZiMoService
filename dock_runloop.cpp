@@ -49,8 +49,6 @@ void DockRunLoop::freeEventObjects()
         event_base_free(_evbase);
         _evbase = nullptr;
     }
-
-    _b_looped = false;
 }
 
 bool DockRunLoop::Loop()
@@ -151,18 +149,26 @@ void DockRunLoop::Run()
         int ret = event_base_loop(_evbase, EVLOOP_NO_EXIT_ON_EMPTY);
         DEFAULT_LOG_INFO("DockRunLoop is exited ret:{}, unexpected:{}", ret, (0 == event_base_got_exit(_evbase)) ? 0 : 1);
 
+        // 先标记结束状态并通知等待者，消除 _evbase 释放与状态变更之间的不一致窗口
+        {
+            std::lock_guard<std::mutex> lock(_mutex_loop);
+            _b_looped = false;
+            _b_run_finished = true;
+        }
+        _cv_loop.notify_one();
+
+        // 等待者已收到通知，安全释放资源
         freeEventObjects();
     }
     else
     {
         DEFAULT_LOG_ERROR("Open event base failed");
+        {
+            std::lock_guard<std::mutex> lock(_mutex_loop);
+            _b_run_finished = true;
+        }
+        _cv_loop.notify_one();
     }
-
-    {
-        std::lock_guard<std::mutex> lock(_mutex_loop);
-        _b_run_finished = true;
-    }
-    _cv_loop.notify_one();
 
     DEFAULT_LOG_INFO("The DockRunLoop is stoped");
 }
