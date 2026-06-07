@@ -7,11 +7,14 @@
 #include <event2/dns.h>
 #include <event2/event.h>
 
+/** DockRunLoop 心跳定时器间隔（秒） */
+#define ZM_DOCK_HEARTBEAT_SEC   60
+
 class DockRunLoop : public ZmThread
 {
 public:
     enum { CONTROL_LOOP_EXIT =0x0100,};
-    
+
     DockRunLoop();
     virtual ~DockRunLoop();
 
@@ -30,12 +33,9 @@ protected:
 
     virtual void    Run();
     virtual void    OnStopping();
-    
+
 private:
     void            freeEventObjects();
-
-
-private:
 
     event_base*  _evbase;
     evdns_base* _evdnsbase;
@@ -47,6 +47,5 @@ private:
     bool _b_looped;
     bool _b_run_finished;
 };
-
 
 #endif /* DOCK_RUNLOOP_H */

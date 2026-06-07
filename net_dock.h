@@ -65,12 +65,12 @@ private:
     static void OnScheduleEventCB(evutil_socket_t fd, short what, void* ctx);
 
     DockRunLoop*           m_dockRunloop;         ///< libevent 事件循环线程
-    event_base*            m_evbase;              ///< 缓存的 event_base（用于 ScheduleTaskInLoop）
+    event_base*            m_evbase;              ///< 缓存的 event_base（从 DockRunLoop 获取）
     MessageServerManager*  m_messageServerMgr;    ///< WebSocket 服务器管理器
     HubProxyManager*       m_hubProxyMgr;         ///< TAP Hub 路由层（多协议前端共享）
     HttpJsonRpcManager*    m_httpJsonRpcMgr;      ///< HTTP JSON-RPC 前端
     TapDelegateJrpcRequestReadCB m_jrpcRequestReadCB;  ///< JRPC 外部回调，OpenHub 时注入
-    bool                              m_unInited;            ///< 防止 UnInit 重复执行
+    bool                   m_unInited;            ///< 防止 UnInit 重复执行
 };
 
 #endif // NET_DOCK_H

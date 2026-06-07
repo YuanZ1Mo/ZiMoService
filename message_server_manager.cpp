@@ -1,4 +1,5 @@
 #include "message_server_manager.h"
+#include "name_define.h"
 
 MessageServerManager::MessageServerManager()
     : m_messageServer(nullptr)
@@ -15,8 +16,7 @@ void MessageServerManager::Open()
     if (nullptr == m_messageServer)
     {
         m_messageServer = new ZmMessageServer();
-        // 设置 WebSocket 广播服务监听端口为 37310
-        m_messageServer->SetBindPort(37310);
+        m_messageServer->SetBindPort(ZM_WS_SERVER_PORT);
         // 启动 WebSocket 服务器，开始监听连接
         m_messageServer->Start();
     }

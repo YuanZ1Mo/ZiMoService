@@ -1,1 +1,0 @@
-#include "service_global.h"

@@ -27,7 +27,7 @@ bool HttpJsonRpcManager::Open(HubProxyManager* hubMgr)
     // 创建 HTTP JSON-RPC 服务器
     if (nullptr == m_httpServerJRPC)
     {
-        m_httpServerJRPC = new ZmJsonRpcServer(ZM_HTTPSERVER_ROOT_URI, 39440);
+        m_httpServerJRPC = new ZmJsonRpcServer(ZM_HTTPSERVER_ROOT_URI, ZM_HTTP_SERVER_PORT);
         m_httpServerJRPC->Start();
 
         m_httpServerJRPC->SetJsonRpcCBEx(std::bind(&HttpJsonRpcManager::OnHttpJsonrpcEx, this,
@@ -80,8 +80,9 @@ bool HttpJsonRpcManager::SendToHubProxy(const char* reqjs, std::string& rspjs)
     }
 
     // 2. Worker 端：发送 JRPC 请求帧到 fd[0]
-    char             head[8] = { 'J', 'R', 'P', 'C', '\x0', '\x0', '\x0', '\x0' };
+    char             head[8] = { 0 };
     ZM_EXT_TLV_HEAD* msgh = ((ZM_EXT_TLV_HEAD*)head);
+    memcpy(msgh->tag, ZM_JRPC_MAGIC, 4);
     uint32_t         qlen = (uint32_t)strlen(reqjs);
     msgh->len = (uint32_t)htonl(qlen);
 
@@ -173,25 +174,25 @@ int HttpJsonRpcManager::OnHttpJsonrpcEx(ZmHttpdTask* task, const std::string& me
     std::string repjstr;
     if (!SendToHubProxy(reqobj.dump().c_str(), repjstr))
     {
-        error["code"] = 601;
+        error["code"] = ZM_JRPC_ERR_SEND_HUB;
         error["message"] = "SendToHubProxy error";
-        return 601;
+        return ZM_JRPC_ERR_SEND_HUB;
     }
 
     if (repjstr.empty())
     {
-        error["code"] = 602;
+        error["code"] = ZM_JRPC_ERR_EMPTY_RSP;
         error["message"] = "Response is empty";
-        return 602;
+        return ZM_JRPC_ERR_EMPTY_RSP;
     }
 
     std::string jerrstr;
     ZMJSON repjson = zm_json_parse(repjstr, jerrstr);
     if (!repjson.is_object())
     {
-        error["code"] = 603;
+        error["code"] = ZM_JRPC_ERR_FORMAT;
         error["message"] = "Response format error";
-        return 603;
+        return ZM_JRPC_ERR_FORMAT;
     }
 
     if (repjson["result"].is_object())
