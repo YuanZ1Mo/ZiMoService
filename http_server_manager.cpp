@@ -88,55 +88,63 @@ int HttpServerManager::OnHttpRequest(ZmHttpdTask* task, const BYTE* data, size_t
 
 int HttpServerManager::ServeStaticFile(ZmHttpdTask* task, const std::string& uri)
 {
-	// 安全校验：阻止路径穿越
-	if (uri.find("..") != std::string::npos)
-		return 403;
-
-	// 确定文件路径：/ → /index.html，否则直接拼接
+	// 确定文件路径：/ → /index.html
 	std::string filePath = (uri == "/" || uri.empty()) ? "/index.html" : uri;
-
-	// 去掉开头的 /
 	if (!filePath.empty() && filePath[0] == '/')
 		filePath = filePath.substr(1);
 
-	std::string fullPath = m_wwwRoot + "\\" + filePath;
-	// 统一使用 / 分隔符（兼容 Windows）
-	std::replace(fullPath.begin(), fullPath.end(), '/', '\\');
+	std::string rawPath = m_wwwRoot + "\\" + filePath;
+	std::replace(rawPath.begin(), rawPath.end(), '/', '\\');
 
-	// 尝试打开文件
-	std::ifstream file(fullPath, std::ios::binary | std::ios::ate);
-	if (!file.is_open())
-	{
-		// 非 API 路径且文件不存在 → SPA 兜底，返回 index.html
-		std::string indexPath = m_wwwRoot + "\\index.html";
-		std::ifstream indexFile(indexPath, std::ios::binary | std::ios::ate);
-		if (!indexFile.is_open())
-			return 404;
+	// 安全校验：GetFullPathNameA 规范化路径（解析 .. 和 .），前缀比对防穿越
+	char normalized[MAX_PATH];
+	if (!GetFullPathNameA(rawPath.c_str(), MAX_PATH, normalized, nullptr))
+		return 403;
+	std::string normPath(normalized);
 
-		std::streamsize size = indexFile.tellg();
-		indexFile.seekg(0, std::ios::beg);
+	char normRoot[MAX_PATH];
+	if (!GetFullPathNameA(m_wwwRoot.c_str(), MAX_PATH, normRoot, nullptr))
+		return 500;
+	std::string normRootStr(normRoot);
 
-		ZmByteBuffer buf((size_t)size);
-		indexFile.read((char*)buf.Head(), size);
-		indexFile.close();
+	if (normPath.size() < normRootStr.size() ||
+	    _strnicmp(normPath.c_str(), normRootStr.c_str(), normRootStr.size()) != 0)
+		return 403;
 
-		task->PutReplyHeader("Content-type", "text/html; charset=utf-8");
-		task->SetReplyData(buf.Head(), buf.Size());
+	// 分块读取发送，固定 64KB 缓冲区，大文件不 OOM
+	auto trySendFile = [&](const std::string& path) -> bool {
+		std::ifstream file(path, std::ios::binary);
+		if (!file.is_open())
+			return false;
+
+		// 获取文件大小
+		file.seekg(0, std::ios::end);
+		std::streamsize size = file.tellg();
+		if (size <= 0) return false;
+		file.seekg(0, std::ios::beg);
+
+		task->PutReplyHeader("Content-type", GetMimeType(path));
+
+		char buf[65536];  // 64KB 栈缓冲区
+		while (size > 0)
+		{
+			std::streamsize chunk = (std::min)(size, (std::streamsize)sizeof(buf));
+			file.read(buf, chunk);
+			task->SetReplyData((const BYTE*)buf, (size_t)chunk);
+			size -= chunk;
+		}
+		return true;
+	};
+
+	if (trySendFile(normPath))
 		return 200;
-	}
 
-	// 读取文件内容
-	std::streamsize size = file.tellg();
-	file.seekg(0, std::ios::beg);
+	// SPA 兜底
+	std::string indexPath = normRootStr + "\\index.html";
+	if (trySendFile(indexPath))
+		return 200;
 
-	ZmByteBuffer buf((size_t)size);
-	file.read((char*)buf.Head(), size);
-	file.close();
-
-	// 设置 MIME 类型
-	task->PutReplyHeader("Content-type", GetMimeType(filePath));
-	task->SetReplyData(buf.Head(), buf.Size());
-	return 200;
+	return 404;
 }
 
 const char* HttpServerManager::GetMimeType(const std::string& path)
