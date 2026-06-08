@@ -64,71 +64,55 @@ void ServicePortal::ResponseErrorAsync(ZM_TAP_CTX* tap, const ZMJSON& jsError)
 // ============================================================================
 
 /**
- * @brief JRPC 请求回调（在 libevent 线程中由 TAP 代理链触发）
+ * @brief JRPC 请求回调（在 ZmThreadPool 线程中执行，由 ZmTapDelegateJRPC 调度）
  *
- * 提供两种处理模式示例：
- * 1. 同步模式（已注释）：直接在当前线程响应，适用于无需耗时的简单业务
- * 2. 异步模式（当前启用）：投递到线程池处理，通过 ResponseResultAsync/ResponseErrorAsync 回写
+ * 已在框架层完成线程池投递，本函数在 Worker 线程中运行，无需再手动拷贝数据或 InvokeLater。
  *
- * ZM_TAP_STATE_INUSE
- * ZM_TAP_CTX
- * ZmThreadPool
+ * 操作 TAP 必须统一使用异步版本：
+ *   - ResponseResultAsync / ResponseErrorAsync（回投到 libevent 线程写入响应）
+ *   - SetDropTimerAsync（回投到 libevent 线程设置超时）
+ *   - DropAsync（回投到 libevent 线程释放 TAP）
+ *
+ * @note 禁止在此回调中直接调用 Response / SetDropTimer / tap->Drop，
+ *       因为当前不在 libevent 线程中执行
  */
 void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 {
-	//// =========================================================================
-	//// 同步响应模式示例
-	//// =========================================================================
-	//ResponseResult(tap, { { "isOk", 1 } });
+	ZMJSON result;
+	std::string err;
+	ZMJSON reqJson = zm_json_parse(reqData, err);
 
-	// =========================================================================
-	// 异步响应模式
-	// =========================================================================
+	if (!err.empty())
+	{
+		ZMJSON errRsp;
+		errRsp["code"] = -32700;
+		errRsp["message"] = "Parse error: " + err;
+		ResponseErrorAsync(tap, errRsp);
+		return;
+	}
 
-	 // 1. 拷贝请求数据（tap->requester_data 在回调返回后可能被覆盖）
-	 std::string reqCopy(reqData);
+	std::string method = zm_json_get_str(reqJson, "method");
+	ZMJSON params = reqJson["params"];
 
-	 // 2. 投递到线程池处理业务
-	 ZmThreadPool::InvokeLater([this, tap, reqCopy](void*) {
-		 // ===== Worker 线程 =====
+	if (method == "ping")
+	{
+		result["pong"] = true;
+	}
+	else if (method == "getStatus")
+	{
+		result["status"] = "running";
+		result["uptime"] = 12345;
+	}
+	else
+	{
+		ZMJSON errRsp;
+		errRsp["code"] = -32601;
+		errRsp["message"] = "Method not found: " + method;
+		ResponseErrorAsync(tap, errRsp);
+		return;
+	}
 
-		 ZMJSON result;
-		 std::string err;
-		 ZMJSON reqJson = zm_json_parse(reqCopy, err);
-
-		 if (!err.empty())
-		 {
-			 ZMJSON errRsp;
-			 errRsp["code"] = -32700;
-			 errRsp["message"] = "Parse error: " + err;
-			 ResponseErrorAsync(tap, errRsp);
-			 return;
-		 }
-
-		 std::string method = zm_json_get_str(reqJson, "method");
-		 ZMJSON params = reqJson["params"];
-
-		 if (method == "ping")
-		 {
-			 result["pong"] = true;
-		 }
-		 else if (method == "getStatus")
-		 {
-			 result["status"] = "running";
-			 result["uptime"] = 12345;
-		 }
-		 else
-		 {
-			 ZMJSON errRsp;
-			 errRsp["code"] = -32601;
-			 errRsp["message"] = "Method not found: " + method;
-			 ResponseErrorAsync(tap, errRsp);
-			 return;
-		 }
-
-		 ResponseResultAsync(tap, result);
-
-	 }, nullptr, 0);
+	ResponseResultAsync(tap, result);
 }
 
 // ============================================================================

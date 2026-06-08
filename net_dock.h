@@ -163,6 +163,16 @@ public:
      */
     void SetDropTimerAsync(ZM_TAP_CTX* tap, int seconds, int micros = 0, uint32_t drop_timeout_error_code = 0);
 
+    /**
+     * @brief 异步释放 TAP（可在任意线程中调用）
+     * @param tap    TAP 上下文
+     * @param reason 释放原因（用于日志追踪）
+     *
+     * 内部通过 ScheduleTaskInLoop 将 Drop 回投到 libevent 线程，
+     * 避免跨线程操作 bufferevent / event 导致的竞态条件。
+     */
+    void DropAsync(ZM_TAP_CTX* tap, const char* reason);
+
 private:
     /** @brief 调度事件回调，在 libevent 线程中执行 fn_run → fn_cb 后释放 ctx */
     static void OnScheduleEventCB(evutil_socket_t fd, short what, void* ctx);

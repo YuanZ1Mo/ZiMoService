@@ -324,3 +324,26 @@ void NetDock::SetDropTimerAsync(ZM_TAP_CTX* tap, int seconds, int micros, uint32
         DEFAULT_LOG_ERROR("ScheduleTaskInLoop 调度失败，SetDropTimerAsync 未执行，TAP:{}", (void*)tap);
     }
 }
+
+void NetDock::DropAsync(ZM_TAP_CTX* tap, const char* reason)
+{
+    std::string rsn(reason ? reason : "unknown");
+    bool scheduled = ScheduleTaskInLoop(
+        [tap, rsn](void*) {
+            // 校验 TAP 是否仍然存活（可能在异步处理期间已被 Drop）
+            if (tap->state != ZM_TAP_STATE_INUSE)
+            {
+                DEFAULT_LOG_WARN("TAP 已失效，跳过重复 Drop，TAP:{}, state:{}, reason:{}",
+                    (void*)tap, tap->state, rsn);
+                return;
+            }
+            tap->Drop(rsn.c_str());
+        },
+        nullptr, nullptr);
+
+    if (!scheduled)
+    {
+        DEFAULT_LOG_ERROR("ScheduleTaskInLoop 调度失败，DropAsync 未执行，TAP:{}, reason:{}",
+            (void*)tap, rsn);
+    }
+}
