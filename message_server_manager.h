@@ -34,8 +34,8 @@ public:
      */
     ZmMessageServer* Server() { return m_messageServer; }
 
-    /** @brief 查询 WebSocket 服务器是否已启动 */
-    bool IsOpen() const { return m_messageServer != nullptr; }
+    /** @brief 查询 WebSocket 服务器是否正常运行（线程存活） */
+    bool IsOpen() const { return m_messageServer != nullptr && m_messageServer->IsBound(); }
 
 private:
     ZmMessageServer* m_messageServer;  ///< WebSocket 服务器实例

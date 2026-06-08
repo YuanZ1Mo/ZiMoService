@@ -38,8 +38,8 @@ public:
 	 */
 	ZmHttpRouter& GetRouter() { return m_router; }
 
-	/** @brief 查询服务器是否已启动 */
-	bool IsOpen() const { return m_httpServer != nullptr; }
+	/** @brief 查询服务器是否正常运行（对象存在且线程存活） */
+	bool IsOpen() const { return m_httpServer != nullptr && m_httpServer->IsRunning(); }
 
 private:
 	/**

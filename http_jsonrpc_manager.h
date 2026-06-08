@@ -50,8 +50,8 @@ public:
      */
     void SetScheduleFn(ScheduleFn fn) { m_scheduleFn = fn; }
 
-    /** @brief 查询 JRPC 服务器是否已启动 */
-    bool IsOpen() const { return m_httpServerJRPC != nullptr; }
+    /** @brief 查询 JRPC 服务器是否正常运行（线程存活） */
+    bool IsOpen() const { return m_httpServerJRPC != nullptr && m_httpServerJRPC->IsRunning(); }
 
 private:
     /**
