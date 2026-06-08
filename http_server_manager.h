@@ -38,6 +38,9 @@ public:
 	 */
 	ZmHttpRouter& GetRouter() { return m_router; }
 
+	/** @brief 查询服务器是否已启动 */
+	bool IsOpen() const { return m_httpServer != nullptr; }
+
 private:
 	/**
 	 * @brief HTTP 请求回调，委托给 ZmHttpRouter 分发

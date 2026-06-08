@@ -157,6 +157,31 @@ ZmHttpRouter& NetDock::GetHttpRouter()
     return m_httpServerMgr->GetRouter();
 }
 
+bool NetDock::IsHttpOpen() const
+{
+    return m_httpServerMgr && m_httpServerMgr->IsOpen();
+}
+
+bool NetDock::IsJrpcHttpOpen() const
+{
+    return m_httpJsonRpcMgr && m_httpJsonRpcMgr->IsOpen();
+}
+
+bool NetDock::IsHubOpen() const
+{
+    return m_hubProxyMgr && m_hubProxyMgr->IsOpen();
+}
+
+bool NetDock::IsJrpcProxyOpen() const
+{
+    return m_hubProxyMgr && m_hubProxyMgr->IsJrpcProxyOpen();
+}
+
+bool NetDock::IsWebSocketOpen() const
+{
+    return m_messageServerMgr && m_messageServerMgr->IsOpen();
+}
+
 void NetDock::OpenSocks5Server()
 {
     if (!m_hubProxyMgr)

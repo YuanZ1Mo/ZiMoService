@@ -50,6 +50,9 @@ public:
      */
     void SetScheduleFn(ScheduleFn fn) { m_scheduleFn = fn; }
 
+    /** @brief 查询 JRPC 服务器是否已启动 */
+    bool IsOpen() const { return m_httpServerJRPC != nullptr; }
+
 private:
     /**
      * @brief 通过 bufferevent pair 向 Hub Proxy 交付 JRPC 请求并等待响应

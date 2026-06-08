@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ZiMo 服务中心</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div id="app">
+  <!-- 导航 -->
+  <nav class="nav">
+    <div class="nav-brand">⚡ ZiMo Service</div>
+    <div class="nav-tabs">
+      <a href="#/"      :class="{active: page==='home'}">🏠 首页</a>
+      <a href="#/docs"  :class="{active: page==='docs'}">📚 文档</a>
+      <a href="#/test"  :class="{active: page==='test'}">🧪 接口测试</a>
+      <a href="#/about" :class="{active: page==='about'}">ℹ️ 关于</a>
+    </div>
+    <div class="nav-status"><span class="dot" :class="online?'on':'off'"></span>{{ online?'已连接':'离线' }}</div>
+  </nav>
+
+  <main class="main">
+    <!-- ==================== 首页 ==================== -->
+    <section v-if="page==='home'">
+      <!-- 时钟 -->
+      <div class="clock">{{ time }}</div>
+      <div class="grid-3">
+        <div class="scard" v-for="c in cards" :key="c.key">
+          <div class="scard-icon">{{ c.icon }}</div>
+          <div class="scard-label">{{ c.label }}</div>
+          <div class="scard-val" :class="c.ok?'ok':'err'">{{ c.val }}</div>
+          <div class="scard-sub">{{ c.sub }}</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== 文档 ==================== -->
+    <section v-if="page==='docs'">
+      <h2>📚 API 接口文档</h2>
+      <p class="muted">共 {{ routes.length }} 个接口 · 点击展开详情 · 支持一键复制和在线测试</p>
+      <div class="doc-card" v-for="(r,i) in routes" :key="i" :class="{open: r._open}">
+        <div class="doc-head" @click="r._open=!r._open">
+          <span class="doc-method" :class="r.method">{{ r.method }}</span>
+          <span class="doc-path">{{ r.path }}</span>
+          <span class="doc-desc">{{ r.description }}</span>
+          <span class="doc-arrow">{{ r._open ? '▾' : '▸' }}</span>
+        </div>
+        <div class="doc-body" v-if="r._open">
+          <div class="doc-block">
+            <div class="doc-block-h">📤 请求 <button class="cp" @click.stop="copy(r.requestExample)">📋 复制</button></div>
+            <pre>{{ r.requestExample }}</pre>
+          </div>
+          <div class="doc-block">
+            <div class="doc-block-h">📥 响应 <button class="cp" @click.stop="copy(r.responseExample)">📋 复制</button></div>
+            <pre>{{ r.responseExample }}</pre>
+          </div>
+          <button class="btn" @click.stop="goTest(r)">▶ 在测试页打开</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== 接口测试 ==================== -->
+    <section v-if="page==='test'">
+      <h2>🧪 接口测试</h2>
+      <div class="test-top">
+        <select v-model="testMethod" class="sel"><option>GET</option><option>POST</option></select>
+        <input v-model="testUrl" class="url-inp" placeholder="/api/service_status">
+        <button class="btn" @click="doTest" :disabled="tLoading">{{ tLoading?'发送中...':'▶ 发送' }}</button>
+        <button class="btn btn2" @click="tBody=''">🗑 清空</button>
+      </div>
+      <div class="test-panels">
+        <div class="test-panel">
+          <div class="test-panel-h">请求体 <button class="cp" @click="copy(tBody)">📋 复制</button></div>
+          <textarea v-model="tBody" placeholder='{"key":"value"}'></textarea>
+        </div>
+        <div class="test-panel">
+          <div class="test-panel-h">返回体 <button class="cp" @click="copy(tResult)">📋 复制</button></div>
+          <div class="test-result"><pre v-if="tResult">{{ tResult }}</pre><p class="muted" v-else>点击发送查看结果</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== 关于 ==================== -->
+    <section v-if="page==='about'">
+      <div class="about-col">
+        <div class="about-panel">
+          <h3>🏗️ 架构和技术栈</h3>
+          <div class="md-body" v-html="aboutBackend"></div>
+        </div>
+        <div class="about-panel">
+          <h3>🎨 前端信息</h3>
+          <div class="md-body" v-html="aboutFrontend"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<script src="https://unpkg.com/marked/marked.min.js"></script>
+<script src="/js/app.js"></script>
+</body>
+</html>

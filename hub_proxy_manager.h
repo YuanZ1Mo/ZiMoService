@@ -48,6 +48,11 @@ public:
     /** @brief 获取 Hub 代理 */
     ZmTapHubProxy*   HubProxy()   const { return m_tapHubProxy; }
 
+    /** @brief 查询 Hub 路由层是否已启动 */
+    bool IsOpen() const { return m_tapHubProxy != nullptr; }
+    /** @brief 查询 JRPC Delegate 是否已启动 */
+    bool IsJrpcProxyOpen() const { return m_tapDelegateJRPC != nullptr; }
+
 private:
     ZmTapContext*      m_tapContext;       ///< TAP 上下文池（所有前端共享）
     ZmTapDelegateJRPC* m_tapDelegateJRPC;  ///< JRPC 协议委托处理器

@@ -3,19 +3,27 @@
 #include "zm_net_tap.h"
 #include "zm_net_http_router.h"
 
+#include <vector>
+#include <string>
+
 class NetDock;
+
+/**
+ * @brief API 路由文档条目
+ */
+struct RouteDocEntry
+{
+	std::string method;              ///< HTTP 方法
+	std::string path;               ///< 路由路径
+	std::string description;        ///< 功能描述
+	std::string requestExample;     ///< 请求示例 JSON
+	std::string responseExample;    ///< 响应示例 JSON
+};
 
 /**
  * @brief JRPC 请求处理门户，接收从 TAP 代理链转发来的 JRPC 请求并响应
  *
- * 提供同步和异步两种响应模式：
- * - 同步：直接在 JrpcRequestReadCB 中（libevent 线程）调用 Response/ResponseResult/ResponseError
- * - 异步：在 Worker 线程中处理业务后，调用 ResponseAsync/ResponseResultAsync/ResponseErrorAsync，
- *         内部通过 NetDock::ScheduleTaskInLoop 回投到 libevent 线程安全写入
- *
- * Response/ResponseAsync 接受裸 JSON（调用方自行封装外层），
- * ResponseResult/ResponseError* 自动封装 {"result":...} 或 {"error":...} 外层。
- * 异步超时设置可通过 NetDock::SetDropTimerAsync 在任意线程中安全调用。
+ * 同时承载 HTTP API 路由注册（RegisterHttpRoutes）和 JRPC 回调（JrpcRequestReadCB）。
  */
 class ServicePortal
 {
@@ -23,53 +31,34 @@ public:
 	ServicePortal() {};
 	~ServicePortal() {};
 
-	/**
-	 * @brief 设置 NetDock 指针以使用其通用 TAP 操作方法
-	 * @param nd NetDock 实例指针，传入 nullptr 清空
-	 */
 	void SetNetDock(NetDock* nd) { m_netDock = nd; }
 
-	/**
-	 * @brief 注册 HTTP API 路由到通用 HTTP 服务器
-	 * @param router ZmHttpRouter 引用（来自 HttpServerManager::GetRouter()）
-	 *
-	 * 将业务层 API 端点注册到路由器上，与 JRPC 处理共用 ServicePortal 的业务逻辑。
-	 * 应在 HttpServerManager::Open() 之后、请求到达之前调用。
-	 */
+	/** @brief 注册 HTTP API 路由 */
 	void RegisterHttpRoutes(ZmHttpRouter& router);
 
 public:
-	/**
-	 * @brief JRPC 请求回调（在 libevent 线程中由 TAP 代理链触发）
-	 * @param tap     请求关联的 TAP 上下文
-	 * @param reqData 请求 JSON 字符串
-	 */
 	void JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData);
 
-	// --- 同步响应（必须在 libevent 线程中调用）---
-
-	/** @brief 同步写入裸 JSON 响应（调用方自行封装外层） */
+	// --- 同步响应 ---
 	void Response(ZM_TAP_CTX* tap, const ZMJSON& jsResponse);
-
-	/** @brief 同步写入 JRPC 成功响应，自动封装 {"result": jsResult} */
 	void ResponseResult(ZM_TAP_CTX* tap, const ZMJSON& jsResult);
-
-	/** @brief 同步写入 JRPC 错误响应，自动封装 {"error": jsError} */
 	void ResponseError(ZM_TAP_CTX* tap, const ZMJSON& jsError);
 
-	// --- 异步响应（可在任意线程中调用）---
-
-	/** @brief 异步写入裸 JSON 响应（调用方自行封装外层） */
+	// --- 异步响应 ---
 	void ResponseAsync(ZM_TAP_CTX* tap, const ZMJSON& jsResponse);
-
-	/** @brief 异步写入 JRPC 成功响应，自动封装 {"result": jsResult} */
 	void ResponseResultAsync(ZM_TAP_CTX* tap, const ZMJSON& jsResult);
-
-	/** @brief 异步写入 JRPC 错误响应，自动封装 {"error": jsError} */
 	void ResponseErrorAsync(ZM_TAP_CTX* tap, const ZMJSON& jsError);
 
 private:
-	NetDock* m_netDock = nullptr;  ///< NetDock 指针，用于委托通用 TAP 操作
+	NetDock* m_netDock = nullptr;
+
+	/** @brief 已注册的 API 路由文档列表（供 /api/routes 查询） */
+	std::vector<RouteDocEntry> m_routeDocs;
+
+	/** @brief 注册路由并记录文档 */
+	void Reg(ZmHttpRouter& router, const char* method, const char* path,
+	         ZmHttpRouter::Handler handler, const char* desc,
+	         const char* reqExample, const char* rspExample);
 };
 
 #endif // SERVICE_PORTAL_H

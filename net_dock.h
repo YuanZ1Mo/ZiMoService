@@ -86,6 +86,19 @@ public:
      */
     ZmHttpRouter& GetHttpRouter();
 
+    // --- 状态查询 ---
+
+    /** @brief HTTP 服务器是否运行中 */
+    bool IsHttpOpen() const;
+    /** @brief JRPC HTTP 服务器是否运行中 */
+    bool IsJrpcHttpOpen() const;
+    /** @brief Hub 路由层是否运行中 */
+    bool IsHubOpen() const;
+    /** @brief JRPC Proxy delegate 是否运行中 */
+    bool IsJrpcProxyOpen() const;
+    /** @brief WebSocket 服务器是否运行中 */
+    bool IsWebSocketOpen() const;
+
     /** @brief 预留 SOCKS5 入口（依赖 Hub 已启动） */
     void OpenSocks5Server();
     /** @brief 预留 停止 SOCKS5 */
