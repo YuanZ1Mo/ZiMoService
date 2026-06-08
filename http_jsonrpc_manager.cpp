@@ -27,7 +27,7 @@ bool HttpJsonRpcManager::Open(HubProxyManager* hubMgr)
     // 创建 HTTP JSON-RPC 服务器
     if (nullptr == m_httpServerJRPC)
     {
-        m_httpServerJRPC = new ZmJsonRpcServer(ZM_HTTPSERVER_ROOT_URI, ZM_HTTP_SERVER_PORT);
+        m_httpServerJRPC = new ZmJsonRpcServer(ZM_HTTPSERVER_ROOT_URI, ZM_JSONRPC_SERVER_PORT);
         m_httpServerJRPC->Start();
         m_httpServerJRPC->SetJsonRpcCBEx(std::bind(&HttpJsonRpcManager::OnHttpJsonrpcEx, this,
             std::placeholders::_1, std::placeholders::_2,

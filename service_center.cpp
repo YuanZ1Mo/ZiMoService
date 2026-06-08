@@ -70,6 +70,22 @@ void ServiceCenter::OnStart(DWORD /*argc*/, TCHAR** /*argv[]*/)
     m_netDock->OpenWebSocketServer();
     m_netDock->OpenHub();
     m_netDock->OpenHttpJsonRpcServer();
+
+    // 启动通用 HTTP 服务器（端口 80）
+    // exe 在 $(SolutionDir)$(Configuration)\ 下，www/ 在 $(SolutionDir) 下，需上翻一层
+    {
+        char exePath[MAX_PATH];
+        GetModuleFileNameA(NULL, exePath, MAX_PATH);
+        std::string wwwRoot(exePath);
+        size_t pos = wwwRoot.find_last_of("\\/");
+        if (pos != std::string::npos)
+            wwwRoot = wwwRoot.substr(0, pos);
+        wwwRoot += "\\..\\www";  // Release\..\www → 项目根目录\www
+        m_netDock->OpenHttpServer(wwwRoot.c_str());
+    }
+
+    // 将 HTTP 路由器注入 ServicePortal，使其注册业务层 API 端点
+    m_servicePortal->RegisterHttpRoutes(m_netDock->GetHttpRouter());
 }
 
 void ServiceCenter::OnStop()

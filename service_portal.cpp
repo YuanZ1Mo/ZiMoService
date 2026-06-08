@@ -3,6 +3,8 @@
 #include "zm_net_tap.h"
 #include "zm_logger.h"
 #include "zm_util_thread.h"
+#include "zm_json.h"
+#include "zm_util_sys.h"
 
 
 // ============================================================================
@@ -123,4 +125,104 @@ void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 		 ResponseResultAsync(tap, result);
 
 	 }, nullptr, 0);
+}
+
+// ============================================================================
+// HTTP API 路由注册
+// ============================================================================
+
+void ServicePortal::RegisterHttpRoutes(ZmHttpRouter& router)
+{
+	// GET /api/status — 服务状态
+	router.Get("/api/status", [](ZmHttpdTask* task, const BYTE*, size_t) {
+		time_t now = time(nullptr);
+		char buf[32];
+		ZmSystem::CurrentTimeStr(buf, sizeof(buf));
+
+		ZMJSON rsp;
+		rsp["server"] = "ZiMoService";
+		rsp["version"] = "1.0";
+		rsp["time"] = buf;
+		rsp["timestamp"] = (long)now;
+#ifdef _WIN64
+		rsp["arch"] = "x64";
+#else
+		rsp["arch"] = "x86";
+#endif
+		task->PutReplyHeader("Content-type", "application/json; charset=utf-8");
+		std::string body = rsp.dump();
+		task->SetReplyData((const BYTE*)body.c_str(), body.size());
+		return 200;
+	});
+
+	// GET /api/items — 数据列表
+	router.Get("/api/items", [](ZmHttpdTask* task, const BYTE*, size_t) {
+		ZMJSON rsp;
+		rsp["items"] = {
+			{ {"id", 1}, {"name", "项目 Alpha"},   {"status", "运行中"} },
+			{ {"id", 2}, {"name", "项目 Beta"},    {"status", "已停止"} },
+			{ {"id", 3}, {"name", "项目 Gamma"},   {"status", "运行中"} },
+			{ {"id", 4}, {"name", "项目 Delta"},   {"status", "维护中"} },
+			{ {"id", 5}, {"name", "项目 Epsilon"}, {"status", "运行中"} }
+		};
+		rsp["total"] = 5;
+		task->PutReplyHeader("Content-type", "application/json; charset=utf-8");
+		std::string body = rsp.dump();
+		task->SetReplyData((const BYTE*)body.c_str(), body.size());
+		return 200;
+	});
+
+	// ANY /api/echo — 回显测试
+	router.Any("/api/echo", [](ZmHttpdTask* task, const BYTE* data, size_t dlen) {
+		task->PutReplyHeader("Content-type", "application/json; charset=utf-8");
+
+		if (task->Method() == EVHTTP_REQ_POST && data && dlen > 0)
+		{
+			std::string reqBody((const char*)data, dlen);
+			std::string err;
+			ZMJSON reqJson = zm_json_parse(reqBody, err);
+
+			ZMJSON rsp;
+			rsp["echo"] = err.empty() ? reqJson : ZMJSON(reqBody);
+			rsp["length"] = (int)dlen;
+			std::string body = rsp.dump();
+			task->SetReplyData((const BYTE*)body.c_str(), body.size());
+			return 200;
+		}
+
+		ZMJSON rsp;
+		rsp["message"] = (task->Method() == EVHTTP_REQ_POST)
+			? "请求体为空，试试 POST 一段 JSON"
+			: "请使用 POST 方法发送 JSON 数据";
+		std::string body = rsp.dump();
+		task->SetReplyData((const BYTE*)body.c_str(), body.size());
+		return 200;
+	});
+
+	// GET /api/time — 服务器时间
+	router.Get("/api/time", [](ZmHttpdTask* task, const BYTE*, size_t) {
+		time_t now = time(nullptr);
+		char buf[32];
+		ZmSystem::CurrentTimeStr(buf, sizeof(buf));
+
+		ZMJSON rsp;
+		rsp["time"] = buf;
+		rsp["timestamp"] = (long)now;
+		task->PutReplyHeader("Content-type", "application/json; charset=utf-8");
+		std::string body = rsp.dump();
+		task->SetReplyData((const BYTE*)body.c_str(), body.size());
+		return 200;
+	});
+
+	// GET /api/users/:id — 路径参数示例
+	router.Get("/api/users/:id", [](ZmHttpdTask* task, const BYTE*, size_t) {
+		std::string uid = ZmHttpRouter::GetParam("id");
+		ZMJSON rsp;
+		rsp["userId"] = uid;
+		rsp["message"] = "路径参数示例";
+		task->PutReplyHeader("Content-type", "application/json; charset=utf-8");
+		std::string body = rsp.dump();
+		task->SetReplyData((const BYTE*)body.c_str(), body.size());
+		return 200;
+	});
 }

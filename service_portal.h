@@ -1,6 +1,7 @@
 #ifndef SERVICE_PORTAL_H
 #define SERVICE_PORTAL_H
 #include "zm_net_tap.h"
+#include "zm_net_http_router.h"
 
 class NetDock;
 
@@ -27,6 +28,15 @@ public:
 	 * @param nd NetDock 实例指针，传入 nullptr 清空
 	 */
 	void SetNetDock(NetDock* nd) { m_netDock = nd; }
+
+	/**
+	 * @brief 注册 HTTP API 路由到通用 HTTP 服务器
+	 * @param router ZmHttpRouter 引用（来自 HttpServerManager::GetRouter()）
+	 *
+	 * 将业务层 API 端点注册到路由器上，与 JRPC 处理共用 ServicePortal 的业务逻辑。
+	 * 应在 HttpServerManager::Open() 之后、请求到达之前调用。
+	 */
+	void RegisterHttpRoutes(ZmHttpRouter& router);
 
 public:
 	/**

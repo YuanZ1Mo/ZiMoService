@@ -9,6 +9,7 @@ NetDock::NetDock()
     , m_messageServerMgr(nullptr)
     , m_hubProxyMgr(nullptr)
     , m_httpJsonRpcMgr(nullptr)
+    , m_httpServerMgr(nullptr)
     , m_unInited(false)
 {
 }
@@ -39,6 +40,7 @@ void NetDock::UnInit()
     //   ② Hub 路由层再停 — 释放 TAP 组件（其 event/bufferevent 均注册在 _evbase 上）
     //   ③ 取消残留的调度任务 — 释放未触发的 ctx（正常情况此集合已空，兜底用）
     //   ④ DockRunLoop 最后停 — 退出事件循环，freeEventObjects 安全清理 _evbase
+    CloseHttpServer();
     CloseHttpJsonRpcServer();
     CloseSocks5Server();
     CloseWebSocketServer();
@@ -129,6 +131,30 @@ void NetDock::CloseHttpJsonRpcServer()
         delete m_httpJsonRpcMgr;
         m_httpJsonRpcMgr = nullptr;
     }
+}
+
+void NetDock::OpenHttpServer(const char* wwwRoot)
+{
+    if (!m_httpServerMgr)
+    {
+        m_httpServerMgr = new HttpServerManager();
+        m_httpServerMgr->Open(wwwRoot);
+    }
+}
+
+void NetDock::CloseHttpServer()
+{
+    if (m_httpServerMgr)
+    {
+        m_httpServerMgr->Close();
+        delete m_httpServerMgr;
+        m_httpServerMgr = nullptr;
+    }
+}
+
+ZmHttpRouter& NetDock::GetHttpRouter()
+{
+    return m_httpServerMgr->GetRouter();
 }
 
 void NetDock::OpenSocks5Server()

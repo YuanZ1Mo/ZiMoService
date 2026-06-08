@@ -5,6 +5,7 @@
 #include "message_server_manager.h"
 #include "hub_proxy_manager.h"
 #include "http_jsonrpc_manager.h"
+#include "http_server_manager.h"
 
 #include <mutex>
 #include <unordered_set>
@@ -69,6 +70,21 @@ public:
     void OpenHttpJsonRpcServer();
     /** @brief 停止 HTTP JSON-RPC 前端 */
     void CloseHttpJsonRpcServer();
+
+    /**
+     * @brief 启动通用 HTTP 服务器（端口 80，不依赖 Hub/JRPC）
+     * @param wwwRoot 静态文件根目录路径（绝对路径），为空不启用静态文件
+     */
+    void OpenHttpServer(const char* wwwRoot = nullptr);
+    /** @brief 停止通用 HTTP 服务器 */
+    void CloseHttpServer();
+
+    /**
+     * @brief 获取通用 HTTP 路由器的引用，供业务层注册 API 端点
+     * @return ZmHttpRouter& 路由器引用
+     * @note 需在 OpenHttpServer 之后调用
+     */
+    ZmHttpRouter& GetHttpRouter();
 
     /** @brief 预留 SOCKS5 入口（依赖 Hub 已启动） */
     void OpenSocks5Server();
@@ -161,6 +177,7 @@ private:
     MessageServerManager*  m_messageServerMgr;    ///< WebSocket 服务器管理器
     HubProxyManager*       m_hubProxyMgr;         ///< TAP Hub 路由层（多协议前端共享）
     HttpJsonRpcManager*    m_httpJsonRpcMgr;      ///< HTTP JSON-RPC 前端
+    HttpServerManager*     m_httpServerMgr;       ///< 通用 HTTP 前端（端口 80）
     TapDelegateJrpcRequestReadCB m_jrpcRequestReadCB;  ///< JRPC 外部回调，OpenHub 时注入
     bool                   m_unInited;            ///< 防止 UnInit 重复执行
 

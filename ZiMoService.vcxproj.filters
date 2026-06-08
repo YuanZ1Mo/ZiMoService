@@ -105,13 +105,7 @@
     <ClCompile Include="service_main.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="control_module.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
     <ClCompile Include="service_center.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
-    <ClCompile Include="service_global.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="..\ZiMoPublic\net\zm_net_http.cpp">
@@ -195,11 +189,17 @@
     <ClCompile Include="net_dock.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="http_server_manager.cpp">
+      <Filter>源文件\Public</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ZiMoPublic\net\zm_net_http_middleware.cpp">
+      <Filter>头文件\Public\net</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ZiMoPublic\net\zm_net_http_router.cpp">
+      <Filter>头文件\Public\net</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="control_module.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
     <ClInclude Include="resource.h">
       <Filter>头文件</Filter>
     </ClInclude>
@@ -1115,9 +1115,6 @@
     <ClInclude Include="..\ZiMoPublic\net\zm_net_ip.h">
       <Filter>头文件\Public\net</Filter>
     </ClInclude>
-    <ClInclude Include="name_define.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
     <ClInclude Include="..\ZiMoPublic\ssl\zm_ssl_ctx.h">
       <Filter>头文件\Public\ssl</Filter>
     </ClInclude>
@@ -1153,6 +1150,18 @@
     </ClInclude>
     <ClInclude Include="service_portal.h">
       <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="service_define.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="http_server_manager.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ZiMoPublic\net\zm_net_http_middleware.h">
+      <Filter>头文件\Public\net</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ZiMoPublic\net\zm_net_http_router.h">
+      <Filter>头文件\Public\net</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
