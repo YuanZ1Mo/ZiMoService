@@ -2,6 +2,7 @@
    ZiMo Service — 深色主题管理面板
    ============================================================ */
 * { margin:0; padding:0; box-sizing:border-box; }
+[v-cloak] { display: none; }
 
 :root {
   --bg0: #0f1117; --bg1: #161822; --bg2: #1e2030; --bg3: #262837;
