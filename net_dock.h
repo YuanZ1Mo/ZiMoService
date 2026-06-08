@@ -97,6 +97,43 @@ public:
     bool ScheduleTaskInLoop(std::function<void(void*)> fn_run,
                             std::function<void(void*)> fn_cb, void* param);
 
+    // --- TAP 通用响应操作（必须在 libevent 线程中调用）---
+
+    /**
+     * @brief 通过 TAP 回传链写入 JSON 响应（必须在 libevent 线程中调用）
+     * @param tap        请求关联的 TAP 上下文
+     * @param jsResponse 完整响应 JSON（业务层自行封装 {"result":...} 或 {"error":...} 外层）
+     *
+     * 从 TAP 回传链弹出 JRPC delegate，设置回传数据后触发 OnTapDelegateBackEvent
+     * 将响应通过长度前缀帧写回客户端
+     */
+    void Response(ZM_TAP_CTX* tap, const ZMJSON& jsResponse);
+
+    // --- TAP 通用操作（可在任意线程中调用，内部回投到 libevent 线程）---
+
+    /**
+     * @brief 异步写入 JSON 响应（可在任意线程中调用）
+     * @param tap        请求关联的 TAP 上下文
+     * @param jsResponse 完整响应 JSON（业务层自行封装 {"result":...} 或 {"error":...} 外层）
+     *
+     * 内部通过 ScheduleTaskInLoop 将实际写入回投到 libevent 线程，
+     * 回投时会检查 TAP 状态（已 Drop 则丢弃响应并输出警告日志）。
+     * JSON 在回投前序列化为字符串以避免跨线程访问 nlohmann::json。
+     */
+    void ResponseAsync(ZM_TAP_CTX* tap, const ZMJSON& jsResponse);
+
+    /**
+     * @brief 异步设置 TAP 超时定时器（可在任意线程中调用）
+     * @param tap                     TAP 上下文
+     * @param seconds                 超时秒数（传负值取消定时器）
+     * @param micros                  超时微秒数（传负值取消定时器）
+     * @param drop_timeout_error_code 超时错误码，到期未取消则触发 Drop
+     *
+     * 内部通过 ScheduleTaskInLoop 将 event_add/evtimer_del 回投到 libevent 线程，
+     * 避免跨线程操作 event_base 导致的竞态条件
+     */
+    void SetDropTimerAsync(ZM_TAP_CTX* tap, int seconds, int micros = 0, uint32_t drop_timeout_error_code = 0);
+
 private:
     /** @brief 调度事件回调，在 libevent 线程中执行 fn_run → fn_cb 后释放 ctx */
     static void OnScheduleEventCB(evutil_socket_t fd, short what, void* ctx);

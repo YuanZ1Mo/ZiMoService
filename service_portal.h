@@ -1,15 +1,20 @@
 #ifndef SERVICE_PORTAL_H
 #define SERVICE_PORTAL_H
 #include "zm_net_tap.h"
-#include <functional>
+
+class NetDock;
 
 /**
  * @brief JRPC 请求处理门户，接收从 TAP 代理链转发来的 JRPC 请求并响应
  *
  * 提供同步和异步两种响应模式：
- * - 同步：直接在 JrpcRequestReadCB 回调中调用 ResponseResult/ResponseError
- * - 异步：在 Worker 线程中处理业务后，调用 ResponseResultAsync/ResponseErrorAsync，
- *         内部通过 ScheduleFn 将响应回投到 libevent 线程安全写入
+ * - 同步：直接在 JrpcRequestReadCB 中（libevent 线程）调用 Response/ResponseResult/ResponseError
+ * - 异步：在 Worker 线程中处理业务后，调用 ResponseAsync/ResponseResultAsync/ResponseErrorAsync，
+ *         内部通过 NetDock::ScheduleTaskInLoop 回投到 libevent 线程安全写入
+ *
+ * Response/ResponseAsync 接受裸 JSON（调用方自行封装外层），
+ * ResponseResult/ResponseError* 自动封装 {"result":...} 或 {"error":...} 外层。
+ * 异步超时设置可通过 NetDock::SetDropTimerAsync 在任意线程中安全调用。
  */
 class ServicePortal
 {
@@ -18,76 +23,43 @@ public:
 	~ServicePortal() {};
 
 	/**
-	 * @brief 事件循环线程调度回调类型，签名与 NetDock::ScheduleTaskInLoop 一致
-	 * @param fn_run 在 libevent 线程中执行的任务
-	 * @param fn_cb  任务执行后的回调（可选）
-	 * @param param  透传参数（可选）
-	 * @return true 调度成功，false 事件循环未就绪
+	 * @brief 设置 NetDock 指针以使用其通用 TAP 操作方法
+	 * @param nd NetDock 实例指针，传入 nullptr 清空
 	 */
-	using ScheduleFn = std::function<bool(
-		std::function<void(void*)>,
-		std::function<void(void*)>,
-		void*)>;
-
-	/**
-	 * @brief 设置事件循环线程调度回调（需在 JrpcRequestReadCB 触发之前调用）
-	 * @param fn 调度函数，传入 nullptr 清空
-	 */
-	void SetScheduleFn(ScheduleFn fn) { m_scheduleFn = fn; }
+	void SetNetDock(NetDock* nd) { m_netDock = nd; }
 
 public:
 	/**
 	 * @brief JRPC 请求回调（在 libevent 线程中由 TAP 代理链触发）
 	 * @param tap     请求关联的 TAP 上下文
 	 * @param reqData 请求 JSON 字符串
-	 *
-	 * 可在 libevent 线程中同步调用 ResponseResult/ResponseError 直接响应，
-	 * 也可将业务逻辑投递到 Worker 线程处理，完成后通过 ResponseResultAsync 回写响应
 	 */
 	void JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData);
 
-	/**
-	 * @brief 同步写入 JRPC 成功响应（必须在 libevent 线程中调用）
-	 * @param tap      请求关联的 TAP 上下文
-	 * @param jsResult 响应 result 对象
-	 */
+	// --- 同步响应（必须在 libevent 线程中调用）---
+
+	/** @brief 同步写入裸 JSON 响应（调用方自行封装外层） */
+	void Response(ZM_TAP_CTX* tap, const ZMJSON& jsResponse);
+
+	/** @brief 同步写入 JRPC 成功响应，自动封装 {"result": jsResult} */
 	void ResponseResult(ZM_TAP_CTX* tap, const ZMJSON& jsResult);
 
-	/**
-	 * @brief 同步写入 JRPC 错误响应（必须在 libevent 线程中调用）
-	 * @param tap     请求关联的 TAP 上下文
-	 * @param jsError 响应 error 对象
-	 */
+	/** @brief 同步写入 JRPC 错误响应，自动封装 {"error": jsError} */
 	void ResponseError(ZM_TAP_CTX* tap, const ZMJSON& jsError);
 
-	/**
-	 * @brief 异步写入 JRPC 成功响应（可在任意线程中调用）
-	 * @param tap      请求关联的 TAP 上下文
-	 * @param jsResult 响应 result 对象
-	 *
-	 * 内部通过 ScheduleFn 将实际写入回投到 libevent 线程，
-	 * 回投时会检查 TAP 状态（已 Drop 则丢弃响应并输出警告日志）
-	 */
+	// --- 异步响应（可在任意线程中调用）---
+
+	/** @brief 异步写入裸 JSON 响应（调用方自行封装外层） */
+	void ResponseAsync(ZM_TAP_CTX* tap, const ZMJSON& jsResponse);
+
+	/** @brief 异步写入 JRPC 成功响应，自动封装 {"result": jsResult} */
 	void ResponseResultAsync(ZM_TAP_CTX* tap, const ZMJSON& jsResult);
 
-	/**
-	 * @brief 异步写入 JRPC 错误响应（可在任意线程中调用）
-	 * @param tap     请求关联的 TAP 上下文
-	 * @param jsError 响应 error 对象
-	 */
+	/** @brief 异步写入 JRPC 错误响应，自动封装 {"error": jsError} */
 	void ResponseErrorAsync(ZM_TAP_CTX* tap, const ZMJSON& jsError);
 
 private:
-	/**
-	 * @brief 内部响应写入（必须在 libevent 线程中调用）
-	 *
-	 * 从 TAP 回传链上弹出 JRPC delegate，设置回传数据后触发 OnTapDelegateBackEvent
-	 * 将响应通过长度前缀帧写回客户端
-	 */
-	void Response(ZM_TAP_CTX* tap, const ZMJSON& jsResult);
-
-	ScheduleFn m_scheduleFn;  ///< 事件循环线程调度回调，用于异步响应回投
+	NetDock* m_netDock = nullptr;  ///< NetDock 指针，用于委托通用 TAP 操作
 };
-
 
 #endif // SERVICE_PORTAL_H

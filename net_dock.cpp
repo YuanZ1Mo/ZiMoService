@@ -1,5 +1,7 @@
 #include "net_dock.h"
 #include "zm_logger.h"
+#include "zm_json.h"
+#include "zm_net_tap.h"
 
 NetDock::NetDock()
     : m_dockRunloop(nullptr)
@@ -199,4 +201,75 @@ void NetDock::OnScheduleEventCB(evutil_socket_t fd, short what, void* pctx)
     if (scheduleCtx->fn_cb)
         scheduleCtx->fn_cb(scheduleCtx->param);
     delete scheduleCtx;
+}
+
+// ============================================================================
+// TAP 通用响应操作（必须在 libevent 线程中调用）
+// ============================================================================
+
+void NetDock::Response(ZM_TAP_CTX* tap, const ZMJSON& jsResponse)
+{
+    ZmTapDelegate* back_delegate = ZmTapContext::BackChainPop(tap);
+    if (back_delegate)
+    {
+        std::string jstr = jsResponse.dump();
+        ZmTapContext::SetOnBackData(tap, jstr.size(), jstr.c_str());
+        back_delegate->OnTapDelegateBackEvent(tap);
+    }
+    else
+    {
+        DEFAULT_LOG_WARN("TAP 回传链为空，无法写入响应，TAP:{}", (void*)tap);
+        tap->Drop("back chain empty");
+    }
+}
+
+// ============================================================================
+// TAP 通用异步操作（可在任意线程调用，内部回投到 libevent 线程）
+// ============================================================================
+
+void NetDock::ResponseAsync(ZM_TAP_CTX* tap, const ZMJSON& jsResponse)
+{
+    std::string rspJson = jsResponse.dump();
+
+    bool scheduled = ScheduleTaskInLoop(
+        [this, tap, rspJson](void*) {
+            // 校验 TAP 是否仍然存活（可能在异步处理期间被 Drop）
+            if (tap->state != ZM_TAP_STATE_INUSE)
+            {
+                DEFAULT_LOG_WARN("TAP 已失效，丢弃异步响应，TAP:{}, state:{}",
+                    (void*)tap, tap->state);
+                return;
+            }
+
+            ZMJSON js;
+            std::string err;
+            js = zm_json_parse(rspJson, err);
+            if (!err.empty())
+            {
+                DEFAULT_LOG_ERROR("异步响应 JSON 解析失败: {}，TAP:{}", err, (void*)tap);
+                tap->Drop("async response json parse error");
+                return;
+            }
+            Response(tap, js);
+        },
+        nullptr, nullptr);
+
+    if (!scheduled)
+    {
+        DEFAULT_LOG_ERROR("ScheduleTaskInLoop 调度失败，事件循环可能已停止，TAP:{}", (void*)tap);
+    }
+}
+
+void NetDock::SetDropTimerAsync(ZM_TAP_CTX* tap, int seconds, int micros, uint32_t drop_timeout_error_code)
+{
+    bool scheduled = ScheduleTaskInLoop(
+        [tap, seconds, micros, drop_timeout_error_code](void*) {
+            ZmTapContext::SetDropTimer(tap, seconds, micros, drop_timeout_error_code);
+        },
+        nullptr, nullptr);
+
+    if (!scheduled)
+    {
+        DEFAULT_LOG_ERROR("ScheduleTaskInLoop 调度失败，SetDropTimerAsync 未执行，TAP:{}", (void*)tap);
+    }
 }
