@@ -10,7 +10,7 @@
 #define ZM_HTTP_SERVER_PORT     80
 
 /** 本地 HTTP URI 路径 */
-#define ZM_HTTPSERVER_ROOT_URI	"/ZiMo/ZiMoService"
+#define ZM_HTTPSERVER_ROOT_URI	"/ZiMo/JRPC"
 
 /** WebSocket 服务器监听端口 */
 #define ZM_WS_SERVER_PORT       37310

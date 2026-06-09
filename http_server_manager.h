@@ -10,9 +10,9 @@
  * 基于 ZmHttpServer 提供普通 HTTP 服务，不依赖 TAP/Hub/JRPC 代理链。
  * 每条请求在 ZmHttpServer 的独立工作线程中处理，不阻塞事件循环。
  *
- * 内部使用 ZmHttpRouter 进行路由分发，支持：
- *   - /api/*   JSON API 接口（RESTful 风格）
- *   - /*        静态文件服务（从 wwwRoot 目录读取，SPA 兜底返回 index.html）
+ * 内部使用 ZmHttpRouter 进行路由分发。采用白名单模式：
+ *   所有可访问路径由业务层通过 GetRouter() 显式注册，
+ *   未注册路径统一返回 404（不设通配符兜底）。
  */
 class HttpServerManager
 {
@@ -31,7 +31,7 @@ public:
 	void Close();
 
 	/**
-	 * @brief 获取路由器引用，供业务层注册 API 路由
+	 * @brief 获取路由器引用，供业务层注册路由
 	 *
 	 * 应在 Open() 之后、请求到达之前使用。
 	 * 路由器上已安装全局中间件（Logging、Recovery）和静态文件兜底。
@@ -40,6 +40,14 @@ public:
 
 	/** @brief 查询服务器是否正常运行（对象存在且线程存活） */
 	bool IsOpen() const { return m_httpServer != nullptr && m_httpServer->IsRunning(); }
+
+	/**
+	 * @brief 从 wwwRoot 目录读取并返回静态文件（供业务层注册路由时使用）
+	 * @param task 请求上下文
+	 * @param uri  请求 URI 路径（如 "/control.html"）
+	 * @return HTTP 状态码
+	 */
+	int ServeStaticFile(ZmHttpdTask* task, const std::string& uri);
 
 private:
 	/**
@@ -52,21 +60,13 @@ private:
 	int OnHttpRequest(ZmHttpdTask* task, const BYTE* data, size_t dlen);
 
 	/**
-	 * @brief 从 wwwRoot 目录读取并返回静态文件
-	 * @param task 请求上下文
-	 * @param uri  请求 URI 路径
-	 * @return HTTP 状态码
-	 */
-	int ServeStaticFile(ZmHttpdTask* task, const std::string& uri);
-
-	/**
 	 * @brief 根据文件扩展名返回 MIME 类型
 	 * @param path 文件路径或 URI
 	 * @return MIME 类型字符串，未知类型返回 "application/octet-stream"
 	 */
 	static const char* GetMimeType(const std::string& path);
 
-	/** @brief 安装全局中间件和静态文件兜底路由（API 路由由业务层通过 GetRouter() 注册） */
+	/** @brief 安装全局中间件和静态文件兜底路由（精确路由由业务层通过 GetRouter() 注册） */
 	void SetupRouter();
 
 private:

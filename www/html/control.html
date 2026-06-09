@@ -41,8 +41,8 @@
       <p class="muted">共 {{ routes.length }} 个接口 · 点击展开详情 · 支持一键复制和在线测试</p>
       <div class="doc-card" v-for="(r,i) in routes" :key="i" :class="{open: r._open}">
         <div class="doc-head" @click="r._open=!r._open">
-          <span class="doc-method" :class="r.method">{{ r.method }}</span>
-          <span class="doc-path">{{ r.path }}</span>
+          <span class="doc-method POST">JRPC</span>
+          <span class="doc-path">{{ r.method }}</span>
           <span class="doc-desc">{{ r.description }}</span>
           <span class="doc-arrow">{{ r._open ? '▾' : '▸' }}</span>
         </div>
@@ -64,15 +64,15 @@
     <section v-if="page==='test'">
       <h2>🧪 接口测试</h2>
       <div class="test-top">
-        <select v-model="testMethod" class="sel"><option>GET</option><option>POST</option></select>
-        <input v-model="testUrl" class="url-inp" placeholder="/api/service_status">
+        <input v-model="testMethod" class="url-inp" placeholder="方法名，如 getStatus" style="max-width:200px;">
+        <input v-model="testParams" class="url-inp" placeholder='参数 JSON，如 {"key":"value"}'>
         <button class="btn" @click="doTest" :disabled="tLoading">{{ tLoading?'发送中...':'▶ 发送' }}</button>
-        <button class="btn btn2" @click="tBody=''">🗑 清空</button>
+        <button class="btn btn2" @click="tResult='';testParams=''">🗑 清空</button>
       </div>
       <div class="test-panels">
         <div class="test-panel">
-          <div class="test-panel-h">请求体 <button class="cp" @click="copy(tBody)">📋 复制</button></div>
-          <textarea v-model="tBody" placeholder='{"key":"value"}'></textarea>
+          <div class="test-panel-h">请求体 <button class="cp" @click="copy(requestPreview)">📋 复制</button></div>
+          <textarea v-model="requestPreview" readonly></textarea>
         </div>
         <div class="test-panel">
           <div class="test-panel-h">返回体 <button class="cp" @click="copy(tResult)">📋 复制</button></div>

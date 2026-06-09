@@ -61,13 +61,22 @@ void HttpServerManager::SetupRouter()
 	m_router.Use(ZmHttpMiddlewareLogging());
 	m_router.Use(ZmHttpMiddlewareRecovery());
 
-	// --- 静态文件兜底（API 路由由业务层通过 GetRouter() 在外部注册）---
+	// --- 按目录放行静态文件（精确路由由业务层通过 GetRouter() 在外部注册）---
 	if (!m_wwwRoot.empty())
 	{
-		m_router.Any("/*", [this](ZmHttpdTask* task, const BYTE*, size_t) {
+		// html 目录：页面文件
+		m_router.Any("/html/*", [this](ZmHttpdTask* task, const BYTE*, size_t) {
 			std::string uri(task->Uri() ? task->Uri() : "/");
-			size_t q = uri.find('?');
-			if (q != std::string::npos) uri = uri.substr(0, q);
+			return ServeStaticFile(task, uri);
+		});
+		// css 目录：样式表
+		m_router.Any("/css/*", [this](ZmHttpdTask* task, const BYTE*, size_t) {
+			std::string uri(task->Uri() ? task->Uri() : "/");
+			return ServeStaticFile(task, uri);
+		});
+		// js 目录：脚本
+		m_router.Any("/js/*", [this](ZmHttpdTask* task, const BYTE*, size_t) {
+			std::string uri(task->Uri() ? task->Uri() : "/");
 			return ServeStaticFile(task, uri);
 		});
 	}
@@ -88,8 +97,8 @@ int HttpServerManager::OnHttpRequest(ZmHttpdTask* task, const BYTE* data, size_t
 
 int HttpServerManager::ServeStaticFile(ZmHttpdTask* task, const std::string& uri)
 {
-	// 确定文件路径：/ → /index.html
-	std::string filePath = (uri == "/" || uri.empty()) ? "/index.html" : uri;
+	// 确定文件路径：/ → /html/index.html
+	std::string filePath = (uri == "/" || uri.empty()) ? "/html/index.html" : uri;
 	if (!filePath.empty() && filePath[0] == '/')
 		filePath = filePath.substr(1);
 
@@ -140,7 +149,7 @@ int HttpServerManager::ServeStaticFile(ZmHttpdTask* task, const std::string& uri
 		return 200;
 
 	// SPA 兜底
-	std::string indexPath = normRootStr + "\\index.html";
+	std::string indexPath = normRootStr + "\\html\\index.html";
 	if (trySendFile(indexPath))
 		return 200;
 

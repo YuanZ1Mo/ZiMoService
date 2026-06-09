@@ -82,8 +82,8 @@ void ServiceCenter::OnStart(DWORD /*argc*/, TCHAR** /*argv[]*/)
         m_netDock->OpenHttpServer(wwwRoot.c_str());
     }
 
-    // 将 HTTP 路由器注入 ServicePortal，使其注册业务层 API 端点
-    m_servicePortal->RegisterHttpRoutes(m_netDock->GetHttpRouter());
+    // 注册 HTTP 80 端口路由（/control → 控制中心 SPA）
+    m_servicePortal->RegisterHttpRoutes(m_netDock->GetHttpServerManager());
 }
 
 void ServiceCenter::OnStop()

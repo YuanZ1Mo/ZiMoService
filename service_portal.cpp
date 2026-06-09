@@ -1,8 +1,8 @@
 #include "service_portal.h"
 #include "net_dock.h"
+#include "http_server_manager.h"
 #include "zm_net_tap.h"
 #include "zm_logger.h"
-#include "zm_util_thread.h"
 #include "zm_json.h"
 #include "zm_util_sys.h"
 #include "service_define.h"
@@ -60,31 +60,233 @@ void ServicePortal::ResponseErrorAsync(ZM_TAP_CTX* tap, const ZMJSON& jsError)
 }
 
 // ============================================================================
-// JRPC 方法分发（JrpcRequestReadCB 和 ProcessInternalJrpc 共用）
+// HTTP 80 端口路由注册
 // ============================================================================
 
 /**
- * @brief JRPC 方法分发，根据 method 名将结果写入 result 或 error
- * @param method JRPC 方法名
- * @param params JRPC 参数
- * @param result 输出：成功结果（非空表示成功）
- * @param error  输出：错误信息（非空表示失败，含 code 和 message）
+ * @brief 注册 HTTP 80 端口精确路由
+ *
+ * 页面入口显式注册，静态资源按目录放行（/html/* /css/* /js/*）。
+ * 未放行目录（如 doc/）无法通过 HTTP 访问。
  */
+void ServicePortal::RegisterHttpRoutes(HttpServerManager* httpMgr)
+{
+	if (!httpMgr)
+		return;
+
+	auto& router = httpMgr->GetRouter();
+
+	// GET / → 着陆页
+	router.Get("/", [httpMgr](ZmHttpdTask* task, const BYTE*, size_t) {
+		return httpMgr->ServeStaticFile(task, "/html/index.html");
+	});
+
+	// GET /control → 控制中心 SPA
+	router.Get("/control", [httpMgr](ZmHttpdTask* task, const BYTE*, size_t) {
+		return httpMgr->ServeStaticFile(task, "/html/control.html");
+	});
+}
+
+// ============================================================================
+// JRPC 方法注册
+// ============================================================================
+
+void ServicePortal::RegJrpcMethod(const char* name, const char* category,
+                                   const char* description,
+                                   const char* requestExample, const char* responseExample,
+                                   JrpcHandler handler)
+{
+	m_jrpcHandlers[name] = handler;
+	m_jrpcMethods.push_back({ name, category, description, requestExample, responseExample });
+}
+
+/**
+ * @brief 获取 exe 所在目录的上层目录路径
+ *
+ * exe 位于 $(SolutionDir)$(Configuration)\，上层即 $(SolutionDir)。
+ * 用于定位 README.md 和 www/ 等源码目录下的文件。
+ */
+static std::string GetProjectRoot()
+{
+	char exePath[MAX_PATH];
+	GetModuleFileNameA(NULL, exePath, MAX_PATH);
+	std::string dir(exePath);
+	size_t pos = dir.find_last_of("\\/");
+	if (pos != std::string::npos)
+		dir = dir.substr(0, pos);
+	// Release\ → 项目根目录
+	dir += "\\..";
+	char normalized[MAX_PATH];
+	if (GetFullPathNameA(dir.c_str(), MAX_PATH, normalized, nullptr))
+		return std::string(normalized);
+	return dir;
+}
+
+/**
+ * @brief 读取文件内容为字符串
+ * @param path 文件绝对路径
+ * @param out  输出字符串
+ * @return true 读取成功
+ */
+static bool ReadFileToString(const std::string& path, std::string& out)
+{
+	std::ifstream f(path);
+	if (!f.is_open())
+		return false;
+	std::stringstream ss;
+	ss << f.rdbuf();
+	out = ss.str();
+	return true;
+}
+
+void ServicePortal::InitJrpcMethods()
+{
+	if (m_jrpcMethodsInited)
+		return;
+	m_jrpcMethodsInited = true;
+
+	// ---- 系统 ----
+
+	RegJrpcMethod("ping", "系统",
+		"心跳检测，返回 pong",
+		"{\"method\":\"ping\",\"params\":{}}",
+		"{\"result\":{\"pong\":true}}",
+		[](const ZMJSON& /*params*/, ZMJSON& result, ZMJSON& /*error*/) {
+			result["pong"] = true;
+		});
+
+	RegJrpcMethod("getTime", "系统",
+		"获取服务器当前时间",
+		"{\"method\":\"getTime\",\"params\":{}}",
+		"{\"result\":{\"time\":\"2026-06-09 14:32:05.123\",\"timestamp\":1717835525}}",
+		[](const ZMJSON& /*params*/, ZMJSON& result, ZMJSON& /*error*/) {
+			time_t now = time(nullptr);
+			char buf[32];
+			ZmSystem::CurrentTimeStr(buf, sizeof(buf));
+			result["time"] = buf;
+			result["timestamp"] = (long)now;
+		});
+
+	RegJrpcMethod("getStatus", "系统",
+		"获取服务器综合状态（HTTP/JRPC/Hub/WS/系统负载/时间）",
+		"{\"method\":\"getStatus\",\"params\":{}}",
+		"{\"result\":{\"time\":\"...\",\"http\":{\"status\":\"running\",\"port\":80},"
+		"\"jrpc_http\":{\"status\":\"running\",\"port\":39440},"
+		"\"hub\":{\"status\":\"running\"},\"jrpc_proxy\":{\"status\":\"running\"},"
+		"\"websocket\":{\"status\":\"stopped\",\"port\":37310},"
+		"\"system\":{\"cpu\":12.5,\"memory\":45.2,\"totalMemMB\":16384,\"usedMemMB\":7400,"
+		"\"gpuAvailable\":false,\"gpu\":-1}}}",
+		[this](const ZMJSON& /*params*/, ZMJSON& result, ZMJSON& /*error*/) {
+			// 时间
+			time_t now = time(nullptr);
+			char buf[32];
+			ZmSystem::CurrentTimeStr(buf, sizeof(buf));
+			result["time"] = buf;
+			result["timestamp"] = (long)now;
+
+			// HTTP 服务器
+			result["http"]["status"] = (m_netDock && m_netDock->IsHttpOpen()) ? "running" : "stopped";
+			result["http"]["port"]   = ZM_HTTP_SERVER_PORT;
+
+			// JRPC HTTP
+			result["jrpc_http"]["status"] = (m_netDock && m_netDock->IsJrpcHttpOpen()) ? "running" : "stopped";
+			result["jrpc_http"]["port"]   = ZM_JSONRPC_SERVER_PORT;
+
+			// Hub
+			result["hub"]["status"] = (m_netDock && m_netDock->IsHubOpen()) ? "running" : "stopped";
+
+			// JRPC Proxy
+			result["jrpc_proxy"]["status"] = (m_netDock && m_netDock->IsJrpcProxyOpen()) ? "running" : "stopped";
+
+			// WebSocket
+			result["websocket"]["status"] = (m_netDock && m_netDock->IsWebSocketOpen()) ? "running" : "stopped";
+			result["websocket"]["port"]   = ZM_WS_SERVER_PORT;
+
+			// 系统负载
+			auto load = ZmSystem::GetSystemLoad();
+			result["system"]["cpu"]           = load.cpu_percent;
+			result["system"]["memory"]        = load.memory_percent;
+			result["system"]["totalMemMB"]    = load.total_memory_mb;
+			result["system"]["usedMemMB"]     = load.used_memory_mb;
+			result["system"]["gpuAvailable"]  = load.has_gpu;
+			result["system"]["gpu"]           = (load.has_gpu ? load.gpu_percent : -1.0);
+		});
+
+	// ---- 测试 ----
+
+	RegJrpcMethod("echo", "测试",
+		"通用接口测试，回显传入的数据",
+		"{\"method\":\"echo\",\"params\":{\"key\":\"value\"}}",
+		"{\"result\":{\"echo\":{\"key\":\"value\"}}}",
+		[](const ZMJSON& params, ZMJSON& result, ZMJSON& /*error*/) {
+			result["echo"] = params;
+		});
+
+	// ---- 文档 ----
+
+	RegJrpcMethod("getRoutes", "文档",
+		"获取已注册的 JRPC 方法文档列表",
+		"{\"method\":\"getRoutes\",\"params\":{}}",
+		"{\"result\":{\"routes\":[{\"method\":\"ping\",\"path\":\"系统\",\"description\":\"...\"}],\"total\":5}}",
+		[this](const ZMJSON& /*params*/, ZMJSON& result, ZMJSON& /*error*/) {
+			ZMJSON arr = ZMJSON::array();
+			for (auto& doc : m_jrpcMethods)
+			{
+				ZMJSON item;
+				item["method"]          = doc.method;
+				item["path"]            = doc.path;
+				item["description"]     = doc.description;
+				item["requestExample"]  = doc.requestExample;
+				item["responseExample"] = doc.responseExample;
+				arr.push_back(item);
+			}
+			result["routes"] = arr;
+			result["total"]  = (int)arr.size();
+		});
+
+	// ---- 关于 ----
+
+	RegJrpcMethod("getAbout", "文档",
+		"获取后端和前端的技术信息（README.md）",
+		"{\"method\":\"getAbout\",\"params\":{}}",
+		"{\"result\":{\"backend\":\"# ZiMoService\\n...\",\"frontend\":\"# 前端\\n...\"}}",
+		[this](const ZMJSON& /*params*/, ZMJSON& result, ZMJSON& /*error*/) {
+			std::string root = GetProjectRoot();
+
+			// 后端 README.md
+			std::string backendMd;
+			if (ReadFileToString(root + "\\README.md", backendMd))
+				result["backend"] = backendMd;
+			else
+				result["backend"] = "README.md not found";
+
+			// 前端 README.md
+			std::string frontendMd;
+			if (ReadFileToString(root + "\\www\\doc\\README.md", frontendMd))
+				result["frontend"] = frontendMd;
+			else
+				result["frontend"] = "www/doc/README.md not found";
+		});
+}
+
+// ============================================================================
+// JRPC 方法分发（JrpcRequestReadCB 和 ProcessInternalJrpc 共用）
+// ============================================================================
+
 void ServicePortal::DispatchJrpcMethod(const std::string& method, const ZMJSON& params,
                                         ZMJSON& result, ZMJSON& error)
 {
-	if (method == "ping")
+	// 懒初始化方法注册表
+	InitJrpcMethods();
+
+	auto it = m_jrpcHandlers.find(method);
+	if (it != m_jrpcHandlers.end())
 	{
-		result["pong"] = true;
-	}
-	else if (method == "getStatus")
-	{
-		result["status"] = "running";
-		result["uptime"] = 12345;
+		it->second(params, result, error);
 	}
 	else
 	{
-		error["code"] = -32601;
+		error["code"]    = -32601;
 		error["message"] = "Method not found: " + method;
 	}
 }
@@ -115,7 +317,7 @@ void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 	if (!err.empty())
 	{
 		ZMJSON errRsp;
-		errRsp["code"] = -32700;
+		errRsp["code"]    = -32700;
 		errRsp["message"] = "Parse error: " + err;
 		ResponseErrorAsync(tap, errRsp);
 		return;
@@ -155,7 +357,7 @@ std::string ServicePortal::ProcessInternalJrpc(const std::string& requestJson)
 
 	if (!err.empty())
 	{
-		response["error"]["code"] = -32700;
+		response["error"]["code"]    = -32700;
 		response["error"]["message"] = "Parse error: " + err;
 		return response.dump();
 	}
@@ -173,194 +375,4 @@ std::string ServicePortal::ProcessInternalJrpc(const std::string& requestJson)
 		response["result"] = result;
 
 	return response.dump();
-}
-
-// ============================================================================
-// 路由文档辅助
-// ============================================================================
-
-void ServicePortal::Reg(ZmHttpRouter& router, const char* method, const char* path,
-                         ZmHttpRouter::Handler handler, const char* desc,
-                         const char* reqExample, const char* rspExample)
-{
-	if (strcmp(method, "GET") == 0)      router.Get(path, handler);
-	else if (strcmp(method, "POST") == 0) router.Post(path, handler);
-	else                                  router.Any(path, handler);
-
-	m_routeDocs.push_back({ method, path, desc, reqExample, rspExample });
-}
-
-// ============================================================================
-// HTTP API 路由注册
-// ============================================================================
-
-void ServicePortal::RegisterHttpRoutes(ZmHttpRouter& router)
-{
-	// ---------- 系统 API ----------
-
-	Reg(router, "GET", "/api/service_time", [](ZmHttpdTask* task, const BYTE*, size_t) {
-		time_t now = time(nullptr);
-		char buf[32];
-		ZmSystem::CurrentTimeStr(buf, sizeof(buf));
-
-		ZMJSON rsp;
-		rsp["time"] = buf;
-		rsp["timestamp"] = (long)now;
-		task->PutReplyHeader("Content-type", "application/json; charset=utf-8");
-		std::string body = rsp.dump();
-		task->SetReplyData((const BYTE*)body.c_str(), body.size());
-		return 200;
-	}, "获取服务器当前时间",
-	   "GET /api/service_time",
-	   "{\"time\":\"2026-06-08 14:32:05.123\",\"timestamp\":1717835525}");
-
-	Reg(router, "GET", "/api/service_status", [this](ZmHttpdTask* task, const BYTE*, size_t) {
-		ZMJSON rsp;
-
-		// HTTP 服务器
-		rsp["http"]["status"] = (m_netDock && m_netDock->IsHttpOpen()) ? "running" : "stopped";
-		rsp["http"]["port"]   = ZM_HTTP_SERVER_PORT;
-
-		// JRPC HTTP
-		rsp["jrpc_http"]["status"] = (m_netDock && m_netDock->IsJrpcHttpOpen()) ? "running" : "stopped";
-		rsp["jrpc_http"]["port"]   = ZM_JSONRPC_SERVER_PORT;
-
-		// Hub
-		rsp["hub"]["status"] = (m_netDock && m_netDock->IsHubOpen()) ? "running" : "stopped";
-
-		// JRPC Proxy
-		rsp["jrpc_proxy"]["status"] = (m_netDock && m_netDock->IsJrpcProxyOpen()) ? "running" : "stopped";
-
-		// WebSocket
-		rsp["websocket"]["status"] = (m_netDock && m_netDock->IsWebSocketOpen()) ? "running" : "stopped";
-		rsp["websocket"]["port"]   = ZM_WS_SERVER_PORT;
-
-		// 系统负载
-		auto load = ZmSystem::GetSystemLoad();
-		rsp["system"]["cpu"]        = load.cpu_percent;
-		rsp["system"]["memory"]     = load.memory_percent;
-		rsp["system"]["totalMemMB"] = load.total_memory_mb;
-		rsp["system"]["usedMemMB"]  = load.used_memory_mb;
-		rsp["system"]["gpuAvailable"] = load.has_gpu;
-		rsp["system"]["gpu"]        = (load.has_gpu ? load.gpu_percent : -1.0);
-
-		task->PutReplyHeader("Content-type", "application/json; charset=utf-8");
-		std::string body = rsp.dump();
-		task->SetReplyData((const BYTE*)body.c_str(), body.size());
-		return 200;
-	}, "获取服务器综合状态（HTTP/JRPC/Hub/WS/系统负载）",
-	   "GET /api/service_status",
-	   "{\"http\":{\"status\":\"running\",\"port\":80},\"jrpc_http\":{\"status\":\"running\",\"port\":39440},"
-	   "\"hub\":{\"status\":\"running\"},\"jrpc_proxy\":{\"status\":\"running\"},"
-	   "\"websocket\":{\"status\":\"stopped\",\"port\":37310},"
-	   "\"system\":{\"cpu\":12.5,\"memory\":45.2,\"totalMemMB\":16384,\"usedMemMB\":7400,\"gpuAvailable\":false,\"gpu\":-1}}");
-
-	// ---------- 接口测试 ----------
-
-	Reg(router, "ANY", "/api/api_test", [](ZmHttpdTask* task, const BYTE* data, size_t dlen) {
-		task->PutReplyHeader("Content-type", "application/json; charset=utf-8");
-		if (task->Method() != EVHTTP_REQ_POST)
-		{
-			std::string body = "{\"message\":\"请使用 POST 方法发送 JSON 数据\"}";
-			task->SetReplyData((const BYTE*)body.c_str(), body.size());
-			return 200;
-		}
-		if (!data || dlen == 0)
-		{
-			std::string body = "{\"message\":\"请求体为空，请输入 JSON\"}";
-			task->SetReplyData((const BYTE*)body.c_str(), body.size());
-			return 200;
-		}
-		std::string reqBody((const char*)data, dlen);
-		std::string err;
-		ZMJSON reqJson = zm_json_parse(reqBody, err);
-		ZMJSON rsp;
-		rsp["echo"] = err.empty() ? reqJson : ZMJSON(reqBody);
-		rsp["length"] = (int)dlen;
-		std::string body = rsp.dump();
-		task->SetReplyData((const BYTE*)body.c_str(), body.size());
-		return 200;
-	}, "通用接口测试，POST JSON 并回显",
-	   "POST /api/api_test\nContent-Type: application/json\n\n{\"key\":\"value\"}",
-	   "{\"echo\":{\"key\":\"value\"},\"length\":16}");
-
-	// ---------- 路由文档 ----------
-
-	Reg(router, "GET", "/api/routes", [this](ZmHttpdTask* task, const BYTE*, size_t) {
-		ZMJSON rsp;
-		ZMJSON arr = ZMJSON::array();
-		for (auto& doc : m_routeDocs)
-		{
-			ZMJSON item;
-			item["method"]          = doc.method;
-			item["path"]            = doc.path;
-			item["description"]     = doc.description;
-			item["requestExample"]  = doc.requestExample;
-			item["responseExample"] = doc.responseExample;
-			arr.push_back(item);
-		}
-		rsp["routes"] = arr;
-		rsp["total"] = (int)arr.size();
-		task->PutReplyHeader("Content-type", "application/json; charset=utf-8");
-		std::string body = rsp.dump();
-		task->SetReplyData((const BYTE*)body.c_str(), body.size());
-		return 200;
-	}, "获取已注册的 API 路由文档列表",
-	   "GET /api/routes",
-	   "{\"routes\":[{\"method\":\"GET\",\"path\":\"/api/service_time\",...}],\"total\":6}");
-
-	// ---------- 关于（读取 README 文件）----------
-
-	Reg(router, "GET", "/api/about/backend", [](ZmHttpdTask* task, const BYTE*, size_t) {
-		// 从 exe 目录上翻一层找 README.md
-		char exePath[MAX_PATH];
-		GetModuleFileNameA(NULL, exePath, MAX_PATH);
-		std::string dir(exePath);
-		size_t pos = dir.find_last_of("\\/");
-		if (pos != std::string::npos) dir = dir.substr(0, pos);
-		std::string readmePath = dir + "\\..\\README.md";
-
-		std::ifstream f(readmePath);
-		if (!f.is_open())
-		{
-			task->PutReplyHeader("Content-type", "text/plain; charset=utf-8");
-			std::string body = "README.md not found at: " + readmePath;
-			task->SetReplyData((const BYTE*)body.c_str(), body.size());
-			return 404;
-		}
-		std::stringstream ss;
-		ss << f.rdbuf();
-		std::string body = ss.str();
-		task->PutReplyHeader("Content-type", "text/markdown; charset=utf-8");
-		task->SetReplyData((const BYTE*)body.c_str(), body.size());
-		return 200;
-	}, "获取后端 README.md（架构和技术栈）",
-	   "GET /api/about/backend",
-	   "# ZiMoService\n\nZiMo 客户端生态的核心 Windows 服务...");
-
-	Reg(router, "GET", "/api/about/frontend", [](ZmHttpdTask* task, const BYTE*, size_t) {
-		char exePath[MAX_PATH];
-		GetModuleFileNameA(NULL, exePath, MAX_PATH);
-		std::string dir(exePath);
-		size_t pos = dir.find_last_of("\\/");
-		if (pos != std::string::npos) dir = dir.substr(0, pos);
-		std::string readmePath = dir + "\\..\\www\\README.md";
-
-		std::ifstream f(readmePath);
-		if (!f.is_open())
-		{
-			task->PutReplyHeader("Content-type", "text/plain; charset=utf-8");
-			std::string body = "www/README.md not found";
-			task->SetReplyData((const BYTE*)body.c_str(), body.size());
-			return 404;
-		}
-		std::stringstream ss;
-		ss << f.rdbuf();
-		std::string body = ss.str();
-		task->PutReplyHeader("Content-type", "text/markdown; charset=utf-8");
-		task->SetReplyData((const BYTE*)body.c_str(), body.size());
-		return 200;
-	}, "获取前端 README.md（前端技术信息）",
-	   "GET /api/about/frontend",
-	   "# 前端\n\n基于 Vue 3 + ZmHttpRouter...");
 }

@@ -89,6 +89,12 @@ public:
      */
     ZmHttpRouter& GetHttpRouter();
 
+    /**
+     * @brief 获取 HTTP 服务器管理器指针，供业务层注册静态文件路由
+     * @return HttpServerManager* 指针，未初始化时返回 nullptr
+     */
+    HttpServerManager* GetHttpServerManager() { return m_httpServerMgr; }
+
     // --- 状态查询 ---
 
     /** @brief HTTP 服务器是否运行中 */
