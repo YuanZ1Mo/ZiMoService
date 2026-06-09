@@ -17,14 +17,14 @@
  *   1. DockRunLoop — libevent 事件循环线程
  *   2. MessageServerManager — WebSocket 服务器
  *   3. HubProxyManager — TAP Hub 路由层（多协议前端共享）
- *   4. HttpJsonRpcManager — HTTP JSON-RPC 前端
+ *   4. HttpJsonRpcManager — HTTP JSON-RPC 前端（含内部 JRPC 请求通道）
  *   5. ScheduleTaskInLoop — 跨线程任务调度
  *
  * 启动顺序约束：
- *   Init → OpenHub → OpenHttpJsonRpcServer / OpenSocks5Server（Hub 必须先于前端启动）
+ *   Init → OpenHub → OpenHttpJsonRpcServer（内部自行创建 ZmNetRequestChannel）
  *
  * 关闭顺序约束：
- *   前端先停 → Hub 再停 → DockRunLoop 最后停
+ *   前端先停（内部先关 ZmNetRequestChannel 再 join Worker）→ Hub 停 → DockRunLoop 停
  */
 class NetDock
 {
@@ -66,9 +66,12 @@ public:
     /**
      * @brief 启动 HTTP JSON-RPC 前端
      * @note 依赖 Hub 已启动，否则仅输出错误日志而不创建 HTTP 服务器
+     *
+     * HttpJsonRpcManager 内部自行创建 ZmNetRequestChannel 并将请求
+     * 通过 bufferevent_pair 注入 Hub 代理链。
      */
     void OpenHttpJsonRpcServer();
-    /** @brief 停止 HTTP JSON-RPC 前端 */
+    /** @brief 停止 HTTP JSON-RPC 前端（内部先关通道再 join Worker） */
     void CloseHttpJsonRpcServer();
 
     /**
@@ -177,8 +180,6 @@ private:
     /** @brief 调度事件回调，在 libevent 线程中执行 fn_run → fn_cb 后释放 ctx */
     static void OnScheduleEventCB(evutil_socket_t fd, short what, void* ctx);
 
-    // --- 调度任务上下文 ---
-
     /**
      * @brief 调度任务上下文，event_new → OnScheduleEventCB → delete
      *
@@ -199,7 +200,7 @@ private:
     event_base*            m_evbase;              ///< 缓存的 event_base（从 DockRunLoop 获取）
     MessageServerManager*  m_messageServerMgr;    ///< WebSocket 服务器管理器
     HubProxyManager*       m_hubProxyMgr;         ///< TAP Hub 路由层（多协议前端共享）
-    HttpJsonRpcManager*    m_httpJsonRpcMgr;      ///< HTTP JSON-RPC 前端
+    HttpJsonRpcManager*    m_httpJsonRpcMgr;      ///< HTTP JSON-RPC 前端（含内部请求通道）
     HttpServerManager*     m_httpServerMgr;       ///< 通用 HTTP 前端（端口 80）
     TapDelegateJrpcRequestReadCB m_jrpcRequestReadCB;  ///< JRPC 外部回调，OpenHub 时注入
     bool                   m_unInited;            ///< 防止 UnInit 重复执行

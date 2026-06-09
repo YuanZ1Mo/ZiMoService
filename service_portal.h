@@ -37,19 +37,40 @@ public:
 	void RegisterHttpRoutes(ZmHttpRouter& router);
 
 public:
+	/** @brief TAP 链入口：JRPC 请求回调（在 JRPC delegate 线程池中执行） */
 	void JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData);
 
-	// --- 同步响应 ---
+	/**
+	 * @brief 内部通道入口：处理 JRPC 请求并同步返回响应（在事件循环线程中调用）
+	 * @param requestJson 请求 JSON 字符串
+	 * @return 完整响应 JSON 字符串（含 result 或 error）
+	 *
+	 * 与 JrpcRequestReadCB 共享方法分发逻辑，但不依赖 TAP 上下文和异步响应路径。
+	 * 供 ZmNetRequestChannel::Drain 调用，替代原 socketpair 跨线程通信。
+	 */
+	std::string ProcessInternalJrpc(const std::string& requestJson);
+
+	// --- 同步响应（必须在 libevent 线程中调用）---
 	void Response(ZM_TAP_CTX* tap, const ZMJSON& jsResponse);
 	void ResponseResult(ZM_TAP_CTX* tap, const ZMJSON& jsResult);
 	void ResponseError(ZM_TAP_CTX* tap, const ZMJSON& jsError);
 
-	// --- 异步响应 ---
+	// --- 异步响应（可在任意线程中调用，内部回投到 libevent 线程）---
 	void ResponseAsync(ZM_TAP_CTX* tap, const ZMJSON& jsResponse);
 	void ResponseResultAsync(ZM_TAP_CTX* tap, const ZMJSON& jsResult);
 	void ResponseErrorAsync(ZM_TAP_CTX* tap, const ZMJSON& jsError);
 
 private:
+	/**
+	 * @brief JRPC 方法分发（JrpcRequestReadCB 和 ProcessInternalJrpc 共用）
+	 * @param method JRPC 方法名
+	 * @param params JRPC 参数
+	 * @param result 输出：成功结果（非空表示成功）
+	 * @param error  输出：错误信息（非空表示失败）
+	 */
+	void DispatchJrpcMethod(const std::string& method, const ZMJSON& params,
+	                        ZMJSON& result, ZMJSON& error);
+
 	NetDock* m_netDock = nullptr;
 
 	/** @brief 已注册的 API 路由文档列表（供 /api/routes 查询） */

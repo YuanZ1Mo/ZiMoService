@@ -60,7 +60,37 @@ void ServicePortal::ResponseErrorAsync(ZM_TAP_CTX* tap, const ZMJSON& jsError)
 }
 
 // ============================================================================
-// JRPC 请求回调
+// JRPC 方法分发（JrpcRequestReadCB 和 ProcessInternalJrpc 共用）
+// ============================================================================
+
+/**
+ * @brief JRPC 方法分发，根据 method 名将结果写入 result 或 error
+ * @param method JRPC 方法名
+ * @param params JRPC 参数
+ * @param result 输出：成功结果（非空表示成功）
+ * @param error  输出：错误信息（非空表示失败，含 code 和 message）
+ */
+void ServicePortal::DispatchJrpcMethod(const std::string& method, const ZMJSON& params,
+                                        ZMJSON& result, ZMJSON& error)
+{
+	if (method == "ping")
+	{
+		result["pong"] = true;
+	}
+	else if (method == "getStatus")
+	{
+		result["status"] = "running";
+		result["uptime"] = 12345;
+	}
+	else
+	{
+		error["code"] = -32601;
+		error["message"] = "Method not found: " + method;
+	}
+}
+
+// ============================================================================
+// JRPC 请求回调（TAP 链入口）
 // ============================================================================
 
 /**
@@ -93,26 +123,56 @@ void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 
 	std::string method = zm_json_get_str(reqJson, "method");
 	ZMJSON params = reqJson["params"];
+	ZMJSON error;
 
-	if (method == "ping")
-	{
-		result["pong"] = true;
-	}
-	else if (method == "getStatus")
-	{
-		result["status"] = "running";
-		result["uptime"] = 12345;
-	}
+	DispatchJrpcMethod(method, params, result, error);
+
+	if (!error.empty())
+		ResponseErrorAsync(tap, error);
 	else
+		ResponseResultAsync(tap, result);
+}
+
+// ============================================================================
+// 内部 JRPC 请求处理（进程内通道入口，事件循环线程同步调用）
+// ============================================================================
+
+/**
+ * @brief 处理内部 JRPC 请求并同步返回响应
+ *
+ * 在事件循环线程中由 ZmNetRequestChannel::Drain 调用。与 JrpcRequestReadCB
+ * 共享 DispatchJrpcMethod 分发逻辑，但不经过 TAP 链和异步响应路径。
+ *
+ * @param requestJson 请求 JSON 字符串（含 method 和 params 字段）
+ * @return 完整响应 JSON 字符串（含 result 或 error 字段）
+ */
+std::string ServicePortal::ProcessInternalJrpc(const std::string& requestJson)
+{
+	ZMJSON response;
+
+	std::string err;
+	ZMJSON reqJson = zm_json_parse(requestJson, err);
+
+	if (!err.empty())
 	{
-		ZMJSON errRsp;
-		errRsp["code"] = -32601;
-		errRsp["message"] = "Method not found: " + method;
-		ResponseErrorAsync(tap, errRsp);
-		return;
+		response["error"]["code"] = -32700;
+		response["error"]["message"] = "Parse error: " + err;
+		return response.dump();
 	}
 
-	ResponseResultAsync(tap, result);
+	std::string method = zm_json_get_str(reqJson, "method");
+	ZMJSON params = reqJson["params"];
+	ZMJSON result;
+	ZMJSON error;
+
+	DispatchJrpcMethod(method, params, result, error);
+
+	if (!error.empty())
+		response["error"] = error;
+	else
+		response["result"] = result;
+
+	return response.dump();
 }
 
 // ============================================================================
