@@ -18,6 +18,9 @@
 /** HTTP JSON-RPC 服务器监听端口 */
 #define ZM_JSONRPC_SERVER_PORT  39440
 
+/** SOCKS5 服务器监听端口 */
+#define ZM_SOCKS5_SERVER_PORT   39540
+
 /** JRPC 协议帧魔数（4 字节） */
 #define ZM_JRPC_MAGIC           "JRPC"
 

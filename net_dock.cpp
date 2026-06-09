@@ -2,6 +2,7 @@
 #include "zm_logger.h"
 #include "zm_json.h"
 #include "zm_net_tap.h"
+#include "zm_net_socket.h"
 
 NetDock::NetDock()
     : m_dockRunloop(nullptr)
@@ -21,6 +22,8 @@ NetDock::~NetDock()
 
 void NetDock::Init()
 {
+    ZmWinSockHelper::Init();
+
     if (!m_dockRunloop)
     {
         m_dockRunloop = new DockRunLoop();
@@ -36,15 +39,18 @@ void NetDock::UnInit()
     m_unInited = true;
 
     // ★ 关闭顺序严格不可变：
-    //   ① 前端服务器先停 — 不再产生新的请求（Worker 线程终止，不再有 ScheduleTaskInLoop 调用）
-    //   ② Hub 路由层再停 — 释放 TAP 组件（其 event/bufferevent 均注册在 _evbase 上）
-    //   ③ 取消残留的调度任务 — 释放未触发的 ctx（正常情况此集合已空，兜底用）
-    //   ④ DockRunLoop 最后停 — 退出事件循环，freeEventObjects 安全清理 _evbase
+    //   ① 不依赖 Hub 的前端先停 — 不再接受新连接，Worker 线程退出（不经过 SendToHubProxy，无 recv 阻塞风险）
+    //   ② Hub 路由层停止 — 释放所有 TAP 组件，关闭 fd[1]，唤醒阻塞在 recv(fd[0]) 上的 JRPC Worker 线程
+    //   ③ 依赖 Hub 的前端（JRPC HTTP）后停 — Worker 线程的 recv 已因 Hub 关闭收到 EOF，可安全 join
+    //   ④ 取消残留的调度任务 — 释放未触发的 ctx（正常情况此集合已空，兜底用）
+    //   ⑤ DockRunLoop 最后停 — 退出事件循环，freeEventObjects 安全清理 _evbase
     CloseHttpServer();
-    CloseHttpJsonRpcServer();
     CloseSocks5Server();
     CloseWebSocketServer();
+    // ★ 先关 Hub：释放所有 TAP → 关闭对端 fd[1] → Worker 线程 recv(fd[0]) 收到 EOF 返回 0
     CloseHub();
+    // ★ Hub 已关，Worker 线程已被唤醒，可安全 join
+    CloseHttpJsonRpcServer();
 
     // 前端已停，不会再有新的 ScheduleTaskInLoop 调用。清理可能残留的 ctx
     {

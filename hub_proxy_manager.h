@@ -12,7 +12,7 @@
  *   Open()  → 创建 TAP 上下文池、Hub Proxy、JRPC Delegate（未来可扩展 SOCKS5 等）
  *   Close() → TAP 上下文先清理 → HubProxy delegate 停止 → JRPC delegate 停止
  *
- * 协议前端（HttpJsonRpcManager / HttpSocks5Manager）通过 OnPairAcceptConn()
+ * 协议前端（HttpJsonRpcManager）通过 OnPairAcceptConn()
  * 将请求注入 Hub Proxy，由协议探测自动分发到对应 delegate。
  */
 class HubProxyManager
@@ -57,7 +57,7 @@ private:
     ZmTapContext*      m_tapContext;       ///< TAP 上下文池（所有前端共享）
     ZmTapDelegateJRPC* m_tapDelegateJRPC;  ///< JRPC 协议委托处理器
     ZmTapHubProxy*     m_tapHubProxy;      ///< Hub 代理（共享消息路由）
-    uint16_t           m_hubProxyPort;     ///< Hub 代理监听端口（兼容旧 TCP 路径）
+    uint16_t           m_hubSocks5Port;    ///< Hub 代理监听端口,用于转发socks5代理
 
     event_base*        m_evbase;           ///< libevent 事件循环基
     evdns_base*        m_evdnsbase;        ///< libevent DNS 解析基

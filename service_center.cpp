@@ -1,7 +1,6 @@
 #include "service_center.h"
 
 #include "service_global.h"
-#include "zm_net_socket.h"
 #include "zm_logger.h"
 
 #include "net_dock.h"
@@ -52,7 +51,6 @@
 
 void ServiceCenter::OnStart(DWORD /*argc*/, TCHAR** /*argv[]*/)
 {
-    ZmWinSockHelper::Init();
     //initMessageServer();
     //initHttpServer();
 

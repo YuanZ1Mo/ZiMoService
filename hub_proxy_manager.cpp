@@ -1,11 +1,11 @@
 #include "hub_proxy_manager.h"
 #include "zm_logger.h"
+#include "service_define.h"
 
 HubProxyManager::HubProxyManager()
     : m_tapContext(nullptr)
     , m_tapDelegateJRPC(nullptr)
     , m_tapHubProxy(nullptr)
-    , m_hubProxyPort(0)
     , m_evbase(nullptr)
     , m_evdnsbase(nullptr)
 {
@@ -44,7 +44,7 @@ bool HubProxyManager::Open(event_base* evbase, evdns_base* evdnsbase,
         m_tapHubProxy->SetJrpcDelegate(m_tapDelegateJRPC);
         m_tapHubProxy->SetEvDns(m_evdnsbase);
         m_tapHubProxy->StartTapDelegate(m_tapContext, m_evbase, ZM_DELEGATE_MODE_PROXY_INTERNAL_HUB);
-        m_hubProxyPort = m_tapHubProxy->AddListenPort(0);
+        m_hubSocks5Port = m_tapHubProxy->AddListenPort(ZM_SOCKS5_SERVER_PORT);
     }
 
     return (nullptr != m_tapHubProxy);
@@ -78,7 +78,7 @@ void HubProxyManager::Close()
         m_tapDelegateJRPC = nullptr;
     }
 
-    m_hubProxyPort = 0;
+    m_hubSocks5Port = 0;
     m_evbase = nullptr;
     m_evdnsbase = nullptr;
 }

@@ -95,7 +95,8 @@ bool HttpJsonRpcManager::SendToHubProxy(const char* reqjs, std::string& rspjs)
 
     // 3. 在事件循环线程中将 fd[1] 注入 Hub Proxy
     //    捕获 hubMgr 裸指针而非 this，避免 HttpJsonRpcManager 先于 lambda 被释放导致 UAF
-    //    生命周期保证：NetDock::UnInit 中 CloseHub 在 CloseHttpJsonRpcServer 之后调用
+    //    生命周期保证：NetDock::UnInit 中 CloseHub 先于 CloseHttpJsonRpcServer 执行，
+    //    Hub 关闭时释放 TAP → 关闭 fd[1] → Worker 端 recv(fd[0]) 收到 EOF 返回
     auto* hubMgr = m_hubMgr;
     std::mutex              mtx;
     std::condition_variable cv;
