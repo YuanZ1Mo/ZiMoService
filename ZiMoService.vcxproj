@@ -216,7 +216,6 @@
     <ClInclude Include="..\ZiMoPublic\libevent\include\evutil.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_dns.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_http.h" />
-    <ClInclude Include="..\ZiMoPublic\net\zm_net_http_middleware.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_http_router.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_ip.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_request_channel.h" />
@@ -502,7 +501,6 @@
   <ItemGroup>
     <ClCompile Include="..\ZiMoPublic\net\zm_net_dns.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_http.cpp" />
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_http_middleware.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_http_router.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_ip.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_request_channel.cpp" />

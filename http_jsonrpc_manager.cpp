@@ -23,13 +23,13 @@ HttpJsonRpcManager::~HttpJsonRpcManager()
 
 bool HttpJsonRpcManager::Open(HubProxyManager* hubMgr)
 {
-    if (!hubMgr)
+    if (hubMgr == nullptr)
         return false;
 
     m_hubMgr = hubMgr;
 
     // 1. 创建 bufferevent_pair 对象池（预创建，减少高并发下的系统调用开销）
-    if (!m_pairPool)
+    if (m_pairPool == nullptr)
     {
         m_pairPool = new BuffereventPairPool();
         m_pairPool->Init(hubMgr->EvBase(), 128);
@@ -43,7 +43,7 @@ bool HttpJsonRpcManager::Open(HubProxyManager* hubMgr)
     }
 
     // 3. 创建 HTTP JSON-RPC 服务器，注册异步回调（Worker 线程不阻塞）
-    if (nullptr == m_httpServerJRPC)
+    if (m_httpServerJRPC == nullptr)
     {
         m_httpServerJRPC = new ZmJsonRpcServer(ZM_HTTPSERVER_ROOT_URI, ZM_JSONRPC_SERVER_PORT);
         m_httpServerJRPC->Start();
@@ -52,7 +52,7 @@ bool HttpJsonRpcManager::Open(HubProxyManager* hubMgr)
             std::placeholders::_3, std::placeholders::_4));
     }
 
-    return (nullptr != m_httpServerJRPC);
+    return (m_httpServerJRPC != nullptr);
 }
 
 void HttpJsonRpcManager::Close()
@@ -60,7 +60,7 @@ void HttpJsonRpcManager::Close()
     // ★ 先关通道（拒绝所有 pending promise），再停 HTTP 服务器（join 线程池）
     CloseJrpcChannel();
 
-    if (m_httpServerJRPC)
+    if (m_httpServerJRPC != nullptr)
     {
         m_httpServerJRPC->Stop();
         delete m_httpServerJRPC;
@@ -68,7 +68,7 @@ void HttpJsonRpcManager::Close()
     }
 
     // 销毁 pair 池（在通道关闭后，确保没有在飞的请求）
-    if (m_pairPool)
+    if (m_pairPool != nullptr)
     {
         m_pairPool->Shutdown();
         delete m_pairPool;
@@ -84,19 +84,19 @@ void HttpJsonRpcManager::Close()
 
 bool HttpJsonRpcManager::OpenJrpcChannel(HubProxyManager* hubMgr)
 {
-    if (m_hub_channel)
+    if (m_hub_channel != nullptr)
     {
         DEFAULT_LOG_WARN("ZmNetRequestChannel already opened, skipping");
         return true;
     }
 
-    if (!hubMgr || !hubMgr->HubProxy())
+    if (hubMgr == nullptr || hubMgr->HubProxy() == nullptr)
     {
         DEFAULT_LOG_ERROR("OpenJrpcChannel failed: Hub not available");
         return false;
     }
 
-    if (!m_hubMgr->EvBase())
+    if (m_hubMgr->EvBase() == nullptr)
     {
         DEFAULT_LOG_ERROR("OpenJrpcChannel failed: evbase not set");
         return false;
@@ -119,7 +119,7 @@ bool HttpJsonRpcManager::OpenJrpcChannel(HubProxyManager* hubMgr)
 
 void HttpJsonRpcManager::CloseJrpcChannel()
 {
-    if (!m_hub_channel)
+    if (m_hub_channel == nullptr)
         return;
 
     m_hub_channel->Close(m_hubMgr->EvBase());
@@ -152,7 +152,7 @@ void HttpJsonRpcManager::OnJsonRpcAsync(ZmHttpdTask* task, const std::string& me
     reqobj["request_useragent"] = task->GetRequestHeader("User-Agent");
     reqobj["params"] = params;
 
-    if (!m_hub_channel)
+    if (m_hub_channel == nullptr)
     {
         ZMJSON err;
         err["code"] = ZM_JRPC_ERR_SEND_HUB;
@@ -206,7 +206,7 @@ void HttpJsonRpcManager::InjectJrpcRequest(const std::string& request_json,
     PairPoolSlot* slot = m_pairPool ? m_pairPool->Acquire() : nullptr;
 
     struct bufferevent* pair[2] = { nullptr, nullptr };
-    if (slot)
+    if (slot != nullptr)
     {
         pair[0] = slot->pair[0];
         pair[1] = slot->pair[1];
@@ -231,7 +231,7 @@ void HttpJsonRpcManager::InjectJrpcRequest(const std::string& request_json,
         evbuffer_add(output, request_json.data(), request_json.size()) < 0)
     {
         DEFAULT_LOG_ERROR("InjectJrpcRequest: evbuffer_add failed");
-        if (slot)
+        if (slot != nullptr)
         {
             // 归还槽位（写失败，尚未送出，两端都未用）
             slot->in_use = false;
@@ -251,7 +251,7 @@ void HttpJsonRpcManager::InjectJrpcRequest(const std::string& request_json,
             slot, &BuffereventPairPool::ReleaseHalf))
     {
         DEFAULT_LOG_ERROR("InjectJrpcRequest: OnPairAcceptBev failed");
-        if (slot)
+        if (slot != nullptr)
         {
             // OnPairAcceptBev 失败时 pair[1] 已被直接 free（发生在获取 TAP 之前）
             // 释放 pair[0] 并重新创建一对放入 slot，再归还到空闲栈

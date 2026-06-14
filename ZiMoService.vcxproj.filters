@@ -189,9 +189,6 @@
     <ClCompile Include="..\ZiMoPublic\net\zm_net_request_channel.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_http_middleware.cpp">
-      <Filter>源文件\Public\net</Filter>
-    </ClCompile>
     <ClCompile Include="..\ZiMoPublic\net\zm_net_runloop.cpp">
       <Filter>源文件\Public\net</Filter>
     </ClCompile>
@@ -1156,9 +1153,6 @@
     </ClInclude>
     <ClInclude Include="http_server_manager.h">
       <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="..\ZiMoPublic\net\zm_net_http_middleware.h">
-      <Filter>头文件\Public\net</Filter>
     </ClInclude>
     <ClInclude Include="..\ZiMoPublic\net\zm_net_http_router.h">
       <Filter>头文件\Public\net</Filter>

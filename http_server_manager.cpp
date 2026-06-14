@@ -2,8 +2,6 @@
 #include "zm_logger.h"
 #include "zm_json.h"
 #include "zm_util_sys.h"
-#include "zm_net_http_middleware.h"
-
 #include <fstream>
 #include <ctime>
 #include <algorithm>
