@@ -46,16 +46,6 @@ public:
 	/** @brief TAP 链入口：JRPC 请求回调（在 JRPC delegate 线程池中执行） */
 	void JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData);
 
-	/**
-	 * @brief 内部通道入口：处理 JRPC 请求并同步返回响应（在事件循环线程中调用）
-	 * @param requestJson 请求 JSON 字符串
-	 * @return 完整响应 JSON 字符串（含 result 或 error）
-	 *
-	 * 与 JrpcRequestReadCB 共享方法分发逻辑，但不依赖 TAP 上下文和异步响应路径。
-	 * 供 ZmNetRequestChannel::Drain 调用，替代原 socketpair 跨线程通信。
-	 */
-	std::string ProcessInternalJrpc(const std::string& requestJson);
-
 private:
 	/** @brief JRPC 方法处理器签名：参数 → 结果/错误 */
 	using JrpcHandler = std::function<void(const ZMJSON& params, ZMJSON& result, ZMJSON& error)>;

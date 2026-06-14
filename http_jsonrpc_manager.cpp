@@ -5,163 +5,13 @@
 #include "zm_net_tap.h"
 
 // ============================================================================
-// BuffereventPairPool — bufferevent_pair 对象池
-// ============================================================================
-
-/** @brief 池中单个槽位，持有一对 bufferevent_pair */
-struct PairPoolSlot
-{
-    struct bufferevent*  pair[2];   ///< pair[0] 响应端，pair[1] TAP 端
-    bool                 in_use;    ///< 是否正在使用中
-    bool                 pair0_done;///< pair[0] 是否已归还
-    bool                 pair1_done;///< pair[1] 是否已归还
-    BuffereventPairPool* owner;     ///< 回指所属池，供 ReleaseHalf 归还
-};
-
-/**
- * @brief bufferevent_pair 对象池，消除高并发下的 socketpair 系统调用和堆分配开销
- *
- * 预创建固定数量的 bufferevent_pair，空闲时 O(1) 获取，两端都归还后自动回收。
- * 池耗尽时 fallback 到动态创建（不阻塞）。
- */
-class BuffereventPairPool
-{
-public:
-    BuffereventPairPool() : m_evbase(nullptr) {}
-
-    /**
-     * @brief 预创建池
-     * @param evbase   libevent 事件循环基
-     * @param capacity 预创建 pair 数量
-     */
-    void Init(struct event_base* evbase, int capacity)
-    {
-        m_evbase = evbase;
-        m_slots.resize(capacity);
-        for (int i = 0; i < capacity; i++)
-        {
-            auto& slot = m_slots[i];
-            slot.pair[0] = nullptr;
-            slot.pair[1] = nullptr;
-            slot.in_use = false;
-            slot.pair0_done = false;
-            slot.pair1_done = false;
-            slot.owner = this;
-
-            struct bufferevent* p[2] = { nullptr, nullptr };
-            if (bufferevent_pair_new(m_evbase, ZM_EVENT_BEV_OPTIONS, p) == 0)
-            {
-                slot.pair[0] = p[0];
-                slot.pair[1] = p[1];
-                m_free_stack.push_back(&slot);
-            }
-        }
-        DEFAULT_LOG_INFO("BuffereventPairPool initialized: capacity={}, created={}",
-            capacity, (int)m_free_stack.size());
-    }
-
-    /** @brief 销毁池中所有 pair */
-    void Shutdown()
-    {
-        for (auto& slot : m_slots)
-        {
-            if (slot.pair[0]) { bufferevent_free(slot.pair[0]); slot.pair[0] = nullptr; }
-            if (slot.pair[1]) { bufferevent_free(slot.pair[1]); slot.pair[1] = nullptr; }
-        }
-        m_free_stack.clear();
-        m_slots.clear();
-        m_evbase = nullptr;
-    }
-
-    /**
-     * @brief 获取一个可用槽位（O(1) 从空闲栈弹出）
-     * @return 槽位指针，池耗尽时返回 nullptr
-     */
-    PairPoolSlot* Acquire()
-    {
-        if (m_free_stack.empty())
-            return nullptr;
-
-        auto* slot = m_free_stack.back();
-        m_free_stack.pop_back();
-        slot->in_use = true;
-        slot->pair0_done = false;
-        slot->pair1_done = false;
-        return slot;
-    }
-
-    /**
-     * @brief 归还 pair 的某一端
-     * @param slot      槽位指针
-     * @param is_pair1  true 表示 pair[1]（TAP 端），false 表示 pair[0]（响应端）
-     *
-     * 两端都归还后清空 evbuffer 并回收到空闲栈。
-     * @note 由 FreeRequesterEnd 和 OnResponseRead/Event 调用
-     */
-    static void ReleaseHalf(void* slot, bool is_pair1)
-    {
-        if (!slot) return;
-        auto* s = static_cast<PairPoolSlot*>(slot);
-
-        if (is_pair1)
-            s->pair1_done = true;
-        else
-            s->pair0_done = true;
-
-        if (s->pair0_done && s->pair1_done)
-        {
-            // 两端都归还：清空缓冲区，通过 owner 回指归还到空闲栈
-            ResetPair(s);
-            s->in_use = false;
-            if (s->owner)
-                s->owner->ReturnToFreeStack(s);
-        }
-    }
-
-    /** @brief 槽位回空闲栈（由 ReleaseHalf 内部调用） */
-    void ReturnToFreeStack(PairPoolSlot* slot)
-    {
-        m_free_stack.push_back(slot);
-    }
-
-private:
-    /** @brief 重置 pair 的 evbuffer 状态，清空残留数据 */
-    static void ResetPair(PairPoolSlot* slot)
-    {
-        if (slot->pair[0])
-        {
-            struct evbuffer* input = bufferevent_get_input(slot->pair[0]);
-            struct evbuffer* output = bufferevent_get_output(slot->pair[0]);
-            if (input)  evbuffer_drain(input, evbuffer_get_length(input));
-            if (output) evbuffer_drain(output, evbuffer_get_length(output));
-            // 重置水位线和回调（OnPairAcceptBev 会重新设置 pair[1]，pair[0] 在 InjectJrpcRequest 中设置）
-            bufferevent_setcb(slot->pair[0], nullptr, nullptr, nullptr, nullptr);
-        }
-        if (slot->pair[1])
-        {
-            struct evbuffer* input = bufferevent_get_input(slot->pair[1]);
-            struct evbuffer* output = bufferevent_get_output(slot->pair[1]);
-            if (input)  evbuffer_drain(input, evbuffer_get_length(input));
-            if (output) evbuffer_drain(output, evbuffer_get_length(output));
-            bufferevent_setcb(slot->pair[1], nullptr, nullptr, nullptr, nullptr);
-        }
-    }
-
-    struct event_base*      m_evbase;
-    std::vector<PairPoolSlot> m_slots;        ///< 槽位数组（不扩容，下标稳定）
-    std::vector<PairPoolSlot*> m_free_stack;  ///< 空闲槽位栈
-};
-
-
-// ============================================================================
 // HttpJsonRpcManager
 // ============================================================================
 
 HttpJsonRpcManager::HttpJsonRpcManager()
-    : m_evbase(nullptr)
-    , m_httpServerJRPC(nullptr)
+    : m_httpServerJRPC(nullptr)
     , m_hubMgr(nullptr)
-    , m_channel(nullptr)
+    , m_hub_channel(nullptr)
     , m_pairPool(nullptr)
 {
 }
@@ -171,19 +21,18 @@ HttpJsonRpcManager::~HttpJsonRpcManager()
     Close();
 }
 
-bool HttpJsonRpcManager::Open(struct event_base* evbase, HubProxyManager* hubMgr)
+bool HttpJsonRpcManager::Open(HubProxyManager* hubMgr)
 {
-    if (!evbase || !hubMgr)
+    if (!hubMgr)
         return false;
 
-    m_evbase = evbase;
     m_hubMgr = hubMgr;
 
     // 1. 创建 bufferevent_pair 对象池（预创建，减少高并发下的系统调用开销）
     if (!m_pairPool)
     {
         m_pairPool = new BuffereventPairPool();
-        m_pairPool->Init(evbase, 32);
+        m_pairPool->Init(hubMgr->EvBase(), 128);
     }
 
     // 2. 创建内部 JRPC 请求通道（必须在 HTTP 服务器启动前，确保 Worker 线程可用）
@@ -227,7 +76,6 @@ void HttpJsonRpcManager::Close()
     }
 
     m_hubMgr = nullptr;
-    m_evbase = nullptr;
 }
 
 // ============================================================================
@@ -236,16 +84,10 @@ void HttpJsonRpcManager::Close()
 
 bool HttpJsonRpcManager::OpenJrpcChannel(HubProxyManager* hubMgr)
 {
-    if (m_channel)
+    if (m_hub_channel)
     {
         DEFAULT_LOG_WARN("ZmNetRequestChannel already opened, skipping");
         return true;
-    }
-
-    if (!m_evbase)
-    {
-        DEFAULT_LOG_ERROR("OpenJrpcChannel failed: evbase not set");
-        return false;
     }
 
     if (!hubMgr || !hubMgr->HubProxy())
@@ -254,14 +96,20 @@ bool HttpJsonRpcManager::OpenJrpcChannel(HubProxyManager* hubMgr)
         return false;
     }
 
-    m_channel = new ZmNetRequestChannel();
-    if (!m_channel->Open(m_evbase,
+    if (!m_hubMgr->EvBase())
+    {
+        DEFAULT_LOG_ERROR("OpenJrpcChannel failed: evbase not set");
+        return false;
+    }
+
+    m_hub_channel = new ZmNetRequestChannel();
+    if (!m_hub_channel->Open(m_hubMgr->EvBase(),
             std::bind(&HttpJsonRpcManager::InjectJrpcRequest, this,
                 std::placeholders::_1, std::placeholders::_2)))
     {
         DEFAULT_LOG_ERROR("OpenJrpcChannel failed: channel Open() returned false");
-        delete m_channel;
-        m_channel = nullptr;
+        delete m_hub_channel;
+        m_hub_channel = nullptr;
         return false;
     }
 
@@ -271,12 +119,12 @@ bool HttpJsonRpcManager::OpenJrpcChannel(HubProxyManager* hubMgr)
 
 void HttpJsonRpcManager::CloseJrpcChannel()
 {
-    if (!m_channel)
+    if (!m_hub_channel)
         return;
 
-    m_channel->Close(m_evbase);
-    delete m_channel;
-    m_channel = nullptr;
+    m_hub_channel->Close(m_hubMgr->EvBase());
+    delete m_hub_channel;
+    m_hub_channel = nullptr;
 
     DEFAULT_LOG_INFO("JrpcChannel closed");
 }
@@ -304,7 +152,7 @@ void HttpJsonRpcManager::OnJsonRpcAsync(ZmHttpdTask* task, const std::string& me
     reqobj["request_useragent"] = task->GetRequestHeader("User-Agent");
     reqobj["params"] = params;
 
-    if (!m_channel)
+    if (!m_hub_channel)
     {
         ZMJSON err;
         err["code"] = ZM_JRPC_ERR_SEND_HUB;
@@ -319,7 +167,7 @@ void HttpJsonRpcManager::OnJsonRpcAsync(ZmHttpdTask* task, const std::string& me
     //    回调在事件循环线程中触发（Drain → InjectJrpcRequest → Hub → Response → OnResponseRead → callback）
     //    用 shared_ptr 包装 reply 避免 move-only lambda 导致 std::function 构造失败
     auto replyPtr = std::make_shared<std::function<void(const ZMJSON&, const ZMJSON&)>>(std::move(reply));
-    m_channel->SubmitAsync(reqjs,
+    m_hub_channel->SubmitAsync(reqjs,
         [replyPtr](std::string rspjs) {
             auto& reply = *replyPtr;
 
@@ -354,7 +202,7 @@ void HttpJsonRpcManager::OnJsonRpcAsync(ZmHttpdTask* task, const std::string& me
 void HttpJsonRpcManager::InjectJrpcRequest(const std::string& request_json,
                                             std::function<void(std::string)> callback)
 {
-    // 尝试从对象池获取 bufferevent_pair，池耗尽则动态创建
+    // 从对象池获取 bufferevent_pair（池耗尽时自动扩容，仅内存不足时返回 nullptr）
     PairPoolSlot* slot = m_pairPool ? m_pairPool->Acquire() : nullptr;
 
     struct bufferevent* pair[2] = { nullptr, nullptr };
@@ -365,7 +213,7 @@ void HttpJsonRpcManager::InjectJrpcRequest(const std::string& request_json,
     }
     else
     {
-        if (bufferevent_pair_new(m_evbase, ZM_EVENT_BEV_OPTIONS, pair) < 0)
+        if (bufferevent_pair_new(m_hubMgr->EvBase(), ZM_EVENT_BEV_OPTIONS, pair) < 0)
         {
             DEFAULT_LOG_ERROR("InjectJrpcRequest: bufferevent_pair_new failed");
             callback(std::string());
@@ -409,7 +257,7 @@ void HttpJsonRpcManager::InjectJrpcRequest(const std::string& request_json,
             // 释放 pair[0] 并重新创建一对放入 slot，再归还到空闲栈
             bufferevent_free(pair[0]);
             struct bufferevent* new_pair[2] = { nullptr, nullptr };
-            if (bufferevent_pair_new(m_evbase, ZM_EVENT_BEV_OPTIONS, new_pair) == 0)
+            if (bufferevent_pair_new(m_hubMgr->EvBase(), ZM_EVENT_BEV_OPTIONS, new_pair) == 0)
             {
                 slot->pair[0] = new_pair[0];
                 slot->pair[1] = new_pair[1];
@@ -430,7 +278,7 @@ void HttpJsonRpcManager::InjectJrpcRequest(const std::string& request_json,
     bufferevent_setcb(pair[0], HttpJsonRpcManager::OnResponseRead, nullptr,
                        HttpJsonRpcManager::OnResponseEvent, rctx);
     bufferevent_setwatermark(pair[0], EV_READ, 4, 0);
-    bufferevent_enable(pair[0], EV_READ);
+    bufferevent_enable(pair[0], EV_READ | EV_WRITE);
 }
 
 // ============================================================================

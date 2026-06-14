@@ -64,7 +64,7 @@ private:
     ZmTapDelegateJRPC* m_tapDelegateJRPC;  ///< JRPC 协议委托处理器
     ZmTapHubProxy*     m_tapHubProxy;      ///< Hub 代理（共享消息路由）
     uint16_t           m_hubSocks5Port;    ///< Hub 代理监听端口，用于转发 socks5 代理
-    ZmEvBaseRunLoop*     m_evLoop;         ///< libevent 事件循环线程（Hub 拥有所有权）
+    ZmEvBaseRunLoop*   m_evLoop;           ///< libevent 事件循环线程（Hub 拥有所有权）
 };
 
 #endif // HUB_PROXY_MANAGER_H

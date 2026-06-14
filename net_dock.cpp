@@ -86,7 +86,7 @@ void NetDock::OpenHttpJsonRpcServer()
     {
         m_httpJsonRpcMgr = new HttpJsonRpcManager();
         // 从 Hub 获取 event_base，HttpJsonRpcManager 内部自行创建 ZmNetRequestChannel 并绑定 Hub 注入 handler
-        if (!m_httpJsonRpcMgr->Open(m_hubProxyMgr->EvBase(), m_hubProxyMgr))
+        if (!m_httpJsonRpcMgr->Open(m_hubProxyMgr))
         {
             DEFAULT_LOG_ERROR("OpenHttpJsonRpcServer failed: HttpJsonRpcManager::Open() returned false");
             delete m_httpJsonRpcMgr;

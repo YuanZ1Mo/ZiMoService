@@ -7,9 +7,6 @@
 
 #include <event2/bufferevent.h>
 
-// 前置声明
-class BuffereventPairPool;
-
 /**
  * @brief HTTP JSON-RPC 前端管理器
  *
@@ -19,7 +16,7 @@ class BuffereventPairPool;
  * 异步处理流程：
  *   ① HTTP JRPC 请求到达（端口 39440）
  *   ② ZmJsonRpcServer → 异步回调 OnJsonRpcAsync（Worker 线程）
- *   ③ 构建请求 JSON → m_channel->Submit() → Worker 立即返回（不阻塞）
+ *   ③ 构建请求 JSON → m_hub_channel->Submit() → Worker 立即返回（不阻塞）
  *   ④ 独立等待线程 wait_for future → 事件循环 InjectJrpcRequest → Hub 链处理
  *   ⑤ 响应到达 → reply(result, error) → task->SendDeferredReply() → HTTP 响应
  *
@@ -37,7 +34,7 @@ public:
      * @param hubMgr 已初始化的 Hub 路由层管理器
      * @return true 初始化成功
      */
-    bool Open(struct event_base* evbase, HubProxyManager* hubMgr);
+    bool Open(HubProxyManager* hubMgr);
 
     /**
      * @brief 关闭内部通道和 HTTP 服务器
@@ -93,10 +90,9 @@ private:
     // 成员变量
     // ========================================================================
 
-    struct event_base*   m_evbase;
     ZmJsonRpcServer*     m_httpServerJRPC;
     HubProxyManager*     m_hubMgr;
-    ZmNetRequestChannel* m_channel;
+    ZmNetRequestChannel* m_hub_channel;
     BuffereventPairPool* m_pairPool;         ///< bufferevent_pair 对象池
 };
 

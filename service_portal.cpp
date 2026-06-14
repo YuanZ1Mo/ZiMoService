@@ -223,7 +223,7 @@ void ServicePortal::InitJrpcMethods()
 }
 
 // ============================================================================
-// JRPC 方法分发（JrpcRequestReadCB 和 ProcessInternalJrpc 共用）
+// JRPC 方法分发
 // ============================================================================
 
 void ServicePortal::DispatchJrpcMethod(const std::string& method, const ZMJSON& params,
@@ -283,49 +283,17 @@ void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 	DispatchJrpcMethod(method, params, result, error);
 
 	if (!error.empty())
-		if (tap->delegate) tap->delegate->ResponseErrorAsync(tap, error);
-	else
-		if (tap->delegate) tap->delegate->ResponseResultAsync(tap, result);
-}
-
-// ============================================================================
-// 内部 JRPC 请求处理（进程内通道入口，事件循环线程同步调用）
-// ============================================================================
-
-/**
- * @brief 处理内部 JRPC 请求并同步返回响应
- *
- * 在事件循环线程中由 ZmNetRequestChannel::Drain 调用。与 JrpcRequestReadCB
- * 共享 DispatchJrpcMethod 分发逻辑，但不经过 TAP 链和异步响应路径。
- *
- * @param requestJson 请求 JSON 字符串（含 method 和 params 字段）
- * @return 完整响应 JSON 字符串（含 result 或 error 字段）
- */
-std::string ServicePortal::ProcessInternalJrpc(const std::string& requestJson)
-{
-	ZMJSON response;
-
-	std::string err;
-	ZMJSON reqJson = zm_json_parse(requestJson, err);
-
-	if (!err.empty())
 	{
-		response["error"]["code"]    = -32700;
-		response["error"]["message"] = "Parse error: " + err;
-		return response.dump();
+		if (tap->delegate)
+		{
+			tap->delegate->ResponseErrorAsync(tap, error);
+		}
 	}
-
-	std::string method = zm_json_get_str(reqJson, "method");
-	ZMJSON params = reqJson["params"];
-	ZMJSON result;
-	ZMJSON error;
-
-	DispatchJrpcMethod(method, params, result, error);
-
-	if (!error.empty())
-		response["error"] = error;
 	else
-		response["result"] = result;
-
-	return response.dump();
+	{
+		if (tap->delegate)
+		{
+			tap->delegate->ResponseResultAsync(tap, result);
+		}
+	}
 }

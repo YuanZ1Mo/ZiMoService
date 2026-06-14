@@ -37,7 +37,6 @@ bool HubProxyManager::Open(TapDelegateJrpcRequestReadCB jrpcCB)
     if (nullptr == m_tapDelegateJRPC)
     {
         m_tapDelegateJRPC = new ZmTapDelegateJRPC();
-        m_tapDelegateJRPC->SetEvDns(evdnsbase);
         m_tapDelegateJRPC->StartTapDelegate(evbase, ZM_DELEGATE_MODE_PROXY_INTERNAL_JRPC);
         m_tapDelegateJRPC->SetJrpcRequestReadCB(jrpcCB);
     }
