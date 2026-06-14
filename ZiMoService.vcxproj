@@ -220,6 +220,7 @@
     <ClInclude Include="..\ZiMoPublic\net\zm_net_http_router.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_ip.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_request_channel.h" />
+    <ClInclude Include="..\ZiMoPublic\net\zm_net_runloop.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_socket.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_tap.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_tap_hub.h" />
@@ -487,7 +488,6 @@
     <ClInclude Include="..\ZiMoPublic\util\zm_util_win_os.h" />
     <ClInclude Include="..\ZiMoPublic\websocket\zm_websocket_server.h" />
     <ClInclude Include="..\ZiMoPublic\websocket\zm_websocket_utils.h" />
-    <ClInclude Include="dock_runloop.h" />
     <ClInclude Include="http_jsonrpc_manager.h" />
     <ClInclude Include="http_server_manager.h" />
     <ClInclude Include="hub_proxy_manager.h" />
@@ -506,6 +506,7 @@
     <ClCompile Include="..\ZiMoPublic\net\zm_net_http_router.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_ip.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_request_channel.cpp" />
+    <ClCompile Include="..\ZiMoPublic\net\zm_net_runloop.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_socket.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_tap.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_tap_hub.cpp" />
@@ -524,7 +525,6 @@
     <ClCompile Include="..\ZiMoPublic\util\zm_util_win_os.cpp" />
     <ClCompile Include="..\ZiMoPublic\websocket\zm_websocket_server.cpp" />
     <ClCompile Include="..\ZiMoPublic\websocket\zm_websocket_utils.cpp" />
-    <ClCompile Include="dock_runloop.cpp" />
     <ClCompile Include="http_jsonrpc_manager.cpp" />
     <ClCompile Include="http_server_manager.cpp" />
     <ClCompile Include="hub_proxy_manager.cpp" />

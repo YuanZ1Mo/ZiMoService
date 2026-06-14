@@ -5,9 +5,7 @@
 #include "zm_net_socket.h"
 
 NetDock::NetDock()
-    : m_dockRunloop(nullptr)
-    , m_evbase(nullptr)
-    , m_messageServerMgr(nullptr)
+    : m_messageServerMgr(nullptr)
     , m_hubProxyMgr(nullptr)
     , m_httpJsonRpcMgr(nullptr)
     , m_httpServerMgr(nullptr)
@@ -23,13 +21,6 @@ NetDock::~NetDock()
 void NetDock::Init()
 {
     ZmWinSockHelper::Init();
-
-    if (!m_dockRunloop)
-    {
-        m_dockRunloop = new DockRunLoop();
-        if (m_dockRunloop->Loop())
-            m_evbase = m_dockRunloop->GetEventBase();
-    }
 }
 
 void NetDock::UnInit()
@@ -40,14 +31,12 @@ void NetDock::UnInit()
 
     // ★ 关闭顺序严格不可变：
     //   ① HTTP 前端先停 — Close 内部先关 ZmNetRequestChannel（拒绝 pending promise，唤醒 Worker）再 join 线程池
-    //   ② Hub 路由层停止 — 释放所有 TAP 组件
-    //   ③ 取消残留的调度任务 — 释放未触发的 ctx
-    //   ④ DockRunLoop 最后停 — 退出事件循环，安全清理 _evbase
+    //   ② 清理残留的调度任务 — 必须在 Hub 关闭前，event_free 需要 event_base 存活
+    //   ③ Hub 路由层停止 — 内部释放 delegate → 停止 ZmEvBaseRunLoop → 销毁 event_base
     CloseHttpServer();
     CloseSocks5Server();
     CloseWebSocketServer();
     CloseHttpJsonRpcServer();
-    CloseHub();
 
     // 前端已停，不会再有新的 ScheduleTaskInLoop 调用。清理可能残留的 ctx
     {
@@ -61,15 +50,7 @@ void NetDock::UnInit()
         m_pendingScheduleCtx.clear();
     }
 
-    if (m_dockRunloop)
-    {
-        m_dockRunloop->Stop();
-        delete m_dockRunloop;
-        m_dockRunloop = nullptr;
-    }
-
-    // evbase 由 DockRunLoop 内部释放，NetDock 持有的裸指针置空防止误用
-    m_evbase = nullptr;
+    CloseHub();
 }
 
 void NetDock::OpenWebSocketServer()
@@ -94,7 +75,7 @@ void NetDock::OpenHub()
     if (!m_hubProxyMgr)
     {
         m_hubProxyMgr = new HubProxyManager();
-        m_hubProxyMgr->Open(m_evbase, m_dockRunloop->GetEventDnsBase(), m_jrpcRequestReadCB);
+        m_hubProxyMgr->Open(m_jrpcRequestReadCB);
     }
 }
 
@@ -118,8 +99,8 @@ void NetDock::OpenHttpJsonRpcServer()
     if (!m_httpJsonRpcMgr)
     {
         m_httpJsonRpcMgr = new HttpJsonRpcManager();
-        // HttpJsonRpcManager 内部自行创建 ZmNetRequestChannel 并绑定 Hub 注入 handler
-        if (!m_httpJsonRpcMgr->Open(m_evbase, m_hubProxyMgr))
+        // 从 Hub 获取 event_base，HttpJsonRpcManager 内部自行创建 ZmNetRequestChannel 并绑定 Hub 注入 handler
+        if (!m_httpJsonRpcMgr->Open(m_hubProxyMgr->EvBase(), m_hubProxyMgr))
         {
             DEFAULT_LOG_ERROR("OpenHttpJsonRpcServer failed: HttpJsonRpcManager::Open() returned false");
             delete m_httpJsonRpcMgr;
@@ -208,7 +189,7 @@ void NetDock::SetJrpcRequestReadCB(TapDelegateJrpcRequestReadCB cb)
 
 bool NetDock::ScheduleTaskInLoop(std::function<void(void*)> fn_run, std::function<void(void*)> fn_cb, void* param)
 {
-    if (m_evbase && m_dockRunloop && m_dockRunloop->IsLooped())
+    if (m_hubProxyMgr && m_hubProxyMgr->IsLooped())
     {
         ZM_SCHEDULE_CTX* ctx = new ZM_SCHEDULE_CTX();
         ctx->ev_schedule = nullptr;
@@ -218,7 +199,7 @@ bool NetDock::ScheduleTaskInLoop(std::function<void(void*)> fn_run, std::functio
         ctx->owner = this;
 
         // fd=-1 表示纯手动触发事件，events=0 不监听任何 I/O
-        ctx->ev_schedule = event_new(m_evbase, -1, 0, NetDock::OnScheduleEventCB, ctx);
+        ctx->ev_schedule = event_new(m_hubProxyMgr->EvBase(), -1, 0, NetDock::OnScheduleEventCB, ctx);
         event_add(ctx->ev_schedule, NULL);
 
         // 记录到 pending 集合，供 UnInit 在关闭前取消未触发的任务

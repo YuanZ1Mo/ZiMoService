@@ -1,7 +1,6 @@
 #ifndef NET_DOCK_H
 #define NET_DOCK_H
 
-#include "dock_runloop.h"
 #include "message_server_manager.h"
 #include "hub_proxy_manager.h"
 #include "http_jsonrpc_manager.h"
@@ -13,18 +12,19 @@
 /**
  * @brief 网络层生命周期编排者
  *
- * 创建并持有事件循环线程和各个网络服务器管理器，负责：
- *   1. DockRunLoop — libevent 事件循环线程
- *   2. MessageServerManager — WebSocket 服务器
- *   3. HubProxyManager — TAP Hub 路由层（多协议前端共享）
- *   4. HttpJsonRpcManager — HTTP JSON-RPC 前端（含内部 JRPC 请求通道）
- *   5. ScheduleTaskInLoop — 跨线程任务调度
+ * 创建并持有各个网络服务器管理器，负责：
+ *   1. HubProxyManager — TAP Hub 路由层（内部持有 ZmEvBaseRunLoop 事件循环线程）
+ *   2. HttpJsonRpcManager — HTTP JSON-RPC 前端（含内部 JRPC 请求通道）
+ *   3. HttpServerManager — 通用 HTTP 前端（端口 80）
+ *   4. MessageServerManager — WebSocket 服务器
+ *   5. ScheduleTaskInLoop — 跨线程任务调度（通过 Hub 的 event_base）
  *
  * 启动顺序约束：
  *   Init → OpenHub → OpenHttpJsonRpcServer（内部自行创建 ZmNetRequestChannel）
  *
  * 关闭顺序约束：
- *   前端先停（内部先关 ZmNetRequestChannel 再 join Worker）→ Hub 停 → DockRunLoop 停
+ *   前端先停（内部先关 ZmNetRequestChannel 再 join Worker）
+ *   → 清理调度残留 → Hub 停（内部释放 delegate 和 ZmEvBaseRunLoop）
  */
 class NetDock
 {
@@ -33,7 +33,7 @@ public:
     ~NetDock();
 
     /**
-     * @brief 初始化：启动 DockRunLoop 事件循环线程，阻塞直到 loop 就绪
+     * @brief 初始化 WinSock 环境
      * @note 重复调用安全
      */
     void Init();
@@ -202,10 +202,8 @@ private:
     };
 
     // --- 成员变量 ---
-    DockRunLoop*           m_dockRunloop;         ///< libevent 事件循环线程
-    event_base*            m_evbase;              ///< 缓存的 event_base（从 DockRunLoop 获取）
     MessageServerManager*  m_messageServerMgr;    ///< WebSocket 服务器管理器
-    HubProxyManager*       m_hubProxyMgr;         ///< TAP Hub 路由层（多协议前端共享）
+    HubProxyManager*       m_hubProxyMgr;         ///< TAP Hub 路由层（多协议前端共享，内部持有 ZmEvBaseRunLoop）
     HttpJsonRpcManager*    m_httpJsonRpcMgr;      ///< HTTP JSON-RPC 前端（含内部请求通道）
     HttpServerManager*     m_httpServerMgr;       ///< 通用 HTTP 前端（端口 80）
     TapDelegateJrpcRequestReadCB m_jrpcRequestReadCB;  ///< JRPC 外部回调，OpenHub 时注入

@@ -6,8 +6,7 @@ HubProxyManager::HubProxyManager()
     : m_tapContext(nullptr)
     , m_tapDelegateJRPC(nullptr)
     , m_tapHubProxy(nullptr)
-    , m_evbase(nullptr)
-    , m_evdnsbase(nullptr)
+    , m_evLoop(nullptr)
 {
 }
 
@@ -16,25 +15,34 @@ HubProxyManager::~HubProxyManager()
     Close();
 }
 
-bool HubProxyManager::Open(event_base* evbase, evdns_base* evdnsbase,
-                           TapDelegateJrpcRequestReadCB jrpcCB)
+bool HubProxyManager::Open(TapDelegateJrpcRequestReadCB jrpcCB)
 {
-    if (!evbase)
-        return false;
+    // 1. 创建并启动事件循环线程
+    if (!m_evLoop)
+    {
+        m_evLoop = new ZmEvBaseRunLoop("HubLoop");
+        if (!m_evLoop->Loop())
+        {
+            DEFAULT_LOG_ERROR("HubProxyManager::Open failed: ZmEvBaseRunLoop::Loop() returned false");
+            delete m_evLoop;
+            m_evLoop = nullptr;
+            return false;
+        }
+    }
 
-    m_evbase = evbase;
-    m_evdnsbase = evdnsbase;
+    event_base* evbase = m_evLoop->GetEventBase();
+    evdns_base* evdnsbase = m_evLoop->GetEventDnsBase();
 
-    // 1. 创建 JRPC 协议委托处理器
+    // 2. 创建 JRPC 协议委托处理器
     if (nullptr == m_tapDelegateJRPC)
     {
         m_tapDelegateJRPC = new ZmTapDelegateJRPC();
-        m_tapDelegateJRPC->SetEvDns(m_evdnsbase);
-        m_tapDelegateJRPC->StartTapDelegate(m_evbase, ZM_DELEGATE_MODE_PROXY_INTERNAL_JRPC);
+        m_tapDelegateJRPC->SetEvDns(evdnsbase);
+        m_tapDelegateJRPC->StartTapDelegate(evbase, ZM_DELEGATE_MODE_PROXY_INTERNAL_JRPC);
         m_tapDelegateJRPC->SetJrpcRequestReadCB(jrpcCB);
     }
 
-    // 2. 创建 TAP 上下文池和 Hub 代理（共享路由层）
+    // 3. 创建 TAP 上下文池和 Hub 代理（共享路由层）
     if (nullptr == m_tapHubProxy)
     {
         if (nullptr == m_tapContext)
@@ -42,8 +50,8 @@ bool HubProxyManager::Open(event_base* evbase, evdns_base* evdnsbase,
 
         m_tapHubProxy = new ZmTapHubProxy();
         m_tapHubProxy->SetJrpcDelegate(m_tapDelegateJRPC);
-        m_tapHubProxy->SetEvDns(m_evdnsbase);
-        m_tapHubProxy->StartTapDelegate(m_tapContext, m_evbase, ZM_DELEGATE_MODE_PROXY_INTERNAL_HUB);
+        m_tapHubProxy->SetEvDns(evdnsbase);
+        m_tapHubProxy->StartTapDelegate(m_tapContext, evbase, ZM_DELEGATE_MODE_PROXY_INTERNAL_HUB);
         m_hubSocks5Port = m_tapHubProxy->AddListenPort(ZM_SOCKS5_SERVER_PORT);
     }
 
@@ -56,6 +64,7 @@ void HubProxyManager::Close()
     //   ① TAP 上下文池先清理 — Drop 每个 TAP（释放 bufferevent），此时 delegate 仍存活
     //   ② HubProxy delegate 再停止 — 关闭 evconnlisteners，释放 m_evdelegate
     //   ③ JRPC delegate 最后停止 — 释放 m_evdelegate
+    //   ④ ZmEvBaseRunLoop 最后停止 — 确保以上所有 libevent 资源释放完毕
     //   逆序原因：TAP 的 delegate 指向 HubProxy 或 JRPC，Drop 回调需 delegate 存活
     if (m_tapContext)
     {
@@ -79,6 +88,12 @@ void HubProxyManager::Close()
     }
 
     m_hubSocks5Port = 0;
-    m_evbase = nullptr;
-    m_evdnsbase = nullptr;
+
+    // 最后停止事件循环线程
+    if (m_evLoop)
+    {
+        m_evLoop->Stop();
+        delete m_evLoop;
+        m_evLoop = nullptr;
+    }
 }

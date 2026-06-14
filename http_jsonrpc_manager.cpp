@@ -4,11 +4,165 @@
 #include "zm_logger.h"
 #include "zm_net_tap.h"
 
+// ============================================================================
+// BuffereventPairPool — bufferevent_pair 对象池
+// ============================================================================
+
+/** @brief 池中单个槽位，持有一对 bufferevent_pair */
+struct PairPoolSlot
+{
+    struct bufferevent*  pair[2];   ///< pair[0] 响应端，pair[1] TAP 端
+    bool                 in_use;    ///< 是否正在使用中
+    bool                 pair0_done;///< pair[0] 是否已归还
+    bool                 pair1_done;///< pair[1] 是否已归还
+    BuffereventPairPool* owner;     ///< 回指所属池，供 ReleaseHalf 归还
+};
+
+/**
+ * @brief bufferevent_pair 对象池，消除高并发下的 socketpair 系统调用和堆分配开销
+ *
+ * 预创建固定数量的 bufferevent_pair，空闲时 O(1) 获取，两端都归还后自动回收。
+ * 池耗尽时 fallback 到动态创建（不阻塞）。
+ */
+class BuffereventPairPool
+{
+public:
+    BuffereventPairPool() : m_evbase(nullptr) {}
+
+    /**
+     * @brief 预创建池
+     * @param evbase   libevent 事件循环基
+     * @param capacity 预创建 pair 数量
+     */
+    void Init(struct event_base* evbase, int capacity)
+    {
+        m_evbase = evbase;
+        m_slots.resize(capacity);
+        for (int i = 0; i < capacity; i++)
+        {
+            auto& slot = m_slots[i];
+            slot.pair[0] = nullptr;
+            slot.pair[1] = nullptr;
+            slot.in_use = false;
+            slot.pair0_done = false;
+            slot.pair1_done = false;
+            slot.owner = this;
+
+            struct bufferevent* p[2] = { nullptr, nullptr };
+            if (bufferevent_pair_new(m_evbase, ZM_EVENT_BEV_OPTIONS, p) == 0)
+            {
+                slot.pair[0] = p[0];
+                slot.pair[1] = p[1];
+                m_free_stack.push_back(&slot);
+            }
+        }
+        DEFAULT_LOG_INFO("BuffereventPairPool initialized: capacity={}, created={}",
+            capacity, (int)m_free_stack.size());
+    }
+
+    /** @brief 销毁池中所有 pair */
+    void Shutdown()
+    {
+        for (auto& slot : m_slots)
+        {
+            if (slot.pair[0]) { bufferevent_free(slot.pair[0]); slot.pair[0] = nullptr; }
+            if (slot.pair[1]) { bufferevent_free(slot.pair[1]); slot.pair[1] = nullptr; }
+        }
+        m_free_stack.clear();
+        m_slots.clear();
+        m_evbase = nullptr;
+    }
+
+    /**
+     * @brief 获取一个可用槽位（O(1) 从空闲栈弹出）
+     * @return 槽位指针，池耗尽时返回 nullptr
+     */
+    PairPoolSlot* Acquire()
+    {
+        if (m_free_stack.empty())
+            return nullptr;
+
+        auto* slot = m_free_stack.back();
+        m_free_stack.pop_back();
+        slot->in_use = true;
+        slot->pair0_done = false;
+        slot->pair1_done = false;
+        return slot;
+    }
+
+    /**
+     * @brief 归还 pair 的某一端
+     * @param slot      槽位指针
+     * @param is_pair1  true 表示 pair[1]（TAP 端），false 表示 pair[0]（响应端）
+     *
+     * 两端都归还后清空 evbuffer 并回收到空闲栈。
+     * @note 由 FreeRequesterEnd 和 OnResponseRead/Event 调用
+     */
+    static void ReleaseHalf(void* slot, bool is_pair1)
+    {
+        if (!slot) return;
+        auto* s = static_cast<PairPoolSlot*>(slot);
+
+        if (is_pair1)
+            s->pair1_done = true;
+        else
+            s->pair0_done = true;
+
+        if (s->pair0_done && s->pair1_done)
+        {
+            // 两端都归还：清空缓冲区，通过 owner 回指归还到空闲栈
+            ResetPair(s);
+            s->in_use = false;
+            if (s->owner)
+                s->owner->ReturnToFreeStack(s);
+        }
+    }
+
+    /** @brief 槽位回空闲栈（由 ReleaseHalf 内部调用） */
+    void ReturnToFreeStack(PairPoolSlot* slot)
+    {
+        m_free_stack.push_back(slot);
+    }
+
+private:
+    /** @brief 重置 pair 的 evbuffer 状态，清空残留数据 */
+    static void ResetPair(PairPoolSlot* slot)
+    {
+        if (slot->pair[0])
+        {
+            struct evbuffer* input = bufferevent_get_input(slot->pair[0]);
+            struct evbuffer* output = bufferevent_get_output(slot->pair[0]);
+            if (input)  evbuffer_drain(input, evbuffer_get_length(input));
+            if (output) evbuffer_drain(output, evbuffer_get_length(output));
+            // 重置水位线和回调（OnPairAcceptBev 会重新设置 pair[1]，pair[0] 在 InjectJrpcRequest 中设置）
+            bufferevent_setcb(slot->pair[0], nullptr, nullptr, nullptr, nullptr);
+        }
+        if (slot->pair[1])
+        {
+            struct evbuffer* input = bufferevent_get_input(slot->pair[1]);
+            struct evbuffer* output = bufferevent_get_output(slot->pair[1]);
+            if (input)  evbuffer_drain(input, evbuffer_get_length(input));
+            if (output) evbuffer_drain(output, evbuffer_get_length(output));
+            bufferevent_setcb(slot->pair[1], nullptr, nullptr, nullptr, nullptr);
+        }
+    }
+
+    struct event_base*      m_evbase;
+    std::vector<PairPoolSlot> m_slots;        ///< 槽位数组（不扩容，下标稳定）
+    std::vector<PairPoolSlot*> m_free_stack;  ///< 空闲槽位栈
+};
+
+
+// ============================================================================
+// HttpJsonRpcManager
+// ============================================================================
+
 HttpJsonRpcManager::HttpJsonRpcManager()
     : m_evbase(nullptr)
     , m_httpServerJRPC(nullptr)
     , m_hubMgr(nullptr)
     , m_channel(nullptr)
+    , m_pairPool(nullptr)
 {
 }
 
@@ -25,14 +179,21 @@ bool HttpJsonRpcManager::Open(struct event_base* evbase, HubProxyManager* hubMgr
     m_evbase = evbase;
     m_hubMgr = hubMgr;
 
-    // 1. 创建内部 JRPC 请求通道（必须在 HTTP 服务器启动前，确保 Worker 线程可用）
+    // 1. 创建 bufferevent_pair 对象池（预创建，减少高并发下的系统调用开销）
+    if (!m_pairPool)
+    {
+        m_pairPool = new BuffereventPairPool();
+        m_pairPool->Init(evbase, 32);
+    }
+
+    // 2. 创建内部 JRPC 请求通道（必须在 HTTP 服务器启动前，确保 Worker 线程可用）
     if (!OpenJrpcChannel(hubMgr))
     {
         DEFAULT_LOG_ERROR("OpenJrpcChannel failed");
         return false;
     }
 
-    // 2. 创建 HTTP JSON-RPC 服务器，注册异步回调（Worker 线程不阻塞）
+    // 3. 创建 HTTP JSON-RPC 服务器，注册异步回调（Worker 线程不阻塞）
     if (nullptr == m_httpServerJRPC)
     {
         m_httpServerJRPC = new ZmJsonRpcServer(ZM_HTTPSERVER_ROOT_URI, ZM_JSONRPC_SERVER_PORT);
@@ -55,6 +216,14 @@ void HttpJsonRpcManager::Close()
         m_httpServerJRPC->Stop();
         delete m_httpServerJRPC;
         m_httpServerJRPC = nullptr;
+    }
+
+    // 销毁 pair 池（在通道关闭后，确保没有在飞的请求）
+    if (m_pairPool)
+    {
+        m_pairPool->Shutdown();
+        delete m_pairPool;
+        m_pairPool = nullptr;
     }
 
     m_hubMgr = nullptr;
@@ -185,12 +354,23 @@ void HttpJsonRpcManager::OnJsonRpcAsync(ZmHttpdTask* task, const std::string& me
 void HttpJsonRpcManager::InjectJrpcRequest(const std::string& request_json,
                                             std::function<void(std::string)> callback)
 {
+    // 尝试从对象池获取 bufferevent_pair，池耗尽则动态创建
+    PairPoolSlot* slot = m_pairPool ? m_pairPool->Acquire() : nullptr;
+
     struct bufferevent* pair[2] = { nullptr, nullptr };
-    if (bufferevent_pair_new(m_evbase, ZM_EVENT_BEV_OPTIONS, pair) < 0)
+    if (slot)
     {
-        DEFAULT_LOG_ERROR("InjectJrpcRequest: bufferevent_pair_new failed");
-        callback(std::string());
-        return;
+        pair[0] = slot->pair[0];
+        pair[1] = slot->pair[1];
+    }
+    else
+    {
+        if (bufferevent_pair_new(m_evbase, ZM_EVENT_BEV_OPTIONS, pair) < 0)
+        {
+            DEFAULT_LOG_ERROR("InjectJrpcRequest: bufferevent_pair_new failed");
+            callback(std::string());
+            return;
+        }
     }
 
     char head[8];
@@ -203,21 +383,50 @@ void HttpJsonRpcManager::InjectJrpcRequest(const std::string& request_json,
         evbuffer_add(output, request_json.data(), request_json.size()) < 0)
     {
         DEFAULT_LOG_ERROR("InjectJrpcRequest: evbuffer_add failed");
-        bufferevent_free(pair[0]);
-        bufferevent_free(pair[1]);
+        if (slot)
+        {
+            // 归还槽位（写失败，尚未送出，两端都未用）
+            slot->in_use = false;
+            m_pairPool->ReturnToFreeStack(slot);
+        }
+        else
+        {
+            bufferevent_free(pair[0]);
+            bufferevent_free(pair[1]);
+        }
         callback(std::string());
         return;
     }
 
-    if (!ZmTapContextEventHandler::OnPairAcceptBev(m_hubMgr->HubProxy(), pair[1]))
+    // 注入 Hub：传递 slot 和归还回调，TAP 释放时通过回调归还 pair[1]
+    if (!ZmTapContextEventHandler::OnPairAcceptBev(m_hubMgr->HubProxy(), pair[1],
+            slot, &BuffereventPairPool::ReleaseHalf))
     {
         DEFAULT_LOG_ERROR("InjectJrpcRequest: OnPairAcceptBev failed");
-        bufferevent_free(pair[0]);
+        if (slot)
+        {
+            // OnPairAcceptBev 失败时 pair[1] 已被直接 free（发生在获取 TAP 之前）
+            // 释放 pair[0] 并重新创建一对放入 slot，再归还到空闲栈
+            bufferevent_free(pair[0]);
+            struct bufferevent* new_pair[2] = { nullptr, nullptr };
+            if (bufferevent_pair_new(m_evbase, ZM_EVENT_BEV_OPTIONS, new_pair) == 0)
+            {
+                slot->pair[0] = new_pair[0];
+                slot->pair[1] = new_pair[1];
+            }
+            slot->in_use = false;
+            m_pairPool->ReturnToFreeStack(slot);
+        }
+        else
+        {
+            bufferevent_free(pair[0]);
+            // pair[1] 已被 OnPairAcceptBev 在失败路径中释放
+        }
         callback(std::string());
         return;
     }
 
-    auto* rctx = new ResponseReadCtx{ std::move(callback), pair[0], 0, false, {} };
+    auto* rctx = new ResponseReadCtx{ std::move(callback), slot, 0, false, {} };
     bufferevent_setcb(pair[0], HttpJsonRpcManager::OnResponseRead, nullptr,
                        HttpJsonRpcManager::OnResponseEvent, rctx);
     bufferevent_setwatermark(pair[0], EV_READ, 4, 0);
@@ -252,7 +461,11 @@ void HttpJsonRpcManager::OnResponseRead(struct bufferevent* bev, void* ctx)
 
         rctx->callback(std::move(rctx->buffer));
 
-        bufferevent_free(rctx->pair0);
+        // 归还 pair[0]：来自池则归还槽位，否则直接释放
+        if (rctx->pool_slot)
+            BuffereventPairPool::ReleaseHalf(rctx->pool_slot, false);
+        else
+            bufferevent_free(bev);
         delete rctx;
     }
 }
@@ -267,6 +480,10 @@ void HttpJsonRpcManager::OnResponseEvent(struct bufferevent* bev, short events, 
         rctx->callback(std::string());
     }
 
-    bufferevent_free(rctx->pair0);
+    // 归还 pair[0]：来自池则归还槽位，否则直接释放
+    if (rctx->pool_slot)
+        BuffereventPairPool::ReleaseHalf(rctx->pool_slot, false);
+    else
+        bufferevent_free(bev);
     delete rctx;
 }

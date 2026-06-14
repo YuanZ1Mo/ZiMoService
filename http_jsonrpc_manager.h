@@ -7,10 +7,14 @@
 
 #include <event2/bufferevent.h>
 
+// 前置声明
+class BuffereventPairPool;
+
 /**
  * @brief HTTP JSON-RPC 前端管理器
  *
  * 负责 HTTP JSON-RPC 服务器的生命周期，以及内部 JRPC 请求通道的创建与管理。
+ * 内部持有 BuffereventPairPool 用于复用 bufferevent_pair，减少高并发下的系统调用和内存分配。
  *
  * 异步处理流程：
  *   ① HTTP JRPC 请求到达（端口 39440）
@@ -29,7 +33,7 @@ public:
 
     /**
      * @brief 初始化 HTTP JSON-RPC 服务器和内部 JRPC 请求通道
-     * @param evbase libevent 事件循环基（DockRunLoop 的 event_base）
+     * @param evbase libevent 事件循环基（ZmEvBaseRunLoop 的 event_base）
      * @param hubMgr 已初始化的 Hub 路由层管理器
      * @return true 初始化成功
      */
@@ -79,7 +83,7 @@ private:
     struct ResponseReadCtx
     {
         std::function<void(std::string)> callback;
-        struct bufferevent*              pair0;
+        void*                            pool_slot;       ///< 池槽位指针（用于归还 pair[0]）
         uint32_t                         response_len;
         bool                             header_read;
         std::string                      buffer;
@@ -89,10 +93,11 @@ private:
     // 成员变量
     // ========================================================================
 
-    struct event_base*  m_evbase;
-    ZmJsonRpcServer*    m_httpServerJRPC;
-    HubProxyManager*    m_hubMgr;
+    struct event_base*   m_evbase;
+    ZmJsonRpcServer*     m_httpServerJRPC;
+    HubProxyManager*     m_hubMgr;
     ZmNetRequestChannel* m_channel;
+    BuffereventPairPool* m_pairPool;         ///< bufferevent_pair 对象池
 };
 
 #endif // HTTP_JSONRPC_MANAGER_H

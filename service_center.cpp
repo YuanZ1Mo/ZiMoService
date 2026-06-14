@@ -91,7 +91,7 @@ void ServiceCenter::OnStop()
     // ★ 关闭顺序：
     //   ① 先清除 ServicePortal 的 NetDock 引用 — 防止 NetDock 析构后
     //      ServicePortal 通过悬空指针访问已释放的 NetDock
-    //   ② NetDock 释放 — 内部按 前端→Hub→DockRunLoop 顺序清理
+    //   ② NetDock 释放 — 内部按 前端→Hub→ZmEvBaseRunLoop 顺序清理
     //      TAP delegate 销毁后不再持有 JrpcRequestReadCB 回调
     //   ③ ServicePortal 释放 — 此时回调已无持有者，安全删除
     if (m_servicePortal)

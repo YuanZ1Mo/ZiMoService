@@ -19,11 +19,10 @@ service_main.cpp                     # 入口：install | uninstall | debug
   └─ ServiceCenter                   # Windows 服务控制器
        ├─ ServicePortal              # JRPC 业务层（所有 API 统一通过 JRPC 暴露）
        └─ NetDock                    # 网络层编排者
-            ├─ DockRunLoop           # libevent 事件循环线程
+            ├─ HubProxyManager       # TAP Hub 路由层（★ 内部持有 EvBaseRunLoop）
             ├─ HttpServerManager     # 通用 HTTP 服务器 (端口 80，仅静态文件)
             │     └─ ZmHttpRouter    # 路由中间件链
             ├─ HttpJsonRpcManager    # HTTP JSON-RPC 前端 (端口 39440)
-            ├─ HubProxyManager       # TAP Hub 路由层（多协议共享）
             └─ MessageServerManager  # WebSocket 服务器 (端口 37310)
 ```
 
@@ -77,10 +76,10 @@ Content-Type: application/json
 
 ## 关键设计
 
-- **线程模型** — libevent 单线程事件循环 + HTTP 请求线程池复用（ZmThreadPool）
+- **线程模型** — libevent 单线程事件循环（由 HubProxyManager 持有）+ HTTP 请求线程池复用（ZmThreadPool）
 - **路由中间件** — Express/Gin 风格，`(task, next)` 管道 + 前缀树匹配（`:id` 参数、`*` 通配符）
-- **跨线程操作** — `ResponseAsync` / `SetDropTimerAsync` 自动回投到事件循环线程
-- **启动/关闭顺序** — 前端先停 → Hub 再停 → 事件循环最后停
+- **跨线程操作** — `ResponseAsync` / `SetDropTimerAsync` 通过 `ScheduleTaskInLoop` 自动回投到 Hub 的事件循环线程
+- **启动/关闭顺序** — 前端先停 → 清理调度残留 → Hub 停（内部释放 delegate 和 EvBaseRunLoop）
 - **业务与静态分离** — 所有业务 API 通过 JRPC 端口（39440）暴露，HTTP 端口（80）仅提供静态文件服务
 
 ## 构建
