@@ -11,53 +11,6 @@
 #include <sstream>
 #include <ctime>
 
-// ============================================================================
-// 同步响应（必须在 libevent 线程中调用）
-// ============================================================================
-
-void ServicePortal::Response(ZM_TAP_CTX* tap, const ZMJSON& jsResponse)
-{
-	if (m_netDock)
-		m_netDock->Response(tap, jsResponse);
-}
-
-void ServicePortal::ResponseResult(ZM_TAP_CTX* tap, const ZMJSON& jsResult)
-{
-	ZMJSON rsp;
-	rsp["result"] = jsResult;
-	Response(tap, rsp);
-}
-
-void ServicePortal::ResponseError(ZM_TAP_CTX* tap, const ZMJSON& jsError)
-{
-	ZMJSON rsp;
-	rsp["error"] = jsError;
-	Response(tap, rsp);
-}
-
-// ============================================================================
-// 异步响应（可在任意线程中调用，内部委托给 NetDock 回投到 libevent 线程）
-// ============================================================================
-
-void ServicePortal::ResponseAsync(ZM_TAP_CTX* tap, const ZMJSON& jsResponse)
-{
-	if (m_netDock)
-		m_netDock->ResponseAsync(tap, jsResponse);
-}
-
-void ServicePortal::ResponseResultAsync(ZM_TAP_CTX* tap, const ZMJSON& jsResult)
-{
-	ZMJSON rsp;
-	rsp["result"] = jsResult;
-	ResponseAsync(tap, rsp);
-}
-
-void ServicePortal::ResponseErrorAsync(ZM_TAP_CTX* tap, const ZMJSON& jsError)
-{
-	ZMJSON rsp;
-	rsp["error"] = jsError;
-	ResponseAsync(tap, rsp);
-}
 
 // ============================================================================
 // HTTP 80 端口路由注册
@@ -300,10 +253,10 @@ void ServicePortal::DispatchJrpcMethod(const std::string& method, const ZMJSON& 
  *
  * 已在框架层完成线程池投递，本函数在 Worker 线程中运行，无需再手动拷贝数据或 InvokeLater。
  *
- * 操作 TAP 必须统一使用异步版本：
- *   - ResponseResultAsync / ResponseErrorAsync（回投到 libevent 线程写入响应）
- *   - SetDropTimerAsync（回投到 libevent 线程设置超时）
- *   - DropAsync（回投到 libevent 线程释放 TAP）
+ * 操作 TAP 通过 tap->delegate 的异步方法（内部回投到 libevent 线程）：
+ *   - delegate->ResponseResultAsync / ResponseErrorAsync
+ *   - delegate->SetDropTimerAsync / DropAsync
+ * 
  *
  * @note 禁止在此回调中直接调用 Response / SetDropTimer / tap->Drop，
  *       因为当前不在 libevent 线程中执行
@@ -319,7 +272,7 @@ void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 		ZMJSON errRsp;
 		errRsp["code"]    = -32700;
 		errRsp["message"] = "Parse error: " + err;
-		ResponseErrorAsync(tap, errRsp);
+		if (tap->delegate) tap->delegate->ResponseErrorAsync(tap, errRsp);
 		return;
 	}
 
@@ -330,9 +283,9 @@ void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 	DispatchJrpcMethod(method, params, result, error);
 
 	if (!error.empty())
-		ResponseErrorAsync(tap, error);
+		if (tap->delegate) tap->delegate->ResponseErrorAsync(tap, error);
 	else
-		ResponseResultAsync(tap, result);
+		if (tap->delegate) tap->delegate->ResponseResultAsync(tap, result);
 }
 
 // ============================================================================

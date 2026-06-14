@@ -6,9 +6,6 @@
 #include "http_jsonrpc_manager.h"
 #include "http_server_manager.h"
 
-#include <mutex>
-#include <unordered_set>
-
 /**
  * @brief 网络层生命周期编排者
  *
@@ -17,7 +14,9 @@
  *   2. HttpJsonRpcManager — HTTP JSON-RPC 前端（含内部 JRPC 请求通道）
  *   3. HttpServerManager — 通用 HTTP 前端（端口 80）
  *   4. MessageServerManager — WebSocket 服务器
- *   5. ScheduleTaskInLoop — 跨线程任务调度（通过 Hub 的 event_base）
+ *
+ * 跨线程 TAP 操作（ResponseAsync/SetDropTimerAsync/DropAsync）
+ * 已迁移到 ZmTapDelegate，业务层通过 tap->delegate 直接调用。
  *
  * 启动顺序约束：
  *   Init → OpenHub → OpenHttpJsonRpcServer（内部自行创建 ZmNetRequestChannel）
@@ -93,7 +92,7 @@ public:
      * @brief 获取 HTTP 服务器管理器指针，供业务层注册静态文件路由
      * @return HttpServerManager* 指针，未初始化时返回 nullptr
      */
-    HttpServerManager* GetHttpServerManager() { return m_httpServerMgr; }
+    HttpServerManager* GetHttpServerManager();
 
     // --- 状态查询 ---
 
@@ -122,85 +121,7 @@ public:
      */
     void SetJrpcRequestReadCB(TapDelegateJrpcRequestReadCB cb);
 
-    /**
-     * @brief 调度任务到 libevent 主线程执行
-     * @param fn_run 在 libevent 线程中执行的任务
-     * @param fn_cb  任务执行后的回调
-     * @param param  透传参数
-     * @return true 调度成功，false 事件循环未就绪
-     *
-     * 通过 libevent 的 event_new + event_active 实现跨线程调遣。
-     * ctx 被记录到 m_pendingScheduleCtx，UnInit 时会清理未触发的残留。
-     */
-    bool ScheduleTaskInLoop(std::function<void(void*)> fn_run,
-                            std::function<void(void*)> fn_cb, void* param);
-
-    // --- TAP 通用响应操作（必须在 libevent 线程中调用）---
-
-    /**
-     * @brief 通过 TAP 回传链写入 JSON 响应（必须在 libevent 线程中调用）
-     * @param tap        请求关联的 TAP 上下文
-     * @param jsResponse 完整响应 JSON（业务层自行封装 {"result":...} 或 {"error":...} 外层）
-     *
-     * 从 TAP 回传链弹出 JRPC delegate，设置回传数据后触发 OnTapDelegateBackEvent
-     * 将响应通过长度前缀帧写回客户端
-     */
-    void Response(ZM_TAP_CTX* tap, const ZMJSON& jsResponse);
-
-    // --- TAP 通用操作（可在任意线程中调用，内部回投到 libevent 线程）---
-
-    /**
-     * @brief 异步写入 JSON 响应（可在任意线程中调用）
-     * @param tap        请求关联的 TAP 上下文
-     * @param jsResponse 完整响应 JSON（业务层自行封装 {"result":...} 或 {"error":...} 外层）
-     *
-     * 内部通过 ScheduleTaskInLoop 将实际写入回投到 libevent 线程，
-     * 回投时会检查 TAP 状态（已 Drop 则丢弃响应并输出警告日志）。
-     * JSON 在回投前序列化为字符串以避免跨线程访问 nlohmann::json。
-     */
-    void ResponseAsync(ZM_TAP_CTX* tap, const ZMJSON& jsResponse);
-
-    /**
-     * @brief 异步设置 TAP 超时定时器（可在任意线程中调用）
-     * @param tap                     TAP 上下文
-     * @param seconds                 超时秒数（传负值取消定时器）
-     * @param micros                  超时微秒数（传负值取消定时器）
-     * @param drop_timeout_error_code 超时错误码，到期未取消则触发 Drop
-     *
-     * 内部通过 ScheduleTaskInLoop 将 event_add/evtimer_del 回投到 libevent 线程，
-     * 避免跨线程操作 event_base 导致的竞态条件
-     */
-    void SetDropTimerAsync(ZM_TAP_CTX* tap, int seconds, int micros = 0, uint32_t drop_timeout_error_code = 0);
-
-    /**
-     * @brief 异步释放 TAP（可在任意线程中调用）
-     * @param tap    TAP 上下文
-     * @param reason 释放原因（用于日志追踪）
-     *
-     * 内部通过 ScheduleTaskInLoop 将 Drop 回投到 libevent 线程，
-     * 避免跨线程操作 bufferevent / event 导致的竞态条件。
-     */
-    void DropAsync(ZM_TAP_CTX* tap, const char* reason);
-
 private:
-    /** @brief 调度事件回调，在 libevent 线程中执行 fn_run → fn_cb 后释放 ctx */
-    static void OnScheduleEventCB(evutil_socket_t fd, short what, void* ctx);
-
-    /**
-     * @brief 调度任务上下文，event_new → OnScheduleEventCB → delete
-     *
-     * owner 字段（NetDock*）使静态回调能访问 m_pendingScheduleCtx 集合，
-     * 用于在回调中移除自身和在 UnInit 中兜底清理。
-     */
-    struct ZM_SCHEDULE_CTX
-    {
-        event*                      ev_schedule;     ///< libevent 调度事件
-        std::function<void(void*)>  fn_run;          ///< 在事件循环线程执行的任务
-        std::function<void(void*)>  fn_cb;           ///< 任务完成后的回调
-        void*                       param;           ///< 透传参数
-        void*                       owner;           ///< NetDock*，用于回调中访问 pending 集合
-    };
-
     // --- 成员变量 ---
     MessageServerManager*  m_messageServerMgr;    ///< WebSocket 服务器管理器
     HubProxyManager*       m_hubProxyMgr;         ///< TAP Hub 路由层（多协议前端共享，内部持有 ZmEvBaseRunLoop）
@@ -208,9 +129,6 @@ private:
     HttpServerManager*     m_httpServerMgr;       ///< 通用 HTTP 前端（端口 80）
     TapDelegateJrpcRequestReadCB m_jrpcRequestReadCB;  ///< JRPC 外部回调，OpenHub 时注入
     bool                   m_unInited;            ///< 防止 UnInit 重复执行
-
-    std::mutex                    m_scheduleMutex;       ///< 保护 m_pendingScheduleCtx
-    std::unordered_set<ZM_SCHEDULE_CTX*> m_pendingScheduleCtx;  ///< 未触发的调度任务
 };
 
 #endif // NET_DOCK_H

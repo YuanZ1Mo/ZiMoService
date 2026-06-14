@@ -56,16 +56,6 @@ public:
 	 */
 	std::string ProcessInternalJrpc(const std::string& requestJson);
 
-	// --- 同步响应（必须在 libevent 线程中调用）---
-	void Response(ZM_TAP_CTX* tap, const ZMJSON& jsResponse);
-	void ResponseResult(ZM_TAP_CTX* tap, const ZMJSON& jsResult);
-	void ResponseError(ZM_TAP_CTX* tap, const ZMJSON& jsError);
-
-	// --- 异步响应（可在任意线程中调用，内部回投到 libevent 线程）---
-	void ResponseAsync(ZM_TAP_CTX* tap, const ZMJSON& jsResponse);
-	void ResponseResultAsync(ZM_TAP_CTX* tap, const ZMJSON& jsResult);
-	void ResponseErrorAsync(ZM_TAP_CTX* tap, const ZMJSON& jsError);
-
 private:
 	/** @brief JRPC 方法处理器签名：参数 → 结果/错误 */
 	using JrpcHandler = std::function<void(const ZMJSON& params, ZMJSON& result, ZMJSON& error)>;
