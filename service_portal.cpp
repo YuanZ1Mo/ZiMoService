@@ -152,9 +152,6 @@ void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 
 		result["jrpc_proxy"]["status"] = (m_netDock && m_netDock->IsJrpcProxyOpen()) ? "running" : "stopped";
 
-		result["websocket"]["status"] = (m_netDock && m_netDock->IsWebSocketOpen()) ? "running" : "stopped";
-		result["websocket"]["port"]   = ZM_WS_SERVER_PORT;
-
 		auto load = ZmSystem::GetSystemLoad();
 		result["system"]["cpu"]           = load.cpu_percent;
 		result["system"]["memory"]        = load.memory_percent;

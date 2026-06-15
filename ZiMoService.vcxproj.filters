@@ -67,9 +67,6 @@
     <Filter Include="头文件\Public\util">
       <UniqueIdentifier>{33b081b1-cab4-41a0-84f3-7ff924f230b1}</UniqueIdentifier>
     </Filter>
-    <Filter Include="头文件\Public\websocket">
-      <UniqueIdentifier>{4bd60d28-abe5-49ce-8c54-84a8ada9fec6}</UniqueIdentifier>
-    </Filter>
     <Filter Include="源文件\Public">
       <UniqueIdentifier>{6a5d849b-d89b-4550-8819-e14f40889cc4}</UniqueIdentifier>
     </Filter>
@@ -87,9 +84,6 @@
     </Filter>
     <Filter Include="源文件\Public\util">
       <UniqueIdentifier>{0b43f544-023c-409c-9ff1-87002a6a2a61}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="源文件\Public\websocket">
-      <UniqueIdentifier>{674303e4-569e-42ec-8701-f5de0232c325}</UniqueIdentifier>
     </Filter>
     <Filter Include="源文件\Public\openssl">
       <UniqueIdentifier>{94330814-e424-48d0-8f2e-a542cd6570cc}</UniqueIdentifier>
@@ -135,12 +129,6 @@
     <ClCompile Include="..\ZiMoPublic\util\zm_util_thread.cpp">
       <Filter>源文件\Public\util</Filter>
     </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\websocket\zm_websocket_utils.cpp">
-      <Filter>源文件\Public\websocket</Filter>
-    </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\websocket\zm_websocket_server.cpp">
-      <Filter>源文件\Public\websocket</Filter>
-    </ClCompile>
     <ClCompile Include="..\ZiMoPublic\openssl\include\openssl\applink.c">
       <Filter>源文件\Public\openssl\include\openssl</Filter>
     </ClCompile>
@@ -180,13 +168,7 @@
     <ClCompile Include="hub_proxy_manager.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="message_server_manager.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
     <ClCompile Include="net_dock.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_request_channel.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="..\ZiMoPublic\net\zm_net_runloop.cpp">
@@ -197,6 +179,9 @@
     </ClCompile>
     <ClCompile Include="http_server_manager.cpp">
       <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ZiMoPublic\net\zm_net_request_channel.cpp">
+      <Filter>源文件\Public\net</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -1091,12 +1076,6 @@
     <ClInclude Include="..\ZiMoPublic\util\zm_util_thread.h">
       <Filter>头文件\Public\util</Filter>
     </ClInclude>
-    <ClInclude Include="..\ZiMoPublic\websocket\zm_websocket_server.h">
-      <Filter>头文件\Public\websocket</Filter>
-    </ClInclude>
-    <ClInclude Include="..\ZiMoPublic\websocket\zm_websocket_utils.h">
-      <Filter>头文件\Public\websocket</Filter>
-    </ClInclude>
     <ClInclude Include="..\ZiMoPublic\util\zm_util_libevent.h">
       <Filter>头文件\Public\util</Filter>
     </ClInclude>
@@ -1130,9 +1109,6 @@
     <ClInclude Include="hub_proxy_manager.h">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="message_server_manager.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
     <ClInclude Include="net_dock.h">
       <Filter>头文件</Filter>
     </ClInclude>
@@ -1157,10 +1133,10 @@
     <ClInclude Include="..\ZiMoPublic\net\zm_net_http_router.h">
       <Filter>头文件\Public\net</Filter>
     </ClInclude>
-    <ClInclude Include="..\ZiMoPublic\net\zm_net_request_channel.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
     <ClInclude Include="..\ZiMoPublic\net\zm_net_runloop.h">
+      <Filter>头文件\Public\net</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ZiMoPublic\net\zm_net_request_channel.h">
       <Filter>头文件\Public\net</Filter>
     </ClInclude>
   </ItemGroup>

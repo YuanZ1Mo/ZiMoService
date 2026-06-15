@@ -1,7 +1,6 @@
 #ifndef NET_DOCK_H
 #define NET_DOCK_H
 
-#include "message_server_manager.h"
 #include "hub_proxy_manager.h"
 #include "http_jsonrpc_manager.h"
 #include "http_server_manager.h"
@@ -13,7 +12,6 @@
  *   1. HubProxyManager — TAP Hub 路由层（内部持有 ZmEvBaseRunLoop 事件循环线程）
  *   2. HttpJsonRpcManager — HTTP JSON-RPC 前端（含内部 JRPC 请求通道）
  *   3. HttpServerManager — 通用 HTTP 前端（端口 80）
- *   4. MessageServerManager — WebSocket 服务器
  *
  * 跨线程 TAP 操作（Response/SetDropTimer/Drop）
  * 已迁移到 ZmTapContext（静态方法），业务层直接通过 ZmTapContext:: 调用。
@@ -43,13 +41,6 @@ public:
      * @note 可多次调用（幂等），析构时自动调用
      */
     void UnInit();
-
-    // --- WebSocket 服务器 ---
-
-    /** @brief 启动 WebSocket 服务器 */
-    void OpenWebSocketServer();
-    /** @brief 停止 WebSocket 服务器 */
-    void CloseWebSocketServer();
 
     // --- Hub 路由层 ---
 
@@ -82,6 +73,11 @@ public:
     /** @brief 停止通用 HTTP 服务器 */
     void CloseHttpServer();
 
+    /** @brief 预留 SOCKS5 入口（依赖 Hub 已启动） */
+    void OpenSocks5Server();
+    /** @brief 预留 停止 SOCKS5 */
+    void CloseSocks5Server();
+
     /**
      * @brief 获取通用 HTTP 路由器的引用，供业务层注册 API 端点
      * @return ZmHttpRouter& 路由器引用
@@ -105,13 +101,6 @@ public:
     bool IsHubOpen() const;
     /** @brief JRPC Proxy delegate 是否运行中 */
     bool IsJrpcProxyOpen() const;
-    /** @brief WebSocket 服务器是否运行中 */
-    bool IsWebSocketOpen() const;
-
-    /** @brief 预留 SOCKS5 入口（依赖 Hub 已启动） */
-    void OpenSocks5Server();
-    /** @brief 预留 停止 SOCKS5 */
-    void CloseSocks5Server();
 
     // --- 回调设置 ---
 
@@ -124,7 +113,6 @@ public:
 
 private:
     // --- 成员变量 ---
-    MessageServerManager*  m_messageServerMgr;    ///< WebSocket 服务器管理器
     HubProxyManager*       m_hubProxyMgr;         ///< TAP Hub 路由层（多协议前端共享，内部持有 ZmEvBaseRunLoop）
     HttpJsonRpcManager*    m_httpJsonRpcMgr;      ///< HTTP JSON-RPC 前端（含内部请求通道）
     HttpServerManager*     m_httpServerMgr;       ///< 通用 HTTP 前端（端口 80）

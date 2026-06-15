@@ -485,12 +485,9 @@
     <ClInclude Include="..\ZiMoPublic\util\zm_util_sys.h" />
     <ClInclude Include="..\ZiMoPublic\util\zm_util_thread.h" />
     <ClInclude Include="..\ZiMoPublic\util\zm_util_win_os.h" />
-    <ClInclude Include="..\ZiMoPublic\websocket\zm_websocket_server.h" />
-    <ClInclude Include="..\ZiMoPublic\websocket\zm_websocket_utils.h" />
     <ClInclude Include="http_jsonrpc_manager.h" />
     <ClInclude Include="http_server_manager.h" />
     <ClInclude Include="hub_proxy_manager.h" />
-    <ClInclude Include="message_server_manager.h" />
     <ClInclude Include="net_dock.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="service_center.h" />
@@ -521,12 +518,9 @@
     <ClCompile Include="..\ZiMoPublic\util\zm_util_sys.cpp" />
     <ClCompile Include="..\ZiMoPublic\util\zm_util_thread.cpp" />
     <ClCompile Include="..\ZiMoPublic\util\zm_util_win_os.cpp" />
-    <ClCompile Include="..\ZiMoPublic\websocket\zm_websocket_server.cpp" />
-    <ClCompile Include="..\ZiMoPublic\websocket\zm_websocket_utils.cpp" />
     <ClCompile Include="http_jsonrpc_manager.cpp" />
     <ClCompile Include="http_server_manager.cpp" />
     <ClCompile Include="hub_proxy_manager.cpp" />
-    <ClCompile Include="message_server_manager.cpp" />
     <ClCompile Include="net_dock.cpp" />
     <ClCompile Include="service_center.cpp" />
     <ClCompile Include="service_main.cpp" />

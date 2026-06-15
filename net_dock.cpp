@@ -5,8 +5,7 @@
 #include "zm_net_socket.h"
 
 NetDock::NetDock()
-    : m_messageServerMgr(nullptr)
-    , m_hubProxyMgr(nullptr)
+    : m_hubProxyMgr(nullptr)
     , m_httpJsonRpcMgr(nullptr)
     , m_httpServerMgr(nullptr)
     , m_unInited(false)
@@ -38,31 +37,12 @@ void NetDock::UnInit()
     //      Hub 停止后无新回调触发，pair 已全部释放
     //   ③ HttpJsonRpcManager delete — 析构（pair 池已在步骤②中销毁，此处为 nullptr 不重复操作）
     CloseHttpServer();
-    CloseSocks5Server();
-    CloseWebSocketServer();
     CloseHttpJsonRpcServer();  // 软关闭（不 delete）
     CloseHub();
     if (m_httpJsonRpcMgr)
     {
         delete m_httpJsonRpcMgr;
         m_httpJsonRpcMgr = nullptr;
-    }
-}
-
-void NetDock::OpenWebSocketServer()
-{
-    if (!m_messageServerMgr)
-        m_messageServerMgr = new MessageServerManager();
-    m_messageServerMgr->Open();
-}
-
-void NetDock::CloseWebSocketServer()
-{
-    if (m_messageServerMgr)
-    {
-        m_messageServerMgr->Close();
-        delete m_messageServerMgr;
-        m_messageServerMgr = nullptr;
     }
 }
 
@@ -169,11 +149,6 @@ bool NetDock::IsHubOpen() const
 bool NetDock::IsJrpcProxyOpen() const
 {
     return m_hubProxyMgr && m_hubProxyMgr->IsJrpcProxyOpen();
-}
-
-bool NetDock::IsWebSocketOpen() const
-{
-    return m_messageServerMgr && m_messageServerMgr->IsOpen();
 }
 
 void NetDock::OpenSocks5Server()
