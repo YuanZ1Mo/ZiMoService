@@ -155,7 +155,10 @@ createApp({
 
     goTest(r) {
       this.testMethod = r.method;
-      this.testParams = r.requestExample.includes('{') ? r.requestExample.split('\n').pop() : '';
+      try {
+        const ex = JSON.parse(r.requestExample);
+        this.testParams = ex.params ? JSON.stringify(ex.params, null, 2) : '';
+      } catch { this.testParams = ''; }
       this.tResult = '';
       window.location.hash = '#/test';
     },

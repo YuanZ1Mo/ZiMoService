@@ -180,22 +180,22 @@ void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 		result["system"]["gpuAvailable"]  = load.has_gpu;
 		result["system"]["gpu"]           = (load.has_gpu ? load.gpu_percent : -1.0);
 	}
-		else if (method == "broadcast")
-		{
-			std::string topic   = zm_json_get_str(params, "topic", "");
-			std::string content = zm_json_get_str(params, "content", "");
-			std::string tag     = zm_json_get_str(params, "tag", "");
+	else if (method == "broadcast")
+	{
+		std::string topic   = zm_json_get_str(params, "topic", "");
+		std::string content = zm_json_get_str(params, "content", "");
+		std::string tag     = zm_json_get_str(params, "tag", "");
 
-			if (topic.empty())
-			{
-				result["success"] = false;
-				result["error"]   = "topic is required";
-			}
-			else
-			{
-				result["success"] = BroadcastMessage(topic, content, tag);
-			}
+		if (topic.empty())
+		{
+			result["success"] = false;
+			result["error"]   = "topic is required";
 		}
+		else
+		{
+			result["success"] = BroadcastMessage(topic, content, tag);
+		}
+	}
 	else if (method == "echo")
 	{
 		result["echo"] = params;
@@ -225,7 +225,7 @@ void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 			"{\"method\":\"getStatus\",\"params\":{}}",
 			"{\"result\":{\"http\":{\"status\":\"running\"}}}");
 		add("broadcast","广播", "向所有匹配tag的客户端广播消息",
-			"{\"method\":\"broadcast\",\"params\":{\"topic\":\"alert\",\"content\":\"{\\\"msg\\\":\\\"hello\\\"}\",\"tag\":\"all\"}}",
+			"{\"method\":\"broadcast\",\"params\":{\"topic\":\"hello\",\"content\":\"hello world\",\"tag\":\"demo\"}}",
 			"{\"result\":{\"success\":true}}");
 		add("echo",     "测试", "通用接口测试",
 			"{\"method\":\"echo\",\"params\":{\"key\":\"value\"}}",
