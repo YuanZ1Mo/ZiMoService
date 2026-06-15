@@ -1,12 +1,12 @@
 # ZiMoService
 
-ZiMo 客户端生态的核心 Windows 服务，基于 libevent 事件循环提供 HTTP、WebSocket、JSON-RPC 网络基础设施。
+ZiMo 客户端生态的核心 Windows 服务，基于 libevent 事件循环提供 HTTP、消息广播、JSON-RPC 网络基础设施。
 
 ## 功能
 
 - **通用 HTTP 服务** — 端口 80，静态文件 + 管理面板着陆页
 - **HTTP JSON-RPC** — 端口 39440，路径 `/ZiMo/JRPC`，所有业务 API 统一入口
-- **WebSocket** — 端口 37310，实时双向通信
+- **消息广播** — 端口 39640，TCP 一对多推送，基于 ZmBroadcastServer/ZmBroadcastClient
 - **TAP 代理链** — 多协议前端共享 Hub 路由层
 - **异步 DNS** — 基于 libevent `evdns_getaddrinfo`，事件驱动
 - **系统监控** — CPU/内存/GPU 实时负载采集
@@ -23,12 +23,12 @@ service_main.cpp                     # 入口：install | uninstall | debug
             ├─ HttpServerManager     # 通用 HTTP 服务器 (端口 80，仅静态文件)
             │     └─ ZmHttpRouter    # 路由中间件链
             ├─ HttpJsonRpcManager    # HTTP JSON-RPC 前端 (端口 39440)
-            └─ MessageServerManager  # WebSocket 服务器 (端口 37310)
+            └─ BroadcastManager      # 消息广播服务端 (端口 39640，内部自管理事件循环)
 ```
 
 ## 线程模型
 
-系统包含 **三条独立的事件循环线程** 和 **两个线程池**：
+系统包含 **四条独立的事件循环线程** 和 **两个线程池**：
 
 | 线程/池 | 所属组件 | 说明 |
 |---------|---------|------|
@@ -36,6 +36,7 @@ service_main.cpp                     # 入口：install | uninstall | debug
 | **HTTP 80 事件循环** | `HttpServerManager` → `ZmHttpServer` | `event_base_dispatch()`，接收 HTTP 请求并分发响应 |
 | **HTTP 39440 事件循环** | `HttpJsonRpcManager` → `ZmJsonRpcServer` | `event_base_dispatch()`，接收 JRPC HTTP 请求并分发响应 |
 | **HTTP 线程池** | `ZmHttpServer::m_pool` | 每个 HTTP 服务器独立的线程池（`hardware_concurrency` 线程），执行请求处理 |
+| **广播事件循环** | `BroadcastManager` → `ZmEvBaseRunLoop` | 自管理事件循环，处理广播客户端连接和消息推送 |
 | **JRPC delegate 线程池** | `ZmThreadPool::InvokeLater` | 全局线程池，执行 `ServicePortal::JrpcRequestReadCB` 业务逻辑 |
 
 跨线程通信机制：
@@ -50,7 +51,7 @@ service_main.cpp                     # 入口：install | uninstall | debug
 |------|------|------|
 | 通用 HTTP | 80 | 着陆页 + 控制中心 + 静态文件 |
 | HTTP JSON-RPC | 39440 | JSON-RPC 2.0 业务 API，路径 `/ZiMo/JRPC` |
-| WebSocket | 37310 | 实时双向通信 |
+| 消息广播 | 39640 | TCP 一对多消息推送 |
 
 ## 前端页面
 
@@ -358,7 +359,8 @@ www/
 |------|------|------|
 | `ping` | 系统 | 心跳检测，返回 pong |
 | `getTime` | 系统 | 服务器当前时间 |
-| `getStatus` | 系统 | 综合状态（HTTP/JRPC/Hub/WS/系统负载/时间） |
+| `getStatus` | 系统 | 综合状态（HTTP/JRPC/Hub/Broadcast/系统负载/时间） |
+| `broadcast` | 广播 | 向匹配 tag 的客户端推送消息 |
 | `echo` | 测试 | 通用接口测试，回显传入数据 |
 | `getRoutes` | 文档 | JRPC 方法文档列表 |
 | `getAbout` | 文档 | 后端和前端技术信息（README.md） |
@@ -404,7 +406,7 @@ ZiMoService.exe debug       # 前台调试运行
 | `net/` | TCP、HTTP、DNS、TAP 代理、路由中间件 |
 | `service/` | ZmServiceBase |
 | `ssl/` | SSL 上下文管理 |
-| `websocket/` | WebSocket 服务端 |
+| `net/broadcast` | 消息广播服务端与客户端 |
 | `util/` | 线程、线程池、系统监控、字符串工具 |
 | `json/` | nlohmann/json 封装 |
 | `spdlog/` | 日志 |
