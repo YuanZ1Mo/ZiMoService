@@ -48,6 +48,8 @@ public:
 
     /** @brief 获取 libevent 事件循环基 */
     event_base*      EvBase()     const { return m_evLoop ? m_evLoop->GetEventBase() : nullptr; }
+    /** @brief 获取事件循环线程 */
+    ZmEvBaseRunLoop* EvRunLoop()  const { return m_evLoop; }
     /** @brief 获取 libevent DNS 解析基 */
     evdns_base*      EvDnsBase()  const { return m_evLoop ? m_evLoop->GetEventDnsBase() : nullptr; }
     /** @brief 获取 TAP 上下文池 */

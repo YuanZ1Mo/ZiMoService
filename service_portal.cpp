@@ -12,6 +12,22 @@
 #include <ctime>
 
 // ============================================================================
+// 广播消息便捷方法
+// ============================================================================
+
+bool ServicePortal::BroadcastMessage(const std::string& topic, const std::string& content, const std::string& tag)
+{
+	if (!m_netDock)
+		return false;
+
+	auto* mgr = m_netDock->GetBroadcastManager();
+	if (!mgr)
+		return false;
+
+	return mgr->Broadcast(topic, content, tag);
+}
+
+// ============================================================================
 // HTTP 80 端口路由注册
 // ============================================================================
 
@@ -152,6 +168,10 @@ void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 
 		result["jrpc_proxy"]["status"] = (m_netDock && m_netDock->IsJrpcProxyOpen()) ? "running" : "stopped";
 
+		result["broadcast"]["status"]      = (m_netDock && m_netDock->IsBroadcastOpen()) ? "running" : "stopped";
+		result["broadcast"]["port"]        = (m_netDock && m_netDock->GetBroadcastManager()) ? m_netDock->GetBroadcastManager()->GetPort() : 0;
+		result["broadcast"]["connections"] = (m_netDock && m_netDock->GetBroadcastManager()) ? m_netDock->GetBroadcastManager()->GetConnectionCount() : 0;
+		result["broadcast"]["sent"]        = (m_netDock && m_netDock->GetBroadcastManager()) ? m_netDock->GetBroadcastManager()->GetSentCount() : 0;
 		auto load = ZmSystem::GetSystemLoad();
 		result["system"]["cpu"]           = load.cpu_percent;
 		result["system"]["memory"]        = load.memory_percent;
@@ -160,6 +180,22 @@ void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 		result["system"]["gpuAvailable"]  = load.has_gpu;
 		result["system"]["gpu"]           = (load.has_gpu ? load.gpu_percent : -1.0);
 	}
+		else if (method == "broadcast")
+		{
+			std::string topic   = zm_json_get_str(params, "topic", "");
+			std::string content = zm_json_get_str(params, "content", "");
+			std::string tag     = zm_json_get_str(params, "tag", "");
+
+			if (topic.empty())
+			{
+				result["success"] = false;
+				result["error"]   = "topic is required";
+			}
+			else
+			{
+				result["success"] = BroadcastMessage(topic, content, tag);
+			}
+		}
 	else if (method == "echo")
 	{
 		result["echo"] = params;
@@ -188,6 +224,9 @@ void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 		add("getStatus","系统", "获取服务器综合状态",
 			"{\"method\":\"getStatus\",\"params\":{}}",
 			"{\"result\":{\"http\":{\"status\":\"running\"}}}");
+		add("broadcast","广播", "向所有匹配tag的客户端广播消息",
+			"{\"method\":\"broadcast\",\"params\":{\"topic\":\"alert\",\"content\":\"{\\\"msg\\\":\\\"hello\\\"}\",\"tag\":\"all\"}}",
+			"{\"result\":{\"success\":true}}");
 		add("echo",     "测试", "通用接口测试",
 			"{\"method\":\"echo\",\"params\":{\"key\":\"value\"}}",
 			"{\"result\":{\"echo\":{\"key\":\"value\"}}}");

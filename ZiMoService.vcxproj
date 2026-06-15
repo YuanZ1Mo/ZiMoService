@@ -224,6 +224,9 @@
     <ClInclude Include="..\ZiMoPublic\net\zm_net_tap.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_tap_hub.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_tap_jrpc.h" />
+    <ClInclude Include="..\ZiMoPublic\net\zm_net_broadcast_base.h" />
+    <ClInclude Include="..\ZiMoPublic\net\zm_net_broadcast_client.h" />
+    <ClInclude Include="..\ZiMoPublic\net\zm_net_broadcast_server.h" />
     <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\aes.h" />
     <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\asn1.h" />
     <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\asn1err.h" />
@@ -485,6 +488,7 @@
     <ClInclude Include="..\ZiMoPublic\util\zm_util_sys.h" />
     <ClInclude Include="..\ZiMoPublic\util\zm_util_thread.h" />
     <ClInclude Include="..\ZiMoPublic\util\zm_util_win_os.h" />
+    <ClInclude Include="broadcast_manager.h" />
     <ClInclude Include="http_jsonrpc_manager.h" />
     <ClInclude Include="http_server_manager.h" />
     <ClInclude Include="hub_proxy_manager.h" />
@@ -506,6 +510,9 @@
     <ClCompile Include="..\ZiMoPublic\net\zm_net_tap.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_tap_hub.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_tap_jrpc.cpp" />
+    <ClCompile Include="..\ZiMoPublic\net\zm_net_broadcast_base.cpp" />
+    <ClCompile Include="..\ZiMoPublic\net\zm_net_broadcast_client.cpp" />
+    <ClCompile Include="..\ZiMoPublic\net\zm_net_broadcast_server.cpp" />
     <ClCompile Include="..\ZiMoPublic\openssl\include\openssl\applink.c" />
     <ClCompile Include="..\ZiMoPublic\service\zm_service_base.cpp" />
     <ClCompile Include="..\ZiMoPublic\spdlog\zm_logger.cpp" />
@@ -518,6 +525,7 @@
     <ClCompile Include="..\ZiMoPublic\util\zm_util_sys.cpp" />
     <ClCompile Include="..\ZiMoPublic\util\zm_util_thread.cpp" />
     <ClCompile Include="..\ZiMoPublic\util\zm_util_win_os.cpp" />
+    <ClCompile Include="broadcast_manager.cpp" />
     <ClCompile Include="http_jsonrpc_manager.cpp" />
     <ClCompile Include="http_server_manager.cpp" />
     <ClCompile Include="hub_proxy_manager.cpp" />

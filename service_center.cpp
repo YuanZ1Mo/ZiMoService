@@ -5,6 +5,7 @@
 
 #include "net_dock.h"
 #include "service_portal.h"
+#include "service_define.h"
 
 #include <Wtsapi32.h>
 #pragma comment(lib, "Wtsapi32.lib")
@@ -79,6 +80,7 @@ void ServiceCenter::OnStart(DWORD /*argc*/, TCHAR** /*argv[]*/)
             wwwRoot = wwwRoot.substr(0, pos);
         wwwRoot += "\\..\\www";  // Release\..\www → 项目根目录\www
         m_netDock->OpenHttpServer(wwwRoot.c_str());
+        m_netDock->OpenBroadcastServer(ZM_BROADCAST_SERVER_PORT);
     }
 
     // 注册 HTTP 80 端口路由（/control → 控制中心 SPA）

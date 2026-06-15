@@ -32,7 +32,7 @@ createApp({
         { key:'jrpc',    icon:'📡', label:'JRPC HTTP',      val:'—', ok:false, sub:'' },
         { key:'hub',     icon:'🔀', label:'Hub 路由层',     val:'—', ok:false, sub:'' },
         { key:'jrpcpx',  icon:'🔗', label:'JRPC Proxy',     val:'—', ok:false, sub:'' },
-        { key:'ws',      icon:'🔌', label:'WebSocket',      val:'—', ok:false, sub:'' },
+        { key:'ws',      icon:'📡', label:'Broadcast',      val:'—', ok:false, sub:'' },
         { key:'cpu',     icon:'💻', label:'CPU 占用',       val:'—', ok:true,  sub:'' },
         { key:'mem',     icon:'🧠', label:'内存占用',       val:'—', ok:true,  sub:'' },
         { key:'gpu',     icon:'🎮', label:'GPU 占用',       val:'—', ok:true,  sub:'' },
@@ -102,8 +102,8 @@ createApp({
         if (d.jrpc_proxy) {
           const [v, ok] = s(d.jrpc_proxy.status); set(3, v, ok, '');
         }
-        if (d.websocket) {
-          const [v, ok] = s(d.websocket.status); set(4, v, ok, '端口 ' + d.websocket.port);
+        if (d.broadcast) {
+          const [v, ok] = s(d.broadcast.status); set(4, v, ok, '端口 ' + d.broadcast.port);
         }
         if (d.system) {
           set(5, d.system.cpu.toFixed(1) + '%', true, '');

@@ -15,6 +15,9 @@
 /** HTTP JSON-RPC 服务器监听端口 */
 #define ZM_JSONRPC_SERVER_PORT  39440
 
+/** 广播服务端监听端口 */
+#define ZM_BROADCAST_SERVER_PORT 39640
+
 /** SOCKS5 服务器监听端口 */
 #define ZM_SOCKS5_SERVER_PORT   39540
 

@@ -8,6 +8,7 @@ NetDock::NetDock()
     : m_hubProxyMgr(nullptr)
     , m_httpJsonRpcMgr(nullptr)
     , m_httpServerMgr(nullptr)
+    , m_broadcastMgr(nullptr)
     , m_unInited(false)
 {
 }
@@ -36,6 +37,7 @@ void NetDock::UnInit()
     //      → 停止 ZmEvBaseRunLoop
     //      Hub 停止后无新回调触发，pair 已全部释放
     //   ③ HttpJsonRpcManager delete — 析构（pair 池已在步骤②中销毁，此处为 nullptr 不重复操作）
+    CloseBroadcastServer();
     CloseHttpServer();
     CloseHttpJsonRpcServer();  // 软关闭（不 delete）
     CloseHub();
@@ -168,5 +170,34 @@ void NetDock::CloseSocks5Server()
 void NetDock::SetJrpcRequestReadCB(TapDelegateJrpcRequestReadCB cb)
 {
     m_jrpcRequestReadCB = cb;
+}
+
+void NetDock::OpenBroadcastServer(uint16_t port)
+{
+    if (!m_broadcastMgr)
+    {
+        m_broadcastMgr = new BroadcastManager();
+        m_broadcastMgr->Open(port);
+    }
+}
+
+void NetDock::CloseBroadcastServer()
+{
+    if (m_broadcastMgr)
+    {
+        m_broadcastMgr->Close();
+        delete m_broadcastMgr;
+        m_broadcastMgr = nullptr;
+    }
+}
+
+BroadcastManager* NetDock::GetBroadcastManager()
+{
+    return m_broadcastMgr;
+}
+
+bool NetDock::IsBroadcastOpen() const
+{
+    return m_broadcastMgr && m_broadcastMgr->IsOpen();
 }
 

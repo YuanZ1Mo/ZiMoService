@@ -4,6 +4,7 @@
 #include "hub_proxy_manager.h"
 #include "http_jsonrpc_manager.h"
 #include "http_server_manager.h"
+#include "broadcast_manager.h"
 
 /**
  * @brief 网络层生命周期编排者
@@ -12,6 +13,7 @@
  *   1. HubProxyManager — TAP Hub 路由层（内部持有 ZmEvBaseRunLoop 事件循环线程）
  *   2. HttpJsonRpcManager — HTTP JSON-RPC 前端（含内部 JRPC 请求通道）
  *   3. HttpServerManager — 通用 HTTP 前端（端口 80）
+ *   4. BroadcastManager — 广播服务端（端口 39640，消息推送）
  *
  * 跨线程 TAP 操作（Response/SetDropTimer/Drop）
  * 已迁移到 ZmTapContext（静态方法），业务层直接通过 ZmTapContext:: 调用。
@@ -78,6 +80,20 @@ public:
     /** @brief 预留 停止 SOCKS5 */
     void CloseSocks5Server();
 
+    // --- 广播服务端 ---
+
+    /**
+     * @brief 启动广播服务端（依赖 Hub 已启动，内部使用 Hub 的事件循环线程）
+     * @param port 监听端口，0 = 随机分配
+     */
+    void OpenBroadcastServer(uint16_t port);
+    /** @brief 停止广播服务端 */
+    void CloseBroadcastServer();
+    /** @brief 获取广播服务端管理器指针 */
+    BroadcastManager* GetBroadcastManager();
+    /** @brief 广播服务端是否运行中 */
+    bool IsBroadcastOpen() const;
+
     /**
      * @brief 获取通用 HTTP 路由器的引用，供业务层注册 API 端点
      * @return ZmHttpRouter& 路由器引用
@@ -116,6 +132,7 @@ private:
     HubProxyManager*       m_hubProxyMgr;         ///< TAP Hub 路由层（多协议前端共享，内部持有 ZmEvBaseRunLoop）
     HttpJsonRpcManager*    m_httpJsonRpcMgr;      ///< HTTP JSON-RPC 前端（含内部请求通道）
     HttpServerManager*     m_httpServerMgr;       ///< 通用 HTTP 前端（端口 80）
+    BroadcastManager*      m_broadcastMgr;        ///< 广播服务端管理器
     TapDelegateJrpcRequestReadCB m_jrpcRequestReadCB;  ///< JRPC 外部回调，OpenHub 时注入
     bool                   m_unInited;            ///< 防止 UnInit 重复执行
 };
