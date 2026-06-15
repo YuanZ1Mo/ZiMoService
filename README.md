@@ -351,7 +351,92 @@ www/
 
 ---
 
-## JRPC 方法
+## 消息广播流程（端口 39640）
+
+广播系统基于 TCP 长连接 + 自定义帧协议（4 字节大端长度前缀 + JSON body），服务端与客户端通过握手建立连接后，支持心跳保活、Tag 过滤订阅和消息推送。
+
+### 完整生命周期
+
+```
+客户端                                       服务端
+  │                                            │
+  │──── TCP 连接 ────────────────────────────→│  OnAcceptConnCB
+  │                                            │  ├─ 检查连接数限制
+  │                                            │  ├─ 创建 bufferevent
+  │                                            │  ├─ 分配 client_id（UUID v4）
+  │                                            │  └─ 发送 settings 帧
+  │←─── {"settings":{"heartbeat_time":60}} ────│
+  │                                            │
+  │ HandleMessage: settings 帧                 │
+  │ ├─ SendJson({"action":"confirm_settings"}) │
+  │ ├─ 取消握手超时定时器                      │
+  │ ├─ handshakeDone = true                   │
+  │ ├─ SendCurrentTags()                      │
+  │ └─ onConnected 回调                        │
+  │──── {"action":"confirm_settings"} ────────→│  OnClientReadCB
+  │                                            │  ├─ 取消握手超时定时器
+  │                                            │  ├─ 启动心跳检测定时器
+  │                                            │  └─ onClientOnline 回调
+  │──── {"action":"subscribe","tags":[...]} ──→│  OnClientReadCB
+  │                                            │  └─ 更新客户端 tag 列表
+  │                                            │
+  │  [心跳 — 活跃时零开销]                      │
+  │←─── {"action":"ping"} ─────────────────────│  空闲超过 heartbeat_time/2 时
+  │──── {"action":"pong"} ────────────────────→│  刷新 lastActiveTime
+  │                                            │
+  │  [业务消息推送]                             │
+  │                                            │  BroadcastMessage(topic, content, tag)
+  │                                            │  ├─ 遍历客户端匹配 tag
+  │                                            │  ├─ 帧编码 + 入客户端队列
+  │                                            │  └─ bufferevent_write
+  │←─── {"id":"...","topic":"...","content":...}│
+  │                                            │
+  │  OnReadCB → HandleMessage                  │
+  │  ├─ 匹配 "id" + "topic" 键                │
+  │  └─ ZmThreadPool → onMessage 回调          │
+  │                                            │
+  │  [断开]                                     │
+  │  BEV_EVENT_EOF / ERROR / 心跳超时           │
+  │  ├─ onClientOffline 回调                    │
+  │  ├─ 释放 bufferevent / 定时器               │
+  │  └─ 清空消息队列                            │
+```
+
+### 业务层调用链
+
+```
+外部调用                        │  事件循环线程
+                                │
+ServicePortal::BroadcastMessage(topic, content, tag)
+  └─ BroadcastManager::Broadcast(topic, content, tag)
+     └─ ZmBroadcastServer::Broadcast(topic, content, tag)
+        └─ BcScheduledTask → ScheduleTask → event_active
+                                │  OnDispatchEventCB
+                                │  └─ ExecuteTask → DoSend
+                                │     ├─ 遍历 m_clients, 匹配 tag
+                                │     ├─ BcMessage → JSON
+                                │     ├─ 帧编码（4B 长度 + JSON body）
+                                │     └─ DeliverToClient
+                                │        ├─ 入客户端 msgQueue
+                                │        └─ bufferevent_write
+```
+
+### JRPC 广播调用
+
+```
+HTTP 客户端
+  │  POST {"method":"broadcast","params":{"topic":"hello","content":"world","tag":"demo"}}
+  ▼
+[JRPC HTTP 事件循环 → Worker → TAP Hub → JRPC delegate 线程池]
+  │  ServicePortal::JrpcRequestReadCB
+  │  └─ BroadcastMessage("hello", "world", "demo")
+  │     └─ BroadcastManager::Broadcast
+  │        └─ ZmBroadcastServer::Broadcast (跨线程调度)
+  ▼
+[广播事件循环]
+  │  ExecuteTask → DoSend → 匹配 tag → 帧编码 → bufferevent_write
+  ▼
+TCP 广播客户端
 
 所有业务 API 统一通过 JSON-RPC 2.0（端口 39440，路径 `/ZiMo/JRPC`）访问。
 
