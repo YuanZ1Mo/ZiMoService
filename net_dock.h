@@ -15,15 +15,16 @@
  *   3. HttpServerManager — 通用 HTTP 前端（端口 80）
  *   4. MessageServerManager — WebSocket 服务器
  *
- * 跨线程 TAP 操作（ResponseAsync/SetDropTimerAsync/DropAsync）
- * 已迁移到 ZmTapDelegate，业务层通过 tap->delegate 直接调用。
+ * 跨线程 TAP 操作（Response/SetDropTimer/Drop）
+ * 已迁移到 ZmTapContext（静态方法），业务层直接通过 ZmTapContext:: 调用。
  *
  * 启动顺序约束：
  *   Init → OpenHub → OpenHttpJsonRpcServer（内部自行创建 ZmNetRequestChannel）
  *
  * 关闭顺序约束：
- *   前端先停（内部先关 ZmNetRequestChannel 再 join Worker）
- *   → 清理调度残留 → Hub 停（内部释放 delegate 和 ZmEvBaseRunLoop）
+ *   ① HTTP 前端先软关闭 — Close 内部先关 ZmNetRequestChannel 再 join Worker（Pair 池暂保留）
+ *   ② Hub 停 — 内部 Drop 所有 TAP → 销毁 pair 池（在事件循环停止前）→ 停止 ZmEvBaseRunLoop
+ *   ③ HttpJsonRpcManager delete — 析构（pair 池已在步骤②中销毁）
  */
 class NetDock
 {

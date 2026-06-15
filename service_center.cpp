@@ -59,8 +59,8 @@ void ServiceCenter::OnStart(DWORD /*argc*/, TCHAR** /*argv[]*/)
     m_netDock = new NetDock();
     m_netDock->Init();
 
-    // 将 NetDock 注入 ServicePortal，使其可直接使用通用的 TAP 操作方法
-    // 业务层在 Worker 线程中处理完成后，通过 NetDock::ResponseAsync 安全回写响应
+    // 将 NetDock 注入 ServicePortal，供状态查询等用途
+    // 业务层在 Worker 线程中处理完成后，通过 ZmTapContext::Response 安全回写响应
     m_servicePortal->SetNetDock(m_netDock);
 
     m_netDock->SetJrpcRequestReadCB(std::bind(&ServicePortal::JrpcRequestReadCB, m_servicePortal,

@@ -13,6 +13,10 @@
  * 负责 HTTP JSON-RPC 服务器的生命周期，以及内部 JRPC 请求通道的创建与管理。
  * 内部持有 BuffereventPairPool 用于复用 bufferevent_pair，减少高并发下的系统调用和内存分配。
  *
+ * Close() 仅执行软关闭（通道 + HTTP 服务器），pair 池在析构函数中销毁。
+ * 调用者须确保在 delete 本对象前已关闭 Hub（所有 TAP 已 Drop），防止在飞请求
+ * 访问已释放的 pair bufferevent。详见 NetDock::UnInit() 中的关闭顺序。
+ *
  * 异步处理流程：
  *   ① HTTP JRPC 请求到达（端口 39440）
  *   ② ZmJsonRpcServer → 异步回调 OnJsonRpcAsync（Worker 线程）
@@ -37,9 +41,22 @@ public:
     bool Open(HubProxyManager* hubMgr);
 
     /**
-     * @brief 关闭内部通道和 HTTP 服务器
+     * @brief 关闭内部通道和 HTTP 服务器（软关闭，不销毁 pair 池）
+     *
+     * 关闭 ZmNetRequestChannel（拒绝所有 pending promise）并停止 HTTP 服务器。
+     * Pair 池暂不销毁 — 已注入 Hub 链的在飞请求仍需 pair 完成响应回写。
+     * Pair 池需在 Hub 事件循环停止前通过 ShutdownPairPool() 显式销毁，
+     * 因 bufferevent_free 内部依赖 event_base 存活。
      */
     void Close();
+
+    /**
+     * @brief 销毁 bufferevent_pair 对象池（须在 Hub 事件循环停止前调用）
+     *
+     * 在所有 TAP 已 Drop（pair[1] 已归还）之后、event_base 销毁之前调用。
+     * 调用后 m_pairPool 置空，析构函数不再重复销毁。
+     */
+    void ShutdownPairPool();
 
     /** @brief 查询 JRPC 服务器是否正常运行 */
     bool IsOpen() const { return m_httpServerJRPC != nullptr && m_httpServerJRPC->IsRunning(); }

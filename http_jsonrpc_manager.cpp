@@ -19,6 +19,18 @@ HttpJsonRpcManager::HttpJsonRpcManager()
 HttpJsonRpcManager::~HttpJsonRpcManager()
 {
     Close();
+
+    // ★ Pair 池应在析构前通过 ShutdownPairPool() 显式销毁（在 Hub 事件循环停止前调用）。
+    // 此处作为兜底：若调用者未提前调用 ShutdownPairPool()，则在此处销毁。
+    // 但此时 event_base 可能已释放，bufferevent_free 存在崩溃风险，
+    // 因此调用者须确保在 delete 前已通过 NetDock::CloseHub() → HubProxyManager::Close(beforeLoopStop)
+    // 路径提前销毁 pair 池。
+    if (m_pairPool != nullptr)
+    {
+        m_pairPool->Shutdown();
+        delete m_pairPool;
+        m_pairPool = nullptr;
+    }
 }
 
 bool HttpJsonRpcManager::Open(HubProxyManager* hubMgr)
@@ -67,15 +79,22 @@ void HttpJsonRpcManager::Close()
         m_httpServerJRPC = nullptr;
     }
 
-    // 销毁 pair 池（在通道关闭后，确保没有在飞的请求）
+    // ★ Pair 池不在此处销毁 — 已注入 Hub 链的在飞请求仍需 pair 完成响应回写
+    // Pair 池的销毁通过 ShutdownPairPool() 在 Hub 事件循环停止前执行
+
+    m_hubMgr = nullptr;
+}
+
+void HttpJsonRpcManager::ShutdownPairPool()
+{
     if (m_pairPool != nullptr)
     {
+        // bufferevent_free 内部调用 event_del 需 event_base 存活，
+        // 调用者须确保在 Hub 事件循环停止前调用本方法
         m_pairPool->Shutdown();
         delete m_pairPool;
         m_pairPool = nullptr;
     }
-
-    m_hubMgr = nullptr;
 }
 
 // ============================================================================

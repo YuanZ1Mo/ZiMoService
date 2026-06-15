@@ -30,13 +30,23 @@ void NetDock::UnInit()
     m_unInited = true;
 
     // ★ 关闭顺序严格不可变：
-    //   ① HTTP 前端先停 — Close 内部先关 ZmNetRequestChannel（拒绝 pending promise，唤醒 Worker）再 join 线程池
-    //   ② Hub 路由层停止 — 内部释放 delegate（含 pending 调度清理）→ 停止 ZmEvBaseRunLoop
+    //   ① HTTP 前端先软关闭 — Close 内部先关 ZmNetRequestChannel（拒绝 pending promise）再 join 线程池
+    //      Pair 池暂不销毁：已注入 Hub 链的在飞请求仍需 pair 完成响应回写
+    //   ② Hub 路由层停止 — 内部 Drop 所有 TAP（在飞请求的 pair[1] 被标记归还）
+    //      → 销毁 pair 池（在事件循环停止前，bufferevent_free 依赖 event_base 存活）
+    //      → 停止 ZmEvBaseRunLoop
+    //      Hub 停止后无新回调触发，pair 已全部释放
+    //   ③ HttpJsonRpcManager delete — 析构（pair 池已在步骤②中销毁，此处为 nullptr 不重复操作）
     CloseHttpServer();
     CloseSocks5Server();
     CloseWebSocketServer();
-    CloseHttpJsonRpcServer();
+    CloseHttpJsonRpcServer();  // 软关闭（不 delete）
     CloseHub();
+    if (m_httpJsonRpcMgr)
+    {
+        delete m_httpJsonRpcMgr;
+        m_httpJsonRpcMgr = nullptr;
+    }
 }
 
 void NetDock::OpenWebSocketServer()
@@ -69,7 +79,13 @@ void NetDock::CloseHub()
 {
     if (m_hubProxyMgr)
     {
-        m_hubProxyMgr->Close();
+        // ★ 在 Hub 事件循环停止前销毁 pair 池（bufferevent_free 依赖 event_base 存活）
+        m_hubProxyMgr->Close([this]() {
+            if (m_httpJsonRpcMgr)
+            {
+                m_httpJsonRpcMgr->ShutdownPairPool();
+            }
+        });
         delete m_hubProxyMgr;
         m_hubProxyMgr = nullptr;
     }
@@ -97,11 +113,12 @@ void NetDock::OpenHttpJsonRpcServer()
 
 void NetDock::CloseHttpJsonRpcServer()
 {
+    // ★ 仅执行软关闭（停止通道 + HTTP 服务器），不 delete 对象
+    // Pair 池需在 Hub 关闭（所有 TAP 已 Drop）后才安全销毁，
+    // 因此 delete 推迟到 UnInit() 中 CloseHub() 之后执行
     if (m_httpJsonRpcMgr)
     {
         m_httpJsonRpcMgr->Close();
-        delete m_httpJsonRpcMgr;
-        m_httpJsonRpcMgr = nullptr;
     }
 }
 

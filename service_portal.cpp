@@ -35,29 +35,67 @@ void ServicePortal::RegisterHttpRoutes(HttpServerManager* httpMgr)
 // 辅助函数
 // ============================================================================
 
+/**
+ * @brief 获取项目根目录（exe 所在目录的上一级）
+ * @return 规范化后的绝对路径，失败时返回空字符串
+ */
 static std::string GetProjectRoot()
 {
 	char exePath[MAX_PATH];
-	GetModuleFileNameA(NULL, exePath, MAX_PATH);
+	DWORD len = GetModuleFileNameA(NULL, exePath, MAX_PATH);
+	if (len == 0 || len >= MAX_PATH)
+	{
+		DEFAULT_LOG_ERROR("GetProjectRoot: GetModuleFileNameA 失败，len={}", len);
+		return "";
+	}
+
 	std::string dir(exePath);
-	size_t pos = dir.find_last_of("\/");
+	size_t pos = dir.find_last_of("\\/");
 	if (pos != std::string::npos)
 		dir = dir.substr(0, pos);
-	dir += "\..";
+
+	// 从 $(Configuration)\ 目录上翻一级到项目根目录
+	dir += "\\..";
 	char normalized[MAX_PATH];
-	if (GetFullPathNameA(dir.c_str(), MAX_PATH, normalized, nullptr))
-		return std::string(normalized);
-	return dir;
+	DWORD normLen = GetFullPathNameA(dir.c_str(), MAX_PATH, normalized, nullptr);
+	if (normLen == 0 || normLen >= MAX_PATH)
+	{
+		DEFAULT_LOG_ERROR("GetProjectRoot: GetFullPathNameA 失败，dir={}, err={}",
+			dir, ZmSystem::ErrMsg(-1));
+		return dir;  // 回退到未规范化的路径
+	}
+
+	std::string result(normalized);
+	// 去掉可能存在的尾部反斜杠
+	while (!result.empty() && (result.back() == '\\' || result.back() == '/'))
+		result.pop_back();
+
+	DEFAULT_LOG_INFO("GetProjectRoot: exePath={}, root={}", exePath, result);
+	return result;
 }
 
+/**
+ * @brief 读取文件内容到字符串（二进制模式，保留原始字节）
+ * @param path 文件绝对路径
+ * @param out  输出字符串
+ * @return true 读取成功
+ */
 static bool ReadFileToString(const std::string& path, std::string& out)
 {
-	std::ifstream f(path);
+	// 使用二进制模式避免 Windows 文本模式的 \r\n 转换和 \x1A EOF 截断
+	std::ifstream f(path, std::ios::binary);
 	if (!f.is_open())
+	{
+		DEFAULT_LOG_ERROR("ReadFileToString: 无法打开文件 path={}, err={}",
+			path, ZmSystem::ErrMsg(-1));
 		return false;
+	}
+
 	std::stringstream ss;
 	ss << f.rdbuf();
 	out = ss.str();
+
+	DEFAULT_LOG_INFO("ReadFileToString: 读取成功 path={}, size={}", path, out.size());
 	return true;
 }
 
@@ -74,11 +112,10 @@ void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 	ZMJSON reqJson = zm_json_parse(reqData, err);
 	if (!err.empty())
 	{
-		ZMJSON errRsp;
-		errRsp["code"]    = -32700;
-		errRsp["message"] = "Parse error: " + err;
-		if (tap->delegate)
-			tap->delegate->ResponseErrorAsync(tap, errRsp);
+		ZMJSON rsp;
+		rsp["error"]["code"]    = -32700;
+		rsp["error"]["message"] = "Parse error: " + err;
+		ZmTapContext::Response(tap, rsp);
 		return;
 	}
 
@@ -170,18 +207,25 @@ void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 	else if (method == "getAbout")
 	{
 		std::string root = GetProjectRoot();
-
-		std::string backendMd;
-		if (ReadFileToString(root + "\README.md", backendMd))
-			result["backend"] = backendMd;
+		if (root.empty())
+		{
+			error["code"]    = -32603;
+			error["message"] = "无法获取项目根目录";
+		}
 		else
-			result["backend"] = "README.md not found";
+		{
+			std::string backendMd;
+			if (ReadFileToString(root + "\\README.md", backendMd))
+				result["backend"] = backendMd;
+			else
+				result["backend"] = "README.md not found (path: " + root + "\\README.md)";
 
-		std::string frontendMd;
-		if (ReadFileToString(root + "\www\doc\README.md", frontendMd))
-			result["frontend"] = frontendMd;
-		else
-			result["frontend"] = "www/doc/README.md not found";
+			std::string frontendMd;
+			if (ReadFileToString(root + "\\www\\doc\\README.md", frontendMd))
+				result["frontend"] = frontendMd;
+			else
+				result["frontend"] = "www/doc/README.md not found (path: " + root + "\\www\\doc\\README.md)";
+		}
 	}
 	else
 	{
@@ -189,11 +233,10 @@ void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 		error["message"] = "Method not found: " + method;
 	}
 
-	if (tap->delegate)
-	{
-		if (!error.empty())
-			tap->delegate->ResponseErrorAsync(tap, error);
-		else
-			tap->delegate->ResponseResultAsync(tap, result);
-	}
+	ZMJSON rsp;
+	if (!error.empty())
+		rsp["error"] = error;
+	else
+		rsp["result"] = result;
+	ZmTapContext::Response(tap, rsp);
 }

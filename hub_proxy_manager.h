@@ -38,8 +38,11 @@ public:
      *
      * 释放顺序严格不可变：TAP 上下文先清（Drop 回调时 delegate 仍存活）
      * → HubProxy delegate 停止 → JRPC delegate 停止 → ZmEvBaseRunLoop 停止
+     *
+     * @param beforeLoopStop 可选，在 delegate 停止后、事件循环停止前执行的回调
+     *                       用于清理依赖 event_base 的资源（如 bufferevent_pair 池）
      */
-    void Close();
+    void Close(std::function<void()> beforeLoopStop = nullptr);
 
     // --- 供协议前端访问的只读接口 ---
 

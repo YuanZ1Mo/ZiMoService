@@ -2,6 +2,8 @@
 #include "zm_logger.h"
 #include "service_define.h"
 
+#include <future>
+
 HubProxyManager::HubProxyManager()
     : m_tapContext(nullptr)
     , m_tapDelegateJRPC(nullptr)
@@ -57,19 +59,48 @@ bool HubProxyManager::Open(TapDelegateJrpcRequestReadCB jrpcCB)
     return (nullptr != m_tapHubProxy);
 }
 
-void HubProxyManager::Close()
+void HubProxyManager::Close(std::function<void()> beforeLoopStop)
 {
     // ★ 释放顺序严格不可变：
     //   ① TAP 上下文池先清理 — Drop 每个 TAP（释放 bufferevent），此时 delegate 仍存活
     //   ② HubProxy delegate 再停止 — 关闭 evconnlisteners，释放 m_evdelegate
     //   ③ JRPC delegate 最后停止 — 释放 m_evdelegate
-    //   ④ ZmEvBaseRunLoop 最后停止 — 确保以上所有 libevent 资源释放完毕
+    //   ④ beforeLoopStop 回调 — 在事件循环停止前清理依赖 event_base 的资源（如 pair 池）
+    //   ⑤ ZmEvBaseRunLoop 最后停止 — 确保以上所有 libevent 资源释放完毕
     //   逆序原因：TAP 的 delegate 指向 HubProxy 或 JRPC，Drop 回调需 delegate 存活
     if (m_tapContext)
     {
-        m_tapContext->Clear();
-        delete m_tapContext;
-        m_tapContext = nullptr;
+        // 若事件循环仍在运行，通过 ZmTapContext::ScheduleInLoop 投递到事件循环线程执行清理
+        if (m_evLoop && m_evLoop->IsLooped())
+        {
+            struct event_base* evbase = m_evLoop->GetEventBase();
+            auto promise = std::make_shared<std::promise<void>>();
+            auto future  = promise->get_future();
+            bool scheduled = ZmTapContext::ScheduleInLoop(evbase, [this, promise]() {
+                m_tapContext->Clear();
+                delete m_tapContext;
+                m_tapContext = nullptr;
+                promise->set_value();
+            });
+            if (scheduled)
+            {
+                future.wait();
+            }
+            else
+            {
+                // 调度失败时回退到直接清理（事件循环已不可用）
+                m_tapContext->Clear();
+                delete m_tapContext;
+                m_tapContext = nullptr;
+            }
+        }
+        else
+        {
+            // 事件循环未运行，直接清理（无并发回调风险）
+            m_tapContext->Clear();
+            delete m_tapContext;
+            m_tapContext = nullptr;
+        }
     }
 
     if (m_tapHubProxy)
@@ -87,6 +118,12 @@ void HubProxyManager::Close()
     }
 
     m_hubSocks5Port = 0;
+
+    // ★ 在事件循环停止前执行外部回调（如 pair 池 shutdown，其 bufferevent_free 依赖 event_base 存活）
+    if (beforeLoopStop)
+    {
+        beforeLoopStop();
+    }
 
     // 最后停止事件循环线程
     if (m_evLoop)
