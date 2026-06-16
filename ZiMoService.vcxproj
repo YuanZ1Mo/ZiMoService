@@ -500,6 +500,7 @@
     <ClInclude Include="service_portal.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="..\ZiMoPublic\json\zm_json.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_dns.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_http.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_http_router.cpp" />

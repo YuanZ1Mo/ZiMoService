@@ -1,6 +1,8 @@
 #ifndef SERVICE_PORTAL_H
 #define SERVICE_PORTAL_H
+
 #include "zm_net_tap.h"
+
 #include <string>
 
 class NetDock;

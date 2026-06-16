@@ -94,6 +94,9 @@
     <Filter Include="源文件\Public\openssl\include\openssl">
       <UniqueIdentifier>{f6ab1ff5-1069-4ff1-8f3e-acc521778a85}</UniqueIdentifier>
     </Filter>
+    <Filter Include="源文件\Public\json">
+      <UniqueIdentifier>{7f241e82-931f-4551-96eb-adc75d606a35}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="service_main.cpp">
@@ -194,6 +197,9 @@
     </ClCompile>
     <ClCompile Include="..\ZiMoPublic\net\zm_net_broadcast_base.cpp">
       <Filter>源文件\Public\net</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ZiMoPublic\json\zm_json.cpp">
+      <Filter>源文件\Public\json</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -1115,12 +1121,6 @@
     <ClInclude Include="..\ZiMoPublic\net\zm_net_tap.h">
       <Filter>头文件\Public\net</Filter>
     </ClInclude>
-    <ClInclude Include="http_jsonrpc_manager.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="hub_proxy_manager.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
     <ClInclude Include="net_dock.h">
       <Filter>头文件</Filter>
     </ClInclude>
@@ -1137,9 +1137,6 @@
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="service_define.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="http_server_manager.h">
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="..\ZiMoPublic\net\zm_net_http_router.h">
@@ -1160,8 +1157,17 @@
     <ClInclude Include="..\ZiMoPublic\net\zm_net_broadcast_client.h">
       <Filter>头文件\Public\net</Filter>
     </ClInclude>
+    <ClInclude Include="hub_proxy_manager.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="http_server_manager.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="http_jsonrpc_manager.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
     <ClInclude Include="..\ZiMoPublic\net\zm_net_broadcast_base.h">
-      <Filter>源文件\Public\net</Filter>
+      <Filter>头文件\Public\net</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

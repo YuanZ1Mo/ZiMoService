@@ -1,15 +1,12 @@
-#define _CRT_SECURE_NO_WARNINGS
+#include "service_center.h"
+
+#include "zm_logger.h"
+#include "zm_util_str.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <strsafe.h>
 #include <tchar.h>
-
-#include "zm_logger.h"
-#include "service_center.h"
-#include "zm_util_str.h"
-
-
 
 int _tmain(int argc, TCHAR* argv[])
 {

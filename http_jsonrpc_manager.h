@@ -2,11 +2,13 @@
 #define HTTP_JSONRPC_MANAGER_H
 
 #include "zm_net_http.h"
-#include "zm_net_runloop.h"
-#include "hub_proxy_manager.h"
-#include "zm_net_request_channel.h"
 
-#include <event2/bufferevent.h>
+// 前向声明（头文件中仅通过指针使用）
+class ZmEvBaseRunLoop;
+class HubProxyManager;
+class BuffereventPairPool;
+class ZmNetRequestChannel;
+struct bufferevent;
 
 /**
  * @brief HTTP JSON-RPC 前端管理器

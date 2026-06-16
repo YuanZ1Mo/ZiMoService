@@ -2,9 +2,11 @@
 #define HUB_PROXY_MANAGER_H
 
 #include "zm_net_tap.h"
-#include "zm_net_tap_hub.h"
 #include "zm_net_tap_jrpc.h"
 #include "zm_net_runloop.h"
+
+// 前向声明（头文件中仅通过指针使用）
+class ZmTapHubProxy;
 
 /**
  * @brief TAP Hub 路由层管理器，为多个协议前端提供共享的消息路由能力

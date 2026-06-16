@@ -1,9 +1,9 @@
 #ifndef SERVICE_CENTER_H
 #define SERVICE_CENTER_H
 
-#include "zm_service_base.h"
 #include "service_define.h"
 
+#include "zm_service_base.h"
 
 class NetDock;
 class ServicePortal;

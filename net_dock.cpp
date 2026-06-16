@@ -1,4 +1,10 @@
 #include "net_dock.h"
+
+#include "hub_proxy_manager.h"
+#include "http_jsonrpc_manager.h"
+#include "http_server_manager.h"
+#include "broadcast_manager.h"
+
 #include "zm_logger.h"
 #include "zm_json.h"
 #include "zm_net_tap.h"

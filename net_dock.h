@@ -1,10 +1,20 @@
 #ifndef NET_DOCK_H
 #define NET_DOCK_H
 
-#include "hub_proxy_manager.h"
-#include "http_jsonrpc_manager.h"
-#include "http_server_manager.h"
-#include "broadcast_manager.h"
+#include <cstdint>
+#include <functional>
+
+// 前向声明（头文件中仅通过指针/引用使用）
+class HubProxyManager;
+class HttpJsonRpcManager;
+class HttpServerManager;
+class BroadcastManager;
+class ZmHttpRouter;
+struct ZM_TAP_CTX;
+
+// TapDelegateJrpcRequestReadCB using 别名
+// （原始定义位于 zm_net_tap_jrpc.h，此处复制以避免拉入完整 zm_net_tap.h 链）
+using TapDelegateJrpcRequestReadCB = std::function<void(struct ZM_TAP_CTX*, const char*)>;
 
 /**
  * @brief 网络层生命周期编排者

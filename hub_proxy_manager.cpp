@@ -1,6 +1,9 @@
 #include "hub_proxy_manager.h"
-#include "zm_logger.h"
+
 #include "service_define.h"
+
+#include "zm_net_tap_hub.h"
+#include "zm_logger.h"
 
 #include <future>
 

@@ -1,9 +1,12 @@
 #ifndef HTTP_SERVER_MANAGER_H
 #define HTTP_SERVER_MANAGER_H
 
-#include "zm_net_http.h"
 #include "zm_net_http_router.h"
-#include "zm_net_runloop.h"
+
+// 前向声明（头文件中仅通过指针使用）
+class ZmHttpServer;
+class ZmHttpdTask;
+class ZmEvBaseRunLoop;
 
 /**
  * @brief 通用 HTTP 服务器管理器
@@ -41,7 +44,7 @@ public:
 	ZmHttpRouter& GetRouter() { return m_router; }
 
 	/** @brief 查询服务器是否正常运行 */
-	bool IsOpen() const { return m_httpServer != nullptr && m_httpServer->IsOpen(); }
+	bool IsOpen() const;
 
 	/**
 	 * @brief 从 wwwRoot 目录读取并返回静态文件（供业务层注册路由时使用）

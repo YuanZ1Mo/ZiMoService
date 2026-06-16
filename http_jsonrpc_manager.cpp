@@ -1,8 +1,15 @@
 #include "http_jsonrpc_manager.h"
 
 #include "service_define.h"
+#include "hub_proxy_manager.h"
+
+#include "zm_net_request_channel.h"
+#include "zm_net_runloop.h"
 #include "zm_logger.h"
 #include "zm_net_tap.h"
+
+#include <event2/bufferevent.h>
+#include <event2/buffer.h>
 
 // ============================================================================
 // HttpJsonRpcManager

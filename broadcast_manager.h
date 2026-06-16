@@ -2,7 +2,8 @@
 #define BROADCAST_MANAGER_H
 
 #include "zm_net_broadcast_server.h"
-#include "zm_net_runloop.h"
+
+class ZmEvBaseRunLoop;
 
 /**
  * @brief 广播服务端管理器

@@ -1,7 +1,11 @@
 #include "http_server_manager.h"
+
+#include "zm_net_http.h"
+#include "zm_net_runloop.h"
 #include "zm_logger.h"
 #include "zm_json.h"
 #include "zm_util_sys.h"
+
 #include <fstream>
 #include <ctime>
 #include <algorithm>
@@ -15,6 +19,11 @@ HttpServerManager::HttpServerManager()
 HttpServerManager::~HttpServerManager()
 {
 	Close();
+}
+
+bool HttpServerManager::IsOpen() const
+{
+	return m_httpServer != nullptr && m_httpServer->IsOpen();
 }
 
 bool HttpServerManager::Open(const char* wwwRoot)
