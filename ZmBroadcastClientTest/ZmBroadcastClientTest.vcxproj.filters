@@ -47,17 +47,20 @@
     <ClCompile Include="..\..\ZiMoPublic\util\zm_util_container.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\ZiMoPublic\json\zm_json.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\ZiMoPublic\net\zm_net_socket.cpp">
-      <Filter>头文件</Filter>
+      <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="..\..\ZiMoPublic\ssl\zm_ssl_ctx.cpp">
-      <Filter>头文件</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\ZiMoPublic\ssl\zm_ssl_fingerprint.cpp">
-      <Filter>头文件</Filter>
+      <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="..\..\ZiMoPublic\util\zm_util_file.cpp">
-      <Filter>头文件</Filter>
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\ZiMoPublic\ssl\zm_ssl_fingerprint.cpp">
+      <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -89,6 +92,12 @@
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="..\..\ZiMoPublic\util\zm_util_file.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\ZiMoPublic\json\zm_json.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\ZiMoPublic\json\json.hpp">
       <Filter>头文件</Filter>
     </ClInclude>
   </ItemGroup>

@@ -93,6 +93,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="..\..\ZiMoPublic\json\zm_json.cpp" />
     <ClCompile Include="..\..\ZiMoPublic\net\zm_net_ip.cpp" />
     <ClCompile Include="..\..\ZiMoPublic\net\zm_net_socket.cpp" />
     <ClCompile Include="..\..\ZiMoPublic\ssl\zm_ssl_ctx.cpp" />
@@ -111,6 +112,8 @@
     <ClCompile Include="..\..\ZiMoPublic\spdlog\zm_logger.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\..\ZiMoPublic\json\json.hpp" />
+    <ClInclude Include="..\..\ZiMoPublic\json\zm_json.h" />
     <ClInclude Include="..\..\ZiMoPublic\net\zm_net_broadcast_base.h" />
     <ClInclude Include="..\..\ZiMoPublic\net\zm_net_broadcast_client.h" />
     <ClInclude Include="..\..\ZiMoPublic\net\zm_net_ip.h" />
