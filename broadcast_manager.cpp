@@ -30,7 +30,7 @@ bool BroadcastManager::Open(uint16_t port)
 
     m_config.listenIp = "0.0.0.0";
     m_config.listenPort = port;
-    m_config.evLoop = m_evLoop;
+    m_config.evbase = m_evLoop->GetEventBase();
     m_config.heartbeatTime = 60;
     m_config.handshakeTimeout = 10;
     m_config.clientQueueMaxSize = 1024;
@@ -77,23 +77,19 @@ bool BroadcastManager::Open(uint16_t port)
 
 void BroadcastManager::Close()
 {
+    // ★ 先停 server（释放监听器和客户端连接，依赖 event_base 存活）
     if (m_server)
     {
         m_server->Stop();
-        // 必须先停止事件循环再删除 server，
-        // 因为 server 在事件循环中注册了事件（监听器、定时器等）。
-        // 停止事件循环确保所有 pending 事件被排空后再释放 server 资源。
+        delete m_server;
+        m_server = nullptr;
     }
+    // 再停事件循环（server 已释放所有事件，event_base 可安全停止）
     if (m_evLoop)
     {
         m_evLoop->Stop();
         delete m_evLoop;
         m_evLoop = nullptr;
-    }
-    if (m_server)
-    {
-        delete m_server;
-        m_server = nullptr;
     }
     m_port = 0;
 }
