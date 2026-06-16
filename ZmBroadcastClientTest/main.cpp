@@ -7,6 +7,7 @@
  */
 
 #include "zm_net_broadcast_client.h"
+#include "zm_net_runloop.h"
 #include "zm_net_socket.h"
 #include "zm_util_thread.h"
 #include "zm_logger.h"
@@ -71,8 +72,13 @@ int main()
 	// 0. 初始化 WinSock
 	ZmWinSockHelper::Init();
 
-	// 1. 创建线程池（用于业务消息回调）
-	ZmThreadPool threadPool(2);
+	// 1. 创建事件循环线程（供客户端使用）
+	ZmEvBaseRunLoop evLoop("BcClientTestLoop");
+	if (!evLoop.Loop())
+	{
+		printf("事件循环启动失败\n");
+		return -1;
+	}
 
 	// 2. 配置客户端
 	BcClientConfig cfg;
@@ -80,7 +86,7 @@ int main()
 	cfg.serverPort      = 39640;
 	cfg.handshakeTimeout = 10;
 	cfg.initialTags     = { "test", "demo" };
-	cfg.threadPool      = &threadPool;
+	cfg.evbase          = evLoop.GetEventBase();
 
 	// 3. 设置回调
 	BcClientCallbacks cbs;
