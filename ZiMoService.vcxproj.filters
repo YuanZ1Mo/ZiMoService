@@ -183,6 +183,18 @@
     <ClCompile Include="..\ZiMoPublic\net\zm_net_request_channel.cpp">
       <Filter>源文件\Public\net</Filter>
     </ClCompile>
+    <ClCompile Include="broadcast_manager.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ZiMoPublic\net\zm_net_broadcast_server.cpp">
+      <Filter>源文件\Public\net</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ZiMoPublic\net\zm_net_broadcast_client.cpp">
+      <Filter>源文件\Public\net</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ZiMoPublic\net\zm_net_broadcast_base.cpp">
+      <Filter>源文件\Public\net</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="resource.h">
@@ -1138,6 +1150,18 @@
     </ClInclude>
     <ClInclude Include="..\ZiMoPublic\net\zm_net_request_channel.h">
       <Filter>头文件\Public\net</Filter>
+    </ClInclude>
+    <ClInclude Include="broadcast_manager.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ZiMoPublic\net\zm_net_broadcast_server.h">
+      <Filter>头文件\Public\net</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ZiMoPublic\net\zm_net_broadcast_client.h">
+      <Filter>头文件\Public\net</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ZiMoPublic\net\zm_net_broadcast_base.h">
+      <Filter>源文件\Public\net</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

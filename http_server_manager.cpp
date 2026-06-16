@@ -7,7 +7,8 @@
 #include <algorithm>
 
 HttpServerManager::HttpServerManager()
-	: m_httpServer(nullptr)
+	: m_evLoop(nullptr)
+	, m_httpServer(nullptr)
 {
 }
 
@@ -27,11 +28,31 @@ bool HttpServerManager::Open(const char* wwwRoot)
 	// 安装中间件 + 静态文件兜底（API 路由由业务层通过 GetRouter() 注册）
 	SetupRouter();
 
-	m_httpServer = new ZmHttpServer(80);
+	// 创建并启动独立的事件循环线程
+	m_evLoop = new ZmEvBaseRunLoop("HttpServerLoop");
+	if (!m_evLoop->Loop())
+	{
+		DEFAULT_LOG_ERROR("HTTP 服务器启动失败：事件循环启动失败");
+		delete m_evLoop;
+		m_evLoop = nullptr;
+		return false;
+	}
+
+	// 将 HTTP 服务器绑定到自己的事件循环
+	m_httpServer = new ZmHttpServer(m_evLoop->GetEventBase(), 80);
 	m_httpServer->SetRequestCallback(
 		std::bind(&HttpServerManager::OnHttpRequest, this,
 			std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
-	m_httpServer->Start();
+	if (!m_httpServer->Init())
+	{
+		DEFAULT_LOG_ERROR("HTTP 服务器初始化失败，端口:80");
+		delete m_httpServer;
+		m_httpServer = nullptr;
+		m_evLoop->Stop();
+		delete m_evLoop;
+		m_evLoop = nullptr;
+		return false;
+	}
 
 	DEFAULT_LOG_INFO("HTTP 服务器已启动，端口:80，wwwRoot:{}",
 		m_wwwRoot.empty() ? "(无)" : m_wwwRoot);
@@ -40,11 +61,20 @@ bool HttpServerManager::Open(const char* wwwRoot)
 
 void HttpServerManager::Close()
 {
+	// ★ 先停 HTTP 服务器（join 线程池，释放 evhttp）
 	if (m_httpServer)
 	{
-		m_httpServer->Stop();
+		m_httpServer->Close();
 		delete m_httpServer;
 		m_httpServer = nullptr;
+	}
+
+	// 再停事件循环线程（evhttp 已释放，evbase 安全释放）
+	if (m_evLoop)
+	{
+		m_evLoop->Stop();
+		delete m_evLoop;
+		m_evLoop = nullptr;
 		DEFAULT_LOG_INFO("HTTP 服务器已关闭");
 	}
 }

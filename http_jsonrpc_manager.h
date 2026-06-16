@@ -2,6 +2,7 @@
 #define HTTP_JSONRPC_MANAGER_H
 
 #include "zm_net_http.h"
+#include "zm_net_runloop.h"
 #include "hub_proxy_manager.h"
 #include "zm_net_request_channel.h"
 
@@ -11,14 +12,15 @@
  * @brief HTTP JSON-RPC 前端管理器
  *
  * 负责 HTTP JSON-RPC 服务器的生命周期，以及内部 JRPC 请求通道的创建与管理。
- * 内部持有 BuffereventPairPool 用于复用 bufferevent_pair，减少高并发下的系统调用和内存分配。
+ * 内部持有独立的 ZmEvBaseRunLoop（供 ZmJsonRpcServer 使用），同时持有
+ * BuffereventPairPool 用于复用 bufferevent_pair，减少高并发下的系统调用和内存分配。
  *
- * Close() 仅执行软关闭（通道 + HTTP 服务器），pair 池在析构函数中销毁。
- * 调用者须确保在 delete 本对象前已关闭 Hub（所有 TAP 已 Drop），防止在飞请求
- * 访问已释放的 pair bufferevent。详见 NetDock::UnInit() 中的关闭顺序。
+ * Close() 仅执行软关闭（通道 + HTTP 服务器 + 自有事件循环），pair 池在析构或
+ * ShutdownPairPool() 中销毁。调用者须确保在 delete 本对象前已关闭 Hub（所有 TAP
+ * 已 Drop），防止在飞请求访问已释放的 pair bufferevent。详见 NetDock::UnInit() 中的关闭顺序。
  *
  * 异步处理流程：
- *   ① HTTP JRPC 请求到达（端口 39440）
+ *   ① HTTP JRPC 请求到达（端口 39440，自有事件循环线程）
  *   ② ZmJsonRpcServer → 异步回调 OnJsonRpcAsync（Worker 线程）
  *   ③ 构建请求 JSON → m_hub_channel->Submit() → Worker 立即返回（不阻塞）
  *   ④ 独立等待线程 wait_for future → 事件循环 InjectJrpcRequest → Hub 链处理
@@ -34,16 +36,15 @@ public:
 
     /**
      * @brief 初始化 HTTP JSON-RPC 服务器和内部 JRPC 请求通道
-     * @param evbase libevent 事件循环基（ZmEvBaseRunLoop 的 event_base）
      * @param hubMgr 已初始化的 Hub 路由层管理器
      * @return true 初始化成功
      */
     bool Open(HubProxyManager* hubMgr);
 
     /**
-     * @brief 关闭内部通道和 HTTP 服务器（软关闭，不销毁 pair 池）
+     * @brief 关闭内部通道、HTTP 服务器和自有事件循环（软关闭，不销毁 pair 池）
      *
-     * 关闭 ZmNetRequestChannel（拒绝所有 pending promise）并停止 HTTP 服务器。
+     * 关闭 ZmNetRequestChannel（拒绝所有 pending promise）并停止 HTTP 服务器和自有事件循环。
      * Pair 池暂不销毁 — 已注入 Hub 链的在飞请求仍需 pair 完成响应回写。
      * Pair 池需在 Hub 事件循环停止前通过 ShutdownPairPool() 显式销毁，
      * 因 bufferevent_free 内部依赖 event_base 存活。
@@ -59,7 +60,7 @@ public:
     void ShutdownPairPool();
 
     /** @brief 查询 JRPC 服务器是否正常运行 */
-    bool IsOpen() const { return m_httpServerJRPC != nullptr && m_httpServerJRPC->IsRunning(); }
+    bool IsOpen() const { return m_httpServerJRPC != nullptr && m_httpServerJRPC->IsOpen(); }
 
 private:
     // ========================================================================
@@ -107,10 +108,11 @@ private:
     // 成员变量
     // ========================================================================
 
-    ZmJsonRpcServer*     m_httpServerJRPC;
-    HubProxyManager*     m_hubMgr;
-    ZmNetRequestChannel* m_hub_channel;
-    BuffereventPairPool* m_pairPool;         ///< bufferevent_pair 对象池
+    ZmEvBaseRunLoop*     m_evLoop;           ///< 自有事件循环线程（供 ZmJsonRpcServer 使用）
+    ZmJsonRpcServer*     m_httpServerJRPC;   ///< HTTP JSON-RPC 服务器实例
+    HubProxyManager*     m_hubMgr;           ///< Hub 路由层（用于 pair pool + channel，非 HTTP 服务器）
+    ZmNetRequestChannel* m_hub_channel;      ///< 内部 JRPC 请求通道（走 Hub 事件循环）
+    BuffereventPairPool* m_pairPool;         ///< bufferevent_pair 对象池（走 Hub 事件循环）
 };
 
 #endif // HTTP_JSONRPC_MANAGER_H

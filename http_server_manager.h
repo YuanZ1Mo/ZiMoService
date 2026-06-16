@@ -3,12 +3,14 @@
 
 #include "zm_net_http.h"
 #include "zm_net_http_router.h"
+#include "zm_net_runloop.h"
 
 /**
  * @brief 通用 HTTP 服务器管理器
  *
  * 基于 ZmHttpServer 提供普通 HTTP 服务，不依赖 TAP/Hub/JRPC 代理链。
- * 每条请求在 ZmHttpServer 的独立工作线程中处理，不阻塞事件循环。
+ * 内部持有独立的 ZmEvBaseRunLoop 事件循环线程，HTTP 请求在事件循环
+ * 线程中接收，由 ZmHttpServer 的线程池异步处理。
  *
  * 内部使用 ZmHttpRouter 进行路由分发。采用白名单模式：
  *   所有可访问路径由业务层通过 GetRouter() 显式注册，
@@ -21,13 +23,13 @@ public:
 	~HttpServerManager();
 
 	/**
-	 * @brief 启动 HTTP 服务器
+	 * @brief 启动 HTTP 服务器（内部创建并启动 ZmEvBaseRunLoop）
 	 * @param wwwRoot 静态文件根目录绝对路径，为空则不启用静态文件服务
 	 * @return true 启动成功
 	 */
 	bool Open(const char* wwwRoot = nullptr);
 
-	/** @brief 关闭 HTTP 服务器 */
+	/** @brief 关闭 HTTP 服务器（停事件循环线程、停线程池、释放资源） */
 	void Close();
 
 	/**
@@ -38,8 +40,8 @@ public:
 	 */
 	ZmHttpRouter& GetRouter() { return m_router; }
 
-	/** @brief 查询服务器是否正常运行（对象存在且线程存活） */
-	bool IsOpen() const { return m_httpServer != nullptr && m_httpServer->IsRunning(); }
+	/** @brief 查询服务器是否正常运行 */
+	bool IsOpen() const { return m_httpServer != nullptr && m_httpServer->IsOpen(); }
 
 	/**
 	 * @brief 从 wwwRoot 目录读取并返回静态文件（供业务层注册路由时使用）
@@ -70,9 +72,10 @@ private:
 	void SetupRouter();
 
 private:
-	ZmHttpServer* m_httpServer;  ///< 通用 HTTP 服务器实例
-	std::string   m_wwwRoot;     ///< 静态文件根目录绝对路径
-	ZmHttpRouter  m_router;      ///< 路由分发器（Express 风格中间件链）
+	ZmEvBaseRunLoop* m_evLoop;     ///< 独立事件循环线程（本管理器持有生命周期）
+	ZmHttpServer*    m_httpServer; ///< 通用 HTTP 服务器实例
+	std::string      m_wwwRoot;    ///< 静态文件根目录绝对路径
+	ZmHttpRouter     m_router;     ///< 路由分发器（Express 风格中间件链）
 };
 
 #endif // HTTP_SERVER_MANAGER_H

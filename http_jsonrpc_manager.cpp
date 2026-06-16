@@ -9,7 +9,8 @@
 // ============================================================================
 
 HttpJsonRpcManager::HttpJsonRpcManager()
-    : m_httpServerJRPC(nullptr)
+    : m_evLoop(nullptr)
+    , m_httpServerJRPC(nullptr)
     , m_hubMgr(nullptr)
     , m_hub_channel(nullptr)
     , m_pairPool(nullptr)
@@ -41,24 +42,48 @@ bool HttpJsonRpcManager::Open(HubProxyManager* hubMgr)
     m_hubMgr = hubMgr;
 
     // 1. 创建 bufferevent_pair 对象池（预创建，减少高并发下的系统调用开销）
+    //    ★ 注意：pair pool 使用 Hub 的事件循环，因为 pair[1] 要注入 Hub 代理链
     if (m_pairPool == nullptr)
     {
         m_pairPool = new BuffereventPairPool();
         m_pairPool->Init(hubMgr->EvBase(), 128);
     }
 
-    // 2. 创建内部 JRPC 请求通道（必须在 HTTP 服务器启动前，确保 Worker 线程可用）
+    // 2. 创建内部 JRPC 请求通道（走 Hub 事件循环，因需要注入 Hub 代理链）
     if (!OpenJrpcChannel(hubMgr))
     {
         DEFAULT_LOG_ERROR("OpenJrpcChannel failed");
         return false;
     }
 
-    // 3. 创建 HTTP JSON-RPC 服务器，注册异步回调（Worker 线程不阻塞）
+    // 3. 创建自有事件循环线程（供 HTTP JRPC 服务器使用，与 Hub 事件循环独立）
+    if (m_evLoop == nullptr)
+    {
+        m_evLoop = new ZmEvBaseRunLoop("JrpcHttpLoop");
+        if (!m_evLoop->Loop())
+        {
+            DEFAULT_LOG_ERROR("JRPC HTTP 事件循环启动失败");
+            delete m_evLoop;
+            m_evLoop = nullptr;
+            return false;
+        }
+    }
+
+    // 4. 创建 HTTP JSON-RPC 服务器（绑定到自有事件循环），注册异步回调
     if (m_httpServerJRPC == nullptr)
     {
-        m_httpServerJRPC = new ZmJsonRpcServer(ZM_HTTPSERVER_ROOT_URI, ZM_JSONRPC_SERVER_PORT);
-        m_httpServerJRPC->Start();
+        m_httpServerJRPC = new ZmJsonRpcServer(m_evLoop->GetEventBase(),
+            ZM_HTTPSERVER_ROOT_URI, ZM_JSONRPC_SERVER_PORT);
+        if (!m_httpServerJRPC->Init())
+        {
+            DEFAULT_LOG_ERROR("JRPC HTTP 服务器初始化失败");
+            delete m_httpServerJRPC;
+            m_httpServerJRPC = nullptr;
+            m_evLoop->Stop();
+            delete m_evLoop;
+            m_evLoop = nullptr;
+            return false;
+        }
         m_httpServerJRPC->SetJsonRpcCBAsync(std::bind(&HttpJsonRpcManager::OnJsonRpcAsync, this,
             std::placeholders::_1, std::placeholders::_2,
             std::placeholders::_3, std::placeholders::_4));
@@ -69,14 +94,23 @@ bool HttpJsonRpcManager::Open(HubProxyManager* hubMgr)
 
 void HttpJsonRpcManager::Close()
 {
-    // ★ 先关通道（拒绝所有 pending promise），再停 HTTP 服务器（join 线程池）
+    // ★ 先关通道（拒绝所有 pending promise）
     CloseJrpcChannel();
 
+    // 再停 HTTP 服务器（join 线程池，释放 evhttp）
     if (m_httpServerJRPC != nullptr)
     {
-        m_httpServerJRPC->Stop();
+        m_httpServerJRPC->Close();
         delete m_httpServerJRPC;
         m_httpServerJRPC = nullptr;
+    }
+
+    // 再停自有事件循环（evhttp 已释放，evbase 安全释放）
+    if (m_evLoop != nullptr)
+    {
+        m_evLoop->Stop();
+        delete m_evLoop;
+        m_evLoop = nullptr;
     }
 
     // ★ Pair 池不在此处销毁 — 已注入 Hub 链的在飞请求仍需 pair 完成响应回写

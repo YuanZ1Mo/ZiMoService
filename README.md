@@ -28,15 +28,15 @@ service_main.cpp                     # 入口：install | uninstall | debug
 
 ## 线程模型
 
-系统包含 **四条独立的事件循环线程** 和 **两个线程池**：
+系统包含 **四条独立的事件循环线程** 和 **三个线程池**：
 
 | 线程/池 | 所属组件 | 说明 |
 |---------|---------|------|
-| **Hub 事件循环** | `HubProxyManager` → `ZmEvBaseRunLoop` | `event_base_loop(EVLOOP_NO_EXIT_ON_EMPTY)`，处理所有 TAP 代理链操作 |
-| **HTTP 80 事件循环** | `HttpServerManager` → `ZmHttpServer` | `event_base_dispatch()`，接收 HTTP 请求并分发响应 |
-| **HTTP 39440 事件循环** | `HttpJsonRpcManager` → `ZmJsonRpcServer` | `event_base_dispatch()`，接收 JRPC HTTP 请求并分发响应 |
-| **HTTP 线程池** | `ZmHttpServer::m_pool` | 每个 HTTP 服务器独立的线程池（`hardware_concurrency` 线程），执行请求处理 |
+| **Hub 事件循环** | `HubProxyManager` → `ZmEvBaseRunLoop` | `event_base_loop(EVLOOP_NO_EXIT_ON_EMPTY)`，处理 TAP 代理链 + 内部 JRPC 通道 |
+| **HTTP 80 事件循环** | `HttpServerManager` → `ZmEvBaseRunLoop` | 自有事件循环，仅处理 HTTP 80 请求接收与响应发送 |
+| **HTTP 39440 事件循环** | `HttpJsonRpcManager` → `ZmEvBaseRunLoop` | 自有事件循环，仅处理 JRPC HTTP 请求接收与响应发送 |
 | **广播事件循环** | `BroadcastManager` → `ZmEvBaseRunLoop` | 自管理事件循环，处理广播客户端连接和消息推送 |
+| **HTTP 线程池** | `ZmHttpServer::m_pool` | 每个 HTTP 服务器独立的线程池（`hardware_concurrency` 线程），执行请求处理（80/39440 各自独立） |
 | **JRPC delegate 线程池** | `ZmThreadPool::InvokeLater` | 全局线程池，执行 `ServicePortal::JrpcRequestReadCB` 业务逻辑 |
 
 跨线程通信机制：
@@ -76,7 +76,7 @@ www/
 
 ## JRPC 请求处理流程（端口 39440）
 
-一个完整的异步 JRPC 请求经过 **3 条线程、7 个阶段、19 个步骤**，涉及两条独立的事件循环（JRPC HTTP 事件循环 ↔ Hub 事件循环）。
+一个完整的异步 JRPC 请求经过 **4 条线程、7 个阶段、19 个步骤**，跨两条独立事件循环（JRPC HTTP 事件循环 ↔ Hub 事件循环）。
 
 ### 阶段 1：HTTP 接收 → Worker 提交
 
@@ -460,7 +460,7 @@ Content-Type: application/json
 
 ## 关键设计
 
-- **线程模型** — 三条独立事件循环（Hub / HTTP 80 / HTTP 39440）+ 两个线程池（HTTP Worker / JRPC delegate Worker），跨线程通过 `event_active` + SPSC 队列通信
+- **线程模型** — 四条独立事件循环（Hub / HTTP 80 / HTTP 39440 / 广播）+ 三个线程池（HTTP 80 Worker / HTTP 39440 Worker / JRPC delegate Worker），跨线程通过 `event_active` + SPSC 队列通信
 - **路由中间件** — Express/Gin 风格，`(task, next)` 管道 + 前缀树匹配（`:id` 参数、`*` 通配符）
 - **跨线程操作** — `ZmTapContext::Response` / `ZmTapContext::SetDropTimer` / `ZmTapContext::Drop` 内部通过 `ScheduleInLoop` 自动回投到事件循环线程
 - **启动/关闭顺序** — 前端先停 → 清理调度残留 → Hub 停（内部释放 delegate 和 EvBaseRunLoop）
