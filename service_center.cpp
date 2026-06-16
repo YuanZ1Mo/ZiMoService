@@ -11,42 +11,6 @@
 #pragma comment(lib, "Wtsapi32.lib")
 
 // ============================================================================
-// 调试辅助
-// ============================================================================
-
-#define DEBUG
-#ifdef DEBUG
-
-#include "zm_util_thread.h"
-#include "zm_json.h"
-
-//// 定时推送测试消息的线程函数
-//static void stadd(void* param)
-//{
-//    int counter = 0;
-//    while (true)
-//    {
-//        std::string msg = "testmsga" + std::to_string(counter++);
-//        ZMJSON obj;
-//        obj["testnode"] = msg;
-//
-//        if (param)
-//            g_message_server->PushNotify("测试一下", ZMJSON(obj).dump().c_str());
-//
-//        ZmSleepMS(10000);
-//    }
-//}
-
-#endif // DEBUG
-
-// ============================================================================
-// 全局消息服务实例
-// ============================================================================
-
-//std::unique_ptr<MessageServer> g_message_server;
-//std::unique_ptr<HttpServer> g_http_server;
-
-// ============================================================================
 // 生命周期回调
 // ============================================================================
 
@@ -255,47 +219,3 @@ void ServiceCenter::OnPowerChange(DWORD evtType, POWERBROADCAST_SETTING* notific
 
     DEFAULT_LOG_INFO(message);
 }
-
-//// ============================================================================
-//// 广播服务器管理
-//// ============================================================================
-//
-//void ServiceCenter::initMessageServer()
-//{
-//    if (!g_message_server)
-//    {
-//        g_message_server.reset(new MessageServer());
-//        g_message_server->Start();
-//    }
-//
-//#ifdef DEBUG
-//    //YThread::InvokeLater1(stadd, this, 0);
-//#endif
-//}
-//
-//void ServiceCenter::unInitMessageServer()
-//{
-//    if (g_message_server)
-//    {
-//        g_message_server->Stop();
-//        g_message_server.reset();
-//    }
-//}
-//
-//void ServiceCenter::initHttpServer()
-//{
-//    if (!g_http_server)
-//    {
-//        g_http_server.reset(new HttpServer());
-//        g_http_server->Start();
-//    }
-//}
-//
-//void ServiceCenter::unInitHttpServer()
-//{
-//    if (g_http_server)
-//    {
-//        g_http_server->Stop();
-//        g_http_server.reset();
-//    }
-//}

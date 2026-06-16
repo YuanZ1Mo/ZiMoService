@@ -19,7 +19,7 @@ bool BroadcastManager::Open(uint16_t port)
         return true;
 
     // 创建内部事件循环线程
-    m_evLoop = new ZmEvBaseRunLoop("ZmBroadcastServer");
+    m_evLoop = new ZmEvBaseRunLoop("BroadcastServerLoop");
     if (!m_evLoop->Loop())
     {
         DEFAULT_LOG_ERROR("[BroadcastMgr] Failed to start event loop");

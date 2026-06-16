@@ -59,7 +59,7 @@ bool HttpJsonRpcManager::Open(HubProxyManager* hubMgr)
     // 3. 创建自有事件循环线程（供 HTTP JRPC 服务器使用，与 Hub 事件循环独立）
     if (m_evLoop == nullptr)
     {
-        m_evLoop = new ZmEvBaseRunLoop("JrpcHttpLoop");
+        m_evLoop = new ZmEvBaseRunLoop("JrpcHttpServerLoop");
         if (!m_evLoop->Loop())
         {
             DEFAULT_LOG_ERROR("JRPC HTTP 事件循环启动失败");

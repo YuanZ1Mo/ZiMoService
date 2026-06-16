@@ -22,7 +22,7 @@ bool HubProxyManager::Open(TapDelegateJrpcRequestReadCB jrpcCB)
     // 1. 创建并启动事件循环线程
     if (!m_evLoop)
     {
-        m_evLoop = new ZmEvBaseRunLoop("HubLoop");
+        m_evLoop = new ZmEvBaseRunLoop("HubProxyLoop");
         if (!m_evLoop->Loop())
         {
             DEFAULT_LOG_ERROR("HubProxyManager::Open failed: ZmEvBaseRunLoop::Loop() returned false");
@@ -62,12 +62,18 @@ bool HubProxyManager::Open(TapDelegateJrpcRequestReadCB jrpcCB)
 void HubProxyManager::Close(std::function<void()> beforeLoopStop)
 {
     // ★ 释放顺序严格不可变：
-    //   ① TAP 上下文池先清理 — Drop 每个 TAP（释放 bufferevent），此时 delegate 仍存活
-    //   ② HubProxy delegate 再停止 — 关闭 evconnlisteners，释放 m_evdelegate
+    //   ⓪ JRPC delegate 先停线程池 — join 所有 worker，确保无人持有 TAP 指针
+    //   ① TAP 上下文池再清理 — Drop 每个 TAP（释放 bufferevent），此时 delegate 仍存活
+    //   ② HubProxy delegate 停止 — 关闭 evconnlisteners，释放 m_evdelegate
     //   ③ JRPC delegate 最后停止 — 释放 m_evdelegate
     //   ④ beforeLoopStop 回调 — 在事件循环停止前清理依赖 event_base 的资源（如 pair 池）
     //   ⑤ ZmEvBaseRunLoop 最后停止 — 确保以上所有 libevent 资源释放完毕
     //   逆序原因：TAP 的 delegate 指向 HubProxy 或 JRPC，Drop 回调需 delegate 存活
+    if (m_tapDelegateJRPC)
+    {
+        m_tapDelegateJRPC->StopThreadPool();
+    }
+
     if (m_tapContext)
     {
         // 若事件循环仍在运行，通过 ZmTapContext::ScheduleInLoop 投递到事件循环线程执行清理
