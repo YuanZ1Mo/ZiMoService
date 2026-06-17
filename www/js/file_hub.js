@@ -1,6 +1,6 @@
 const { createApp } = Vue;
 
-const JRPC_URL = 'http://localhost:39440/ZiMo/JRPC';
+const JRPC_URL = `http://${window.location.hostname}:39440/ZiMo/JRPC`;
 const DL_BASE   = '/file_hub/download/';
 const UL_BASE   = '/file_hub/upload/';
 

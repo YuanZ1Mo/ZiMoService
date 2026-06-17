@@ -1,7 +1,7 @@
 const { createApp } = Vue;
 
 /** JRPC 服务端点 */
-const JRPC_URL = 'http://localhost:39440/ZiMo/JRPC';
+const JRPC_URL = `http://${window.location.hostname}:39440/ZiMo/JRPC`;
 
 /**
  * @brief 调用 JRPC 方法
