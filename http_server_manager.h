@@ -62,6 +62,17 @@ public:
 	 */
 	int ServeDownloadFile(ZmHttpdTask* task, const std::string& uri);
 
+	/**
+	 * @brief 处理文件上传请求，将请求体分块写入磁盘
+	 * @param task 请求上下文
+	 * @param uri  请求 URI 路径（如 "/upload/report.zip"）
+	 * @param data 请求体数据指针（小文件直接使用，大文件通过 task->GetInputBuffer() 分块读取）
+	 * @param dlen 请求体长度（字节数）
+	 * @return HTTP 状态码（201 成功，400/403/500 失败）
+	 */
+	int ServeUpload(ZmHttpdTask* task, const std::string& uri,
+		const BYTE* data, size_t dlen);
+
 private:
 	/**
 	 * @brief HTTP 请求回调，委托给 ZmHttpRouter 分发

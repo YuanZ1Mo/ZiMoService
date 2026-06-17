@@ -6,8 +6,8 @@
 #include "zm_json.h"
 #include "zm_util_sys.h"
 
-#include <fstream>
-#include <ctime>
+#include <event2/buffer.h>
+
 #include <algorithm>
 #include <io.h>
 #include <fcntl.h>
@@ -124,6 +124,11 @@ void HttpServerManager::SetupRouter()
 			std::string uri(task->Uri() ? task->Uri() : "/");
 			return ServeDownloadFile(task, uri);
 		});
+		// upload 目录：文件上传（POST 请求体写入磁盘）
+		m_router.Post("/upload/*", [this](ZmHttpdTask* task, const BYTE* data, size_t dlen) {
+			std::string uri(task->Uri() ? task->Uri() : "/");
+			return ServeUpload(task, uri, data, dlen);
+		});
 	}
 }
 
@@ -165,28 +170,27 @@ int HttpServerManager::ServeStaticFile(ZmHttpdTask* task, const std::string& uri
 	    _strnicmp(normPath.c_str(), normRootStr.c_str(), normRootStr.size()) != 0)
 		return 403;
 
-	// 分块读取发送，固定 64KB 缓冲区，大文件不 OOM
+	// 零拷贝发送文件：通过 evbuffer_file_segment（mmap/MapViewOfFile）避免用户态拷贝
 	auto trySendFile = [&](const std::string& path) -> bool {
-		std::ifstream file(path, std::ios::binary);
-		if (!file.is_open())
+		int fd = -1;
+		if (_sopen_s(&fd, path.c_str(), _O_RDONLY | _O_BINARY, _SH_DENYNO, 0) != 0 || fd == -1)
 			return false;
 
-		// 获取文件大小
-		file.seekg(0, std::ios::end);
-		std::streamsize size = file.tellg();
-		if (size <= 0) return false;
-		file.seekg(0, std::ios::beg);
+		int64_t fileSize = _filelengthi64(fd);
+		if (fileSize <= 0)
+		{
+			_close(fd);
+			return false;
+		}
 
 		task->PutReplyHeader("Content-type", GetMimeType(path));
 
-		char buf[65536];  // 64KB 栈缓冲区
-		while (size > 0)
+		if (task->SetReplyFile(fd, 0, fileSize) != 0)
 		{
-			std::streamsize chunk = (std::min)(size, (std::streamsize)sizeof(buf));
-			file.read(buf, chunk);
-			task->SetReplyData((const BYTE*)buf, (size_t)chunk);
-			size -= chunk;
+			_close(fd);
+			return false;
 		}
+
 		return true;
 	};
 
@@ -373,6 +377,109 @@ int HttpServerManager::ServeDownloadFile(ZmHttpdTask* task, const std::string& u
 	}
 
 	return 200;
+}
+
+// ============================================================================
+// 文件上传服务
+// ============================================================================
+
+int HttpServerManager::ServeUpload(ZmHttpdTask* task, const std::string& uri,
+	const BYTE* data, size_t dlen)
+{
+	// 请求体为空则返回 400
+	if (!data || dlen == 0)
+		return 400;
+
+	// 确定文件路径：/upload/xxx → upload/xxx
+	std::string filePath = uri;
+	if (!filePath.empty() && filePath[0] == '/')
+		filePath = filePath.substr(1);
+
+	std::string rawPath = m_wwwRoot + "\\" + filePath;
+	std::replace(rawPath.begin(), rawPath.end(), '/', '\\');
+
+	// 安全校验：GetFullPathNameA 规范化路径（解析 .. 和 .），前缀比对防穿越
+	char normalized[MAX_PATH];
+	if (!GetFullPathNameA(rawPath.c_str(), MAX_PATH, normalized, nullptr))
+		return 403;
+	std::string normPath(normalized);
+
+	char normRoot[MAX_PATH];
+	if (!GetFullPathNameA(m_wwwRoot.c_str(), MAX_PATH, normRoot, nullptr))
+		return 500;
+	std::string normRootStr(normRoot);
+
+	if (normPath.size() < normRootStr.size() ||
+		_strnicmp(normPath.c_str(), normRootStr.c_str(), normRootStr.size()) != 0)
+		return 403;
+
+	// 确保目标目录存在
+	std::string dirPath = normPath;
+	size_t lastSlash = dirPath.find_last_of("\\/");
+	if (lastSlash != std::string::npos)
+	{
+		dirPath = dirPath.substr(0, lastSlash);
+		if (!CreateDirectoryA(dirPath.c_str(), nullptr) &&
+			GetLastError() != ERROR_ALREADY_EXISTS)
+		{
+			DEFAULT_LOG_ERROR("创建上传目录失败: {}", dirPath);
+			return 500;
+		}
+	}
+
+	// 零拷贝写入：CreateFileMapping + MapViewOfFile 将磁盘页缓存直接映射到用户态
+	// evbuffer_copyout 一步从网络缓冲区复制到页缓存，免除中间缓冲区和_write()系统调用
+	HANDLE hFile = CreateFileA(normPath.c_str(), GENERIC_READ | GENERIC_WRITE,
+		0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (hFile == INVALID_HANDLE_VALUE)
+	{
+		DEFAULT_LOG_ERROR("创建上传文件失败: {}", normPath);
+		return 500;
+	}
+
+	// 预分配文件大小，否则 CreateFileMapping 对空文件会失败
+	LARGE_INTEGER liSize;
+	liSize.QuadPart = (LONGLONG)dlen;
+	if (!SetFilePointerEx(hFile, liSize, NULL, FILE_BEGIN) || !SetEndOfFile(hFile))
+	{
+		CloseHandle(hFile);
+		return 500;
+	}
+
+	HANDLE hMapping = CreateFileMappingA(hFile, NULL, PAGE_READWRITE,
+		liSize.HighPart, liSize.LowPart, NULL);
+	if (!hMapping)
+	{
+		CloseHandle(hFile);
+		return 500;
+	}
+
+	BYTE* mappedView = (BYTE*)MapViewOfFile(hMapping, FILE_MAP_WRITE, 0, 0, dlen);
+	if (!mappedView)
+	{
+		CloseHandle(hMapping);
+		CloseHandle(hFile);
+		return 500;
+	}
+
+	// 从网络缓冲区一步复制到页缓存映射内存，小文件用 data 指针，大文件用 evbuffer
+	struct evbuffer* inbuf = task->GetInputBuffer();
+	if (inbuf && evbuffer_get_length(inbuf) >= dlen)
+	{
+		evbuffer_copyout(inbuf, mappedView, dlen);
+		evbuffer_drain(inbuf, dlen);
+	}
+	else
+	{
+		memcpy(mappedView, data, dlen);
+	}
+
+	UnmapViewOfFile(mappedView);
+	CloseHandle(hMapping);
+	CloseHandle(hFile);
+
+	DEFAULT_LOG_INFO("文件上传成功: {} ({} bytes)", normPath, dlen);
+	return 201;
 }
 
 const char* HttpServerManager::GetMimeType(const std::string& path)
