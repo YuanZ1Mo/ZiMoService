@@ -9,6 +9,9 @@
 #include <fstream>
 #include <ctime>
 #include <algorithm>
+#include <io.h>
+#include <fcntl.h>
+#include <share.h>
 
 HttpServerManager::HttpServerManager()
 	: m_evLoop(nullptr)
@@ -116,6 +119,11 @@ void HttpServerManager::SetupRouter()
 			std::string uri(task->Uri() ? task->Uri() : "/");
 			return ServeStaticFile(task, uri);
 		});
+		// download 目录：文件下载（Content-Disposition: attachment）
+		m_router.Any("/download/*", [this](ZmHttpdTask* task, const BYTE*, size_t) {
+			std::string uri(task->Uri() ? task->Uri() : "/");
+			return ServeDownloadFile(task, uri);
+		});
 	}
 }
 
@@ -191,6 +199,180 @@ int HttpServerManager::ServeStaticFile(ZmHttpdTask* task, const std::string& uri
 		return 200;
 
 	return 404;
+}
+
+// ============================================================================
+// 文件下载服务
+// ============================================================================
+
+std::string HttpServerManager::ExtractFilename(const std::string& uri)
+{
+	// 去掉 query string（如果有）
+	std::string path = uri;
+	size_t qpos = path.find('?');
+	if (qpos != std::string::npos)
+		path = path.substr(0, qpos);
+
+	// 取最后一个 '/' 或 '\' 之后的部分
+	size_t slash = path.find_last_of("/\\");
+	if (slash != std::string::npos)
+		return path.substr(slash + 1);
+	return path;
+}
+
+int HttpServerManager::ServeFileWithRange(ZmHttpdTask* task, const std::string& path,
+	const std::string& rangeStr, int64_t fileSize)
+{
+	// 解析 Range: bytes=start-end
+	// 支持三种格式：
+	//   "bytes=0-499"  → 前 500 字节
+	//   "bytes=500-"   → 从 500 到末尾
+	//   "bytes=-500"   → 最后 500 字节
+	if (rangeStr.size() < 7 || _strnicmp(rangeStr.c_str(), "bytes=", 6) != 0)
+		return -1;  // 无法解析，回退完整文件
+
+	std::string rangeVal = rangeStr.substr(6);  // 去掉 "bytes="
+
+	// 仅支持单 Range，多 Range（含逗号）回退完整文件
+	if (rangeVal.find(',') != std::string::npos)
+		return -1;
+
+	size_t dashPos = rangeVal.find('-');
+	if (dashPos == std::string::npos)
+		return -1;
+
+	int64_t start = 0;
+	int64_t end = fileSize - 1;
+
+	std::string startStr = rangeVal.substr(0, dashPos);
+	std::string endStr = rangeVal.substr(dashPos + 1);
+
+	if (startStr.empty() && !endStr.empty())
+	{
+		// "bytes=-500" → 最后 suffixLen 字节
+		int64_t suffixLen = std::stoll(endStr);
+		if (suffixLen >= fileSize)
+			start = 0;
+		else
+			start = fileSize - suffixLen;
+		end = fileSize - 1;
+	}
+	else if (!startStr.empty() && endStr.empty())
+	{
+		// "bytes=500-" → 从 start 到末尾
+		start = std::stoll(startStr);
+		end = fileSize - 1;
+	}
+	else
+	{
+		// "bytes=0-499" → 指定区间
+		start = std::stoll(startStr);
+		end = std::stoll(endStr);
+	}
+
+	// 校验范围合法性
+	if (start < 0 || end >= fileSize || start > end)
+	{
+		// 416 Range Not Satisfiable
+		task->SetReply(416, "Range Not Satisfiable");
+		task->PutReplyHeader("Content-Range",
+			("bytes */" + std::to_string(fileSize)).c_str());
+		return 416;
+	}
+
+	int64_t rangeLength = end - start + 1;
+
+	// 使用 CRT _sopen_s 打开文件，fd 传递给 SetReplyFile 实现零拷贝传输
+	int fd = -1;
+	if (_sopen_s(&fd, path.c_str(), _O_RDONLY | _O_BINARY, _SH_DENYNO, 0) != 0 || fd == -1)
+		return 404;
+
+	// 设置 206 Partial Content 响应头
+	task->PutReplyHeader("Content-type", GetMimeType(path));
+	task->PutReplyHeader("Content-Disposition",
+		("attachment; filename=\"" + ExtractFilename(path) + "\"").c_str());
+	task->PutReplyHeader("Accept-Ranges", "bytes");
+	task->PutReplyHeader("Content-Range",
+		("bytes " + std::to_string(start) + "-" +
+		std::to_string(end) + "/" + std::to_string(fileSize)).c_str());
+	task->SetReply(206, "Partial Content");
+
+	// 零拷贝：evbuffer_file_segment 记录 fd 引用，由 libevent 在发送时通过 mmap 读取
+	if (task->SetReplyFile(fd, start, rangeLength) != 0)
+	{
+		_close(fd);
+		return 500;
+	}
+
+	return 206;
+}
+
+int HttpServerManager::ServeDownloadFile(ZmHttpdTask* task, const std::string& uri)
+{
+	// 确定文件路径：/download/xxx → download/xxx
+	std::string filePath = uri;
+	if (!filePath.empty() && filePath[0] == '/')
+		filePath = filePath.substr(1);
+
+	std::string rawPath = m_wwwRoot + "\\" + filePath;
+	std::replace(rawPath.begin(), rawPath.end(), '/', '\\');
+
+	// 安全校验：GetFullPathNameA 规范化路径（解析 .. 和 .），前缀比对防穿越
+	char normalized[MAX_PATH];
+	if (!GetFullPathNameA(rawPath.c_str(), MAX_PATH, normalized, nullptr))
+		return 403;
+	std::string normPath(normalized);
+
+	char normRoot[MAX_PATH];
+	if (!GetFullPathNameA(m_wwwRoot.c_str(), MAX_PATH, normRoot, nullptr))
+		return 500;
+	std::string normRootStr(normRoot);
+
+	if (normPath.size() < normRootStr.size() ||
+	    _strnicmp(normPath.c_str(), normRootStr.c_str(), normRootStr.size()) != 0)
+		return 403;
+
+	// 使用 CRT _sopen_s 打开文件，fd 传递给 SetReplyFile 实现零拷贝传输
+	int fd = -1;
+	if (_sopen_s(&fd, normPath.c_str(), _O_RDONLY | _O_BINARY, _SH_DENYNO, 0) != 0 || fd == -1)
+		return 404;
+
+	// 获取文件大小
+	int64_t fileSize = _filelengthi64(fd);
+	if (fileSize <= 0)
+	{
+		_close(fd);
+		return 404;
+	}
+
+	// 检查 HTTP Range 请求头（断点续传）
+	const char* rangeHeader = task->GetRequestHeader("Range");
+	if (rangeHeader && rangeHeader[0])
+	{
+		_close(fd);
+		int rangeResult = ServeFileWithRange(task, normPath, rangeHeader, fileSize);
+		if (rangeResult > 0)
+			return rangeResult;
+		// rangeResult < 0 表示无法解析，回退完整文件下载：重新打开文件
+		if (_sopen_s(&fd, normPath.c_str(), _O_RDONLY | _O_BINARY, _SH_DENYNO, 0) != 0 || fd == -1)
+			return 404;
+	}
+
+	// 设置下载响应头：MIME 类型 + 强制下载 + 支持断点续传
+	task->PutReplyHeader("Content-type", GetMimeType(normPath));
+	std::string filename = ExtractFilename(uri);
+	task->PutReplyHeader("Content-Disposition",
+		("attachment; filename=\"" + filename + "\"").c_str());
+	task->PutReplyHeader("Accept-Ranges", "bytes");
+
+	// 零拷贝：evbuffer_file_segment 记录 fd 引用，由 libevent 在发送时通过 mmap 读取
+	if (task->SetReplyFile(fd, 0, fileSize) != 0)
+	{
+		_close(fd);
+		return 500;
+	}
+
+	return 200;
 }
 
 const char* HttpServerManager::GetMimeType(const std::string& path)

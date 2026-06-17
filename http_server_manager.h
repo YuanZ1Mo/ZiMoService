@@ -54,6 +54,14 @@ public:
 	 */
 	int ServeStaticFile(ZmHttpdTask* task, const std::string& uri);
 
+	/**
+	 * @brief 提供文件下载服务，设置 Content-Disposition: attachment 触发浏览器下载
+	 * @param task 请求上下文
+	 * @param uri  请求 URI 路径（如 "/download/report.zip"）
+	 * @return HTTP 状态码
+	 */
+	int ServeDownloadFile(ZmHttpdTask* task, const std::string& uri);
+
 private:
 	/**
 	 * @brief HTTP 请求回调，委托给 ZmHttpRouter 分发
@@ -70,6 +78,24 @@ private:
 	 * @return MIME 类型字符串，未知类型返回 "application/octet-stream"
 	 */
 	static const char* GetMimeType(const std::string& path);
+
+	/**
+	 * @brief 从 URI 路径中提取文件名（最后一段，不含 query string）
+	 * @param uri 请求 URI（如 "/download/report.zip?t=123"）
+	 * @return 文件名（如 "report.zip"）
+	 */
+	static std::string ExtractFilename(const std::string& uri);
+
+	/**
+	 * @brief 处理 HTTP Range 请求，返回部分文件内容（206 Partial Content）
+	 * @param task      请求上下文
+	 * @param path      文件规范化绝对路径
+	 * @param rangeStr  Range 请求头的值（如 "bytes=0-1023"）
+	 * @param fileSize  文件总大小（字节）
+	 * @return HTTP 状态码（206 成功，416 Range 不可满足，<0 表示无法解析需回退完整文件）
+	 */
+	int ServeFileWithRange(ZmHttpdTask* task, const std::string& path,
+		const std::string& rangeStr, int64_t fileSize);
 
 	/** @brief 安装全局中间件和静态文件兜底路由（精确路由由业务层通过 GetRouter() 注册） */
 	void SetupRouter();
