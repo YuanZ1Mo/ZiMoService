@@ -13,7 +13,7 @@ async function jrpcCall(method, params = {}) {
   const r = await fetch(JRPC_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ method, params }),
+    body: JSON.stringify({ id: Date.now(), jsonrpc: '2.0', method, params }),
   });
   const json = await r.json();
   if (json.error)
@@ -39,20 +39,26 @@ createApp({
       ],
       routes: [],
       testMethod: 'getStatus', testParams: '', tResult: '', tLoading: false,
+      testId: 1, testJsonrpc: '2.0',
       aboutBackend: '<p>加载中...</p>', aboutFrontend: '<p>加载中...</p>',
       _timer: null,
     };
   },
 
   computed: {
-    /** 请求体预览（根据方法名和参数实时生成） */
+    /** 请求体预览（根据 id/jsonrpc/方法名/参数实时生成） */
     requestPreview() {
       let params = {};
       if (this.testParams) {
         try { params = JSON.parse(this.testParams); }
         catch { params = this.testParams; }
       }
-      return JSON.stringify({ method: this.testMethod, params }, null, 2);
+      return JSON.stringify({
+        id: this.testId,
+        jsonrpc: this.testJsonrpc,
+        method: this.testMethod,
+        params
+      }, null, 2);
     },
   },
 
@@ -147,8 +153,21 @@ createApp({
           try { params = JSON.parse(this.testParams); }
           catch { throw new Error('参数 JSON 格式错误'); }
         }
-        const result = await jrpcCall(this.testMethod, params);
-        this.tResult = JSON.stringify(result, null, 2);
+        const body = JSON.stringify({
+          id: this.testId,
+          jsonrpc: this.testJsonrpc,
+          method: this.testMethod,
+          params
+        });
+        const r = await fetch(JRPC_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body
+        });
+        const json = await r.json();
+        if (json.error)
+          throw new Error(json.error.message || JSON.stringify(json.error));
+        this.tResult = JSON.stringify(json.result, null, 2);
       } catch(e) { this.tResult = 'Error: ' + e.message; }
       this.tLoading = false;
     },
@@ -157,6 +176,8 @@ createApp({
       this.testMethod = r.method;
       try {
         const ex = JSON.parse(r.requestExample);
+        this.testId = ex.id || 1;
+        this.testJsonrpc = ex.jsonrpc || '2.0';
         this.testParams = ex.params ? JSON.stringify(ex.params, null, 2) : '';
       } catch { this.testParams = ''; }
       this.tResult = '';

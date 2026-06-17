@@ -20,7 +20,7 @@
 
   <!-- 面包屑 -->
   <div class="hub-crumb">
-    <a href="/control">🏠 首页</a>
+    <a href="/control">⚙️ 控制中心</a>
     <span class="crumb-sep">›</span>
     <a v-if="!isRoot" href="#" @click.prevent="goToRoot">📁 文件中心</a>
     <span v-else class="crumb-last">📁 文件中心</span>
@@ -152,7 +152,7 @@
     <h3>🗑 确认删除</h3>
     <p class="modal-sub">⚠ 此操作不可撤销：{{ delTargetName }}</p>
     <template v-if="delNeedAuth || delNeedUser">
-      <input v-model="delUsername" @input="filterAlnum('delUsername')" class="url-inp ime-off" placeholder="用户名（必填，仅字母数字）" style="margin-bottom:8px">
+      <input v-model="delUsername" @input="filterAlnum('delUsername')" class="url-inp ime-off" placeholder="用户名（必填）" style="margin-bottom:8px">
       <div class="pwd-wrap">
         <input :type="pwdVisible ? 'text' : 'password'" v-model="delPassword" class="url-inp" placeholder="密码（若无则不填）">
         <span class="pwd-eye" @click="pwdVisible=!pwdVisible">{{ pwdVisible ? '🙈' : '👁' }}</span>
@@ -170,14 +170,14 @@
 <div class="modal-overlay" v-if="showChangePwd">
   <div class="modal">
     <h3>🔑 修改密码</h3>
-    <input v-model="cpUsername" @input="filterAlnum('cpUsername')" class="url-inp ime-off" placeholder="用户名（必填，仅字母数字）" style="margin-bottom:8px">
+    <input v-model="cpUsername" @input="filterAlnum('cpUsername')" class="url-inp ime-off" placeholder="用户名（必填）" style="margin-bottom:8px">
     <div v-if="cpHasOldPassword" class="pwd-wrap" style="margin-bottom:8px">
-      <input :type="pwdVisible ? 'text' : 'password'" v-model="cpOldPwd" class="url-inp" placeholder="旧密码（仅字母数字）">
-      <span class="pwd-eye" @click="pwdVisible=!pwdVisible">{{ pwdVisible ? '🙈' : '👁' }}</span>
+      <input :type="cpOldPwdVisible ? 'text' : 'password'" v-model="cpOldPwd" class="url-inp" placeholder="旧密码（若无则不填）">
+      <span class="pwd-eye" @click="cpOldPwdVisible=!cpOldPwdVisible">{{ cpOldPwdVisible ? '🙈' : '👁' }}</span>
     </div>
     <div class="pwd-wrap">
-      <input :type="pwdVisible ? 'text' : 'password'" v-model="cpNewPwd" class="url-inp" placeholder="新密码（仅字母数字）">
-      <span class="pwd-eye" @click="pwdVisible=!pwdVisible">{{ pwdVisible ? '🙈' : '👁' }}</span>
+      <input :type="cpNewPwdVisible ? 'text' : 'password'" v-model="cpNewPwd" class="url-inp" placeholder="新密码（仅字母数字）（若不设置则不填）">
+      <span class="pwd-eye" @click="cpNewPwdVisible=!cpNewPwdVisible">{{ cpNewPwdVisible ? '🙈' : '👁' }}</span>
     </div>
     <div class="modal-btns">
       <button class="btn" @click="changePassword" :disabled="!cpUsername.trim()">确认修改</button>
@@ -200,6 +200,6 @@
 </div>
 
 <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-<script src="/js/file_hub.js"></script>
+<script src="/js/filehub.js"></script>
 </body>
 </html>

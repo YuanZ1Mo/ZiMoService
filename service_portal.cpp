@@ -48,7 +48,17 @@ void ServicePortal::RegisterHttpRoutes(HttpServerManager* httpMgr)
 	});
 
 	router.Get("/filehub", [httpMgr](ZmHttpdTask* task, const BYTE*, size_t) {
-		return httpMgr->ServeStaticFile(task, "/html/file_hub.html");
+		return httpMgr->ServeStaticFile(task, "/html/filehub.html");
+	});
+
+	router.Get("/404", [httpMgr](ZmHttpdTask* task, const BYTE*, size_t) {
+		return httpMgr->ServeStaticFile(task, "/html/404.html");
+	});
+
+	// 兜底路由：未匹配的请求统一走 ServeStaticFile（文件不存在则展示 404 页面）
+	router.Any("*", [httpMgr](ZmHttpdTask* task, const BYTE*, size_t) {
+		std::string uri(task->Uri() ? task->Uri() : "/");
+		return httpMgr->ServeStaticFile(task, uri);
 	});
 }
 
@@ -207,47 +217,47 @@ void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 		};
 
 		add("ping",     "系统", "心跳检测，返回 pong",
-			"{\"method\":\"ping\",\"params\":{}}",
+			"{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"ping\",\"params\":{}}",
 			"{\"result\":{\"pong\":true}}");
 		add("getTime",  "系统", "获取服务器当前时间",
-			"{\"method\":\"getTime\",\"params\":{}}",
+			"{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"getTime\",\"params\":{}}",
 			"{\"result\":{\"time\":\"...\",\"timestamp\":0}}");
 		add("getStatus","系统", "获取服务器综合状态",
-			"{\"method\":\"getStatus\",\"params\":{}}",
+			"{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"getStatus\",\"params\":{}}",
 			"{\"result\":{\"http\":{\"status\":\"running\"}}}");
 		add("broadcast","广播", "向所有匹配tag的客户端广播消息",
-			"{\"method\":\"broadcast\",\"params\":{\"topic\":\"hello\",\"content\":\"hello world\",\"tag\":\"demo\"}}",
+			"{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"broadcast\",\"params\":{\"topic\":\"hello\",\"content\":\"hello world\",\"tag\":\"demo\"}}",
 			"{\"result\":{\"success\":true}}");
 		add("echo",     "测试", "通用接口测试",
-			"{\"method\":\"echo\",\"params\":{\"key\":\"value\"}}",
+			"{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"echo\",\"params\":{\"key\":\"value\"}}",
 			"{\"result\":{\"echo\":{\"key\":\"value\"}}}");
 		add("getRoutes","文档", "获取 JRPC 方法文档列表",
-			"{\"method\":\"getRoutes\",\"params\":{}}",
+			"{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"getRoutes\",\"params\":{}}",
 			"{\"result\":{\"routes\":[...],\"total\":14}}");
 		add("getAbout", "文档", "获取后端和前端技术信息",
-			"{\"method\":\"getAbout\",\"params\":{}}",
+			"{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"getAbout\",\"params\":{}}",
 			"{\"result\":{\"backend\":\"...\",\"frontend\":\"...\"}}");
 		// 文件中心
 		add("listFiles",  "文件中心", "列出目录下的文件和文件夹",
-			"{\"method\":\"listFiles\",\"params\":{\"path\":\"\"}}",
+			"{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"listFiles\",\"params\":{\"path\":\"\"}}",
 			"{\"result\":{\"ok\":true,\"files\":[...]}}");
 		add("searchFiles","文件中心", "模糊搜索文件/文件夹",
-			"{\"method\":\"searchFiles\",\"params\":{\"keyword\":\"report\"}}",
+			"{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"searchFiles\",\"params\":{\"keyword\":\"report\"}}",
 			"{\"result\":{\"ok\":true,\"results\":[...]}}");
 		add("createDir",  "文件中心", "新建目录（可选设密码）",
-			"{\"method\":\"createDir\",\"params\":{\"path\":\"\",\"dirName\":\"NewDir\",\"username\":\"\",\"password\":\"\"}}",
+			"{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"createDir\",\"params\":{\"path\":\"\",\"dirName\":\"NewDir\",\"username\":\"\",\"password\":\"\"}}",
 			"{\"result\":{\"ok\":true}}");
 		add("deleteItem", "文件中心", "删除文件或空文件夹",
-			"{\"method\":\"deleteItem\",\"params\":{\"path\":\"dir/file.txt\"}}",
+			"{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"deleteItem\",\"params\":{\"path\":\"dir/file.txt\"}}",
 			"{\"result\":{\"ok\":true}}");
 		add("verifyDirPassword","文件中心","验证目录密码",
-			"{\"method\":\"verifyDirPassword\",\"params\":{\"path\":\"ProtectedDir\",\"password\":\"123\"}}",
+			"{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"verifyDirPassword\",\"params\":{\"path\":\"ProtectedDir\",\"password\":\"123\"}}",
 			"{\"result\":{\"ok\":true,\"valid\":true}}");
 		add("changeDirPassword","文件中心","修改目录密码",
-			"{\"method\":\"changeDirPassword\",\"params\":{\"path\":\"Dir\",\"username\":\"alice\",\"oldPassword\":\"old\",\"newPassword\":\"new\"}}",
+			"{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"changeDirPassword\",\"params\":{\"path\":\"Dir\",\"username\":\"alice\",\"oldPassword\":\"old\",\"newPassword\":\"new\"}}",
 			"{\"result\":{\"ok\":true}}");
 		add("batchDelete","文件中心","批量删除文件",
-			"{\"method\":\"batchDelete\",\"params\":{\"paths\":[\"a.txt\",\"b.txt\"]}}",
+			"{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"batchDelete\",\"params\":{\"paths\":[\"a.txt\",\"b.txt\"]}}",
 			"{\"result\":{\"ok\":true,\"deleted\":2}}");
 
 		result["routes"] = arr;

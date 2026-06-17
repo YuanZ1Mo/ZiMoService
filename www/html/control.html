@@ -12,7 +12,7 @@
   <nav class="nav">
     <div class="nav-brand">⚡ ZiMo Service</div>
     <div class="nav-tabs">
-      <a href="#/"      :class="{active: page==='home'}">🏠 首页</a>
+      <a href="#/"      :class="{active: page==='home'}">📊 服务状态</a>
       <a href="#/docs"  :class="{active: page==='docs'}">📚 文档</a>
       <a href="#/test"  :class="{active: page==='test'}">🧪 接口测试</a>
       <a href="/filehub">📁 文件中心</a>
@@ -22,7 +22,7 @@
   </nav>
 
   <main class="main">
-    <!-- ==================== 首页 ==================== -->
+    <!-- ==================== 服务状态 ==================== -->
     <section v-if="page==='home'">
       <!-- 时钟 -->
       <div class="clock">{{ time }}</div>
@@ -65,6 +65,8 @@
     <section v-if="page==='test'">
       <h2>🧪 接口测试</h2>
       <div class="test-top">
+        <input v-model.number="testId" class="url-inp" placeholder="id" style="max-width:70px;" title="请求 ID">
+        <input v-model="testJsonrpc" class="url-inp" placeholder="jsonrpc" style="max-width:90px;" title="JSON-RPC 版本">
         <input v-model="testMethod" class="url-inp" placeholder="方法名，如 getStatus" style="max-width:200px;">
         <input v-model="testParams" class="url-inp" placeholder='参数 JSON，如 {"key":"value"}'>
         <button class="btn" @click="doTest" :disabled="tLoading">{{ tLoading?'发送中...':'▶ 发送' }}</button>

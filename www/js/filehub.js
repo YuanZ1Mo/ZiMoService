@@ -1,15 +1,15 @@
 const { createApp } = Vue;
 
 const JRPC_URL = `http://${window.location.hostname}:39440/ZiMo/JRPC`;
-const DL_BASE   = '/file_hub/download/';
-const UL_BASE   = '/file_hub/upload/';
+const DL_BASE   = '/filehub/download/';
+const UL_BASE   = '/filehub/upload/';
 
 /** JRPC 调用 */
 async function jrpcCall(method, params = {}) {
   const r = await fetch(JRPC_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ method, params }),
+    body: JSON.stringify({ id: Date.now(), jsonrpc: '2.0', method, params }),
   });
   const json = await r.json();
   if (json.error) throw new Error(json.error.message || JSON.stringify(json.error));
@@ -65,6 +65,8 @@ createApp({
 
       // 密码可见
       pwdVisible: false,
+      cpOldPwdVisible: false,
+      cpNewPwdVisible: false,
 
       // 上传
       uploading: false,

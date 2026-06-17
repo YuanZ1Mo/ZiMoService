@@ -183,8 +183,9 @@ int HttpServerManager::ServeStaticFile(ZmHttpdTask* task, const std::string& uri
 
 	if (trySendFile(normPath)) return 200;
 
-	std::string indexPath = normRootStr + "\\html\\index.html";
-	if (trySendFile(indexPath)) return 200;
+	// 兜底：文件不存在时转到 404 页面（避免 404 页面自身再次兜底导致无限递归）
+	std::string notFoundPath = normRootStr + "\\html\\404.html";
+	if (normPath != notFoundPath && trySendFile(notFoundPath)) return 404;
 
 	return 404;
 }
