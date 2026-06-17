@@ -31,6 +31,9 @@
 /** JRPC 错误码：响应格式错误 */
 #define ZM_JRPC_ERR_FORMAT      603
 
-
+/** 文件中心 HMAC 密钥（用于密码哈希） */
+#define ZM_FILE_HUB_HMAC_KEY    "ZiMoFileHub2024"
+/** 文件中心数据目录（相对于 www 根目录） */
+#define ZM_FILE_HUB_ROOT        "db\\filehub"
 
 #endif /* ZM_NAME_DEFINE_H */

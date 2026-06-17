@@ -35,10 +35,11 @@ void ServiceCenter::OnStart(DWORD /*argc*/, TCHAR** /*argv[]*/)
 
     // 启动通用 HTTP 服务器（端口 80）
     // exe 在 $(SolutionDir)$(Configuration)\ 下，www/ 在 $(SolutionDir) 下，需上翻一层
+    std::string wwwRoot;
     {
         char exePath[MAX_PATH];
         GetModuleFileNameA(NULL, exePath, MAX_PATH);
-        std::string wwwRoot(exePath);
+        wwwRoot = exePath;
         size_t pos = wwwRoot.find_last_of("\\/");
         if (pos != std::string::npos)
             wwwRoot = wwwRoot.substr(0, pos);
@@ -49,6 +50,7 @@ void ServiceCenter::OnStart(DWORD /*argc*/, TCHAR** /*argv[]*/)
 
     // 注册 HTTP 80 端口路由（/control → 控制中心 SPA）
     m_servicePortal->RegisterHttpRoutes(m_netDock->GetHttpServerManager());
+
 }
 
 void ServiceCenter::OnStop()

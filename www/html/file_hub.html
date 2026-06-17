@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ZiMo 文件中心</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+<div id="app" v-cloak>
+  <!-- 导航 -->
+  <nav class="nav">
+    <div class="nav-brand">📁 ZiMo File Hub</div>
+    <div class="nav-tabs"></div>
+    <div class="nav-status">
+      <span class="dot" :class="online?'on':'off'"></span>{{ online?'已连接':'离线' }}
+    </div>
+  </nav>
+
+  <!-- 面包屑 -->
+  <div class="hub-crumb">
+    <a href="/control">🏠 首页</a>
+    <span class="crumb-sep">›</span>
+    <a v-if="!isRoot" href="#" @click.prevent="goToRoot">📁 文件中心</a>
+    <span v-else class="crumb-last">📁 文件中心</span>
+    <template v-for="(c, i) in crumbs" :key="i">
+      <span class="crumb-sep">›</span>
+      <a v-if="i < crumbs.length - 1" href="#" @click.prevent="goToCrumb(i)">{{ c }}</a>
+      <span v-else class="crumb-last">{{ c }}</span>
+    </template>
+  </div>
+
+  <main class="main">
+    <!-- 功能栏 -->
+    <div class="hub-bar">
+      <input v-model="searchKeyword" @keyup.enter="doSearch" class="url-inp"
+        :placeholder="isRoot ? '搜索所有文件/目录...' : '搜索当前目录...'">
+      <button class="btn" @click="doSearch" :disabled="sLoading">
+        {{ sLoading ? '🔍 查找中...' : '🔍 查找' }}
+      </button>
+    </div>
+
+    <!-- 悬浮 Toast 提示 -->
+    <div class="toast-wrap">
+      <transition-group name="fade">
+        <div v-for="t in toasts" :key="t.id" class="toast" :class="t.type">{{ t.msg }}</div>
+      </transition-group>
+    </div>
+
+    <!-- 操作栏 -->
+    <div class="hub-actions">
+      <button v-if="!isRoot" class="btn btn2" @click="toggleSelectAll">
+        {{ selectStateText }}
+      </button>
+      <template v-if="!isRoot">
+        <button class="btn btn2" :disabled="!hasSelection" @click="batchDownload">⬇ 批量下载</button>
+        <button class="btn btn2 btn-del" :disabled="!hasSelection" @click="batchDelete">🗑 批量删除</button>
+      </template>
+      <button class="btn btn2" @click="onNewFolder">+ 新建目录</button>
+      <template v-if="!isRoot">
+        <button class="btn btn2" @click="onUpload">📤 上传文件</button>
+        <input type="file" ref="fileInput" multiple style="display:none" @change="onFilesSelected">
+      </template>
+      <span style="flex:1"></span>
+      <button class="btn btn2" @click="loadFiles">🔄 刷新</button>
+      <template v-if="!isRoot">
+        <button class="btn btn3" @click="showChangePwd=true">🔑 修改密码</button>
+        <button class="btn btn3 btn-del" @click="onDeleteDir">🗑 删除此目录</button>
+      </template>
+    </div>
+
+    <!-- 加载中 -->
+    <div v-if="loading" class="loading-spin">⏳ 加载中...</div>
+
+    <!-- 文件信息区 -->
+    <div v-else class="hub-table-wrap">
+      <div class="hub-table">
+        <!-- 表头 -->
+        <div class="hub-row hub-head">
+          <span class="hub-cb"></span>
+          <span class="hub-name">名称</span>
+          <span class="hub-size">大小</span>
+          <span class="hub-ops">操作</span>
+        </div>
+        <!-- 数据行 -->
+        <div v-for="(item, i) in displayFiles" :key="item.name" class="hub-row"
+          :class="{ 'hub-row-folder': item.type==='folder' }"
+          @click="onRowClick(item, $event)">
+          <span class="hub-cb">
+            <input type="checkbox" v-if="item.type==='file' && !isRoot" v-model="item._checked"
+              @click.stop @change="onCheckChanged">
+          </span>
+          <span class="hub-name">
+            <span class="hub-icon">{{ item.type==='folder' ? (item.hasPassword ? '🔒' : '📁') : '📄' }}</span>
+            {{ item.name }}
+          </span>
+          <span class="hub-size">{{ item.type==='folder' ? '—' : formatSize(item.size) }}</span>
+          <span class="hub-ops" @click.stop>
+            <button v-if="item.type==='file'" class="btn btn-sm"
+              @click="downloadItem(item)">⬇ 下载</button>
+            <button v-if="item.type==='file' || !isRoot" class="btn btn-sm btn-del"
+              @click="deleteItem(item)">🗑 删除</button>
+          </span>
+        </div>
+        <!-- 空状态 -->
+        <div v-if="displayFiles.length===0" class="hub-empty">📭 此目录为空</div>
+      </div>
+    </div>
+  </main>
+
+  <!-- 模态框：密码验证 -->
+<div class="modal-overlay" v-if="showPassword">
+  <div class="modal">
+    <h3>🔒 密码验证</h3>
+    <p class="modal-sub">"{{ passwordTarget }}" 需要密码才能访问</p>
+    <div class="pwd-wrap">
+      <input :type="pwdVisible ? 'text' : 'password'" v-model="passwordInput" class="url-inp" placeholder="密码（必填）" @keyup.enter="verifyPassword">
+      <span class="pwd-eye" @click="pwdVisible=!pwdVisible">{{ pwdVisible ? '🙈' : '👁' }}</span>
+    </div>
+    <div class="modal-btns">
+      <button class="btn" @click="verifyPassword">访问</button>
+      <button class="btn btn2" @click="showPassword=false">取消</button>
+    </div>
+    <p v-if="passwordError" class="modal-err">{{ passwordError }}</p>
+  </div>
+</div>
+
+<!-- 模态框：新建目录 -->
+<div class="modal-overlay" v-if="showNewDir">
+  <div class="modal">
+    <h3>+ 新建目录</h3>
+    <input v-model="newDirName" class="url-inp" placeholder="目录名称（必填）" style="margin-bottom:8px">
+    <template v-if="isRoot">
+      <input v-model="newDirUser" @input="filterAlnum('newDirUser')" class="url-inp ime-off" placeholder="用户名（必填，仅字母数字）" style="margin-bottom:8px">
+      <div class="pwd-wrap">
+        <input :type="pwdVisible ? 'text' : 'password'" v-model="newDirPwd" class="url-inp" placeholder="密码（可选，仅字母数字）">
+        <span class="pwd-eye" @click="pwdVisible=!pwdVisible">{{ pwdVisible ? '🙈' : '👁' }}</span>
+      </div>
+    </template>
+    <div class="modal-btns">
+      <button class="btn" @click="createDir" :disabled="!newDirName.trim() || (isRoot && !newDirUser.trim())">添加</button>
+      <button class="btn btn2" @click="showNewDir=false">取消</button>
+    </div>
+    <p v-if="newDirError" class="modal-err">{{ newDirError }}</p>
+  </div>
+</div>
+
+<!-- 模态框：删除确认 -->
+<div class="modal-overlay" v-if="showDelConfirm">
+  <div class="modal">
+    <h3>🗑 确认删除</h3>
+    <p class="modal-sub">⚠ 此操作不可撤销：{{ delTargetName }}</p>
+    <template v-if="delNeedAuth || delNeedUser">
+      <input v-model="delUsername" @input="filterAlnum('delUsername')" class="url-inp ime-off" placeholder="用户名（必填，仅字母数字）" style="margin-bottom:8px">
+      <div class="pwd-wrap">
+        <input :type="pwdVisible ? 'text' : 'password'" v-model="delPassword" class="url-inp" placeholder="密码（若无则不填）">
+        <span class="pwd-eye" @click="pwdVisible=!pwdVisible">{{ pwdVisible ? '🙈' : '👁' }}</span>
+      </div>
+    </template>
+    <div class="modal-btns">
+      <button class="btn btn-del" @click="confirmDelete" :disabled="(delNeedAuth || delNeedUser) && !delUsername.trim()">确认删除</button>
+      <button class="btn btn2" @click="showDelConfirm=false">取消</button>
+    </div>
+    <p v-if="delError" class="modal-err">{{ delError }}</p>
+  </div>
+</div>
+
+<!-- 模态框：修改密码 -->
+<div class="modal-overlay" v-if="showChangePwd">
+  <div class="modal">
+    <h3>🔑 修改密码</h3>
+    <input v-model="cpUsername" @input="filterAlnum('cpUsername')" class="url-inp ime-off" placeholder="用户名（必填，仅字母数字）" style="margin-bottom:8px">
+    <div v-if="cpHasOldPassword" class="pwd-wrap" style="margin-bottom:8px">
+      <input :type="pwdVisible ? 'text' : 'password'" v-model="cpOldPwd" class="url-inp" placeholder="旧密码（仅字母数字）">
+      <span class="pwd-eye" @click="pwdVisible=!pwdVisible">{{ pwdVisible ? '🙈' : '👁' }}</span>
+    </div>
+    <div class="pwd-wrap">
+      <input :type="pwdVisible ? 'text' : 'password'" v-model="cpNewPwd" class="url-inp" placeholder="新密码（仅字母数字）">
+      <span class="pwd-eye" @click="pwdVisible=!pwdVisible">{{ pwdVisible ? '🙈' : '👁' }}</span>
+    </div>
+    <div class="modal-btns">
+      <button class="btn" @click="changePassword" :disabled="!cpUsername.trim()">确认修改</button>
+      <button class="btn btn2" @click="showChangePwd=false">取消</button>
+    </div>
+    <p v-if="cpError" class="modal-err">{{ cpError }}</p>
+  </div>
+</div>
+
+<!-- 上传进度 -->
+<div class="modal-overlay" v-if="uploading">
+  <div class="modal">
+    <h3>📤 文件上传中</h3>
+    <p class="modal-sub">{{ uploadStatus }}</p>
+    <div class="progress-bar"><div class="progress-fill" :style="{width: uploadPct+'%'}"></div></div>
+    <p class="modal-sub" style="font-size:12px">{{ uploadPct }}%</p>
+  </div>
+</div>
+
+</div>
+
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<script src="/js/file_hub.js"></script>
+</body>
+</html>

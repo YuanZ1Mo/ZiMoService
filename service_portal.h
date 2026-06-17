@@ -7,6 +7,7 @@
 
 class NetDock;
 class HttpServerManager;
+class HttpServerModuleFileHub;
 
 /**
  * @brief JRPC 请求处理门户，接收从 TAP 代理链转发来的 JRPC 请求并按 method 分发
@@ -14,9 +15,6 @@ class HttpServerManager;
 class ServicePortal
 {
 public:
-	ServicePortal() {};
-	~ServicePortal() {};
-
 	void SetNetDock(NetDock* nd) { m_netDock = nd; }
 
 	/**

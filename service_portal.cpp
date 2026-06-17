@@ -3,12 +3,14 @@
 #include "service_define.h"
 #include "net_dock.h"
 #include "http_server_manager.h"
+#include "http_server_module_file_hub.h"
 #include "broadcast_manager.h"
 
 #include "zm_net_tap.h"
 #include "zm_logger.h"
 #include "zm_json.h"
 #include "zm_util_sys.h"
+#include "zm_util_file.h"
 
 // ============================================================================
 // 广播消息便捷方法
@@ -44,74 +46,10 @@ void ServicePortal::RegisterHttpRoutes(HttpServerManager* httpMgr)
 	router.Get("/control", [httpMgr](ZmHttpdTask* task, const BYTE*, size_t) {
 		return httpMgr->ServeStaticFile(task, "/html/control.html");
 	});
-}
 
-// ============================================================================
-// 辅助函数
-// ============================================================================
-
-/**
- * @brief 获取项目根目录（exe 所在目录的上一级）
- * @return 规范化后的绝对路径，失败时返回空字符串
- */
-static std::string GetProjectRoot()
-{
-	char exePath[MAX_PATH];
-	DWORD len = GetModuleFileNameA(NULL, exePath, MAX_PATH);
-	if (len == 0 || len >= MAX_PATH)
-	{
-		DEFAULT_LOG_ERROR("GetProjectRoot: GetModuleFileNameA 失败，len={}", len);
-		return "";
-	}
-
-	std::string dir(exePath);
-	size_t pos = dir.find_last_of("\\/");
-	if (pos != std::string::npos)
-		dir = dir.substr(0, pos);
-
-	// 从 $(Configuration)\ 目录上翻一级到项目根目录
-	dir += "\\..";
-	char normalized[MAX_PATH];
-	DWORD normLen = GetFullPathNameA(dir.c_str(), MAX_PATH, normalized, nullptr);
-	if (normLen == 0 || normLen >= MAX_PATH)
-	{
-		DEFAULT_LOG_ERROR("GetProjectRoot: GetFullPathNameA 失败，dir={}, err={}",
-			dir, ZmSystem::ErrMsg(-1));
-		return dir;  // 回退到未规范化的路径
-	}
-
-	std::string result(normalized);
-	// 去掉可能存在的尾部反斜杠
-	while (!result.empty() && (result.back() == '\\' || result.back() == '/'))
-		result.pop_back();
-
-	DEFAULT_LOG_INFO("GetProjectRoot: exePath={}, root={}", exePath, result);
-	return result;
-}
-
-/**
- * @brief 读取文件内容到字符串（二进制模式，保留原始字节）
- * @param path 文件绝对路径
- * @param out  输出字符串
- * @return true 读取成功
- */
-static bool ReadFileToString(const std::string& path, std::string& out)
-{
-	// 使用二进制模式避免 Windows 文本模式的 \r\n 转换和 \x1A EOF 截断
-	std::ifstream f(path, std::ios::binary);
-	if (!f.is_open())
-	{
-		DEFAULT_LOG_ERROR("ReadFileToString: 无法打开文件 path={}, err={}",
-			path, ZmSystem::ErrMsg(-1));
-		return false;
-	}
-
-	std::stringstream ss;
-	ss << f.rdbuf();
-	out = ss.str();
-
-	DEFAULT_LOG_INFO("ReadFileToString: 读取成功 path={}, size={}", path, out.size());
-	return true;
+	router.Get("/filehub", [httpMgr](ZmHttpdTask* task, const BYTE*, size_t) {
+		return httpMgr->ServeStaticFile(task, "/html/file_hub.html");
+	});
 }
 
 // ============================================================================
@@ -199,6 +137,60 @@ void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 	{
 		result["echo"] = params;
 	}
+	// --- 文件中心 API ---
+	else if (method == "listFiles")
+	{
+		std::string path = zm_json_get_str(params, "path", "");
+		result = m_netDock->GetHttpServerManager()->GetFileHub() ? m_netDock->GetHttpServerManager()->GetFileHub()->ListFiles(path)
+			: ZMJSON{{"ok", false}, {"error", "文件中心未初始化"}};
+	}
+	else if (method == "searchFiles")
+	{
+		std::string keyword = zm_json_get_str(params, "keyword", "");
+		result = m_netDock->GetHttpServerManager()->GetFileHub() ? m_netDock->GetHttpServerManager()->GetFileHub()->SearchFiles(keyword)
+			: ZMJSON{{"ok", false}, {"error", "文件中心未初始化"}};
+	}
+	else if (method == "createDir")
+	{
+		std::string path     = zm_json_get_str(params, "path", "");
+		std::string dirName  = zm_json_get_str(params, "dirName", "");
+		std::string username = zm_json_get_str(params, "username", "");
+		std::string password = zm_json_get_str(params, "password", "");
+		result = m_netDock->GetHttpServerManager()->GetFileHub() ? m_netDock->GetHttpServerManager()->GetFileHub()->CreateDir(path, dirName, username, password)
+			: ZMJSON{{"ok", false}, {"error", "文件中心未初始化"}};
+	}
+	else if (method == "deleteItem")
+	{
+		std::string path     = zm_json_get_str(params, "path", "");
+		std::string username = zm_json_get_str(params, "username", "");
+		std::string password = zm_json_get_str(params, "password", "");
+		result = m_netDock->GetHttpServerManager()->GetFileHub() ? m_netDock->GetHttpServerManager()->GetFileHub()->DeleteItem(path, username, password)
+			: ZMJSON{{"ok", false}, {"error", "文件中心未初始化"}};
+	}
+	else if (method == "verifyDirPassword")
+	{
+		std::string path     = zm_json_get_str(params, "path", "");
+		std::string password = zm_json_get_str(params, "password", "");
+		result = m_netDock->GetHttpServerManager()->GetFileHub() ? m_netDock->GetHttpServerManager()->GetFileHub()->VerifyDirPassword(path, password)
+			: ZMJSON{{"ok", false}, {"error", "文件中心未初始化"}};
+	}
+	else if (method == "changeDirPassword")
+	{
+		std::string path        = zm_json_get_str(params, "path", "");
+		std::string username    = zm_json_get_str(params, "username", "");
+		std::string oldPassword = zm_json_get_str(params, "oldPassword", "");
+		std::string newPassword = zm_json_get_str(params, "newPassword", "");
+		result = m_netDock->GetHttpServerManager()->GetFileHub() ? m_netDock->GetHttpServerManager()->GetFileHub()->ChangeDirPassword(path, username, oldPassword, newPassword)
+			: ZMJSON{{"ok", false}, {"error", "文件中心未初始化"}};
+	}
+	else if (method == "batchDelete")
+	{
+		ZMJSON paths          = params["paths"];
+		std::string username = zm_json_get_str(params, "username", "");
+		std::string password = zm_json_get_str(params, "password", "");
+		result = m_netDock->GetHttpServerManager()->GetFileHub() ? m_netDock->GetHttpServerManager()->GetFileHub()->BatchDelete(paths, username, password)
+			: ZMJSON{{"ok", false}, {"error", "文件中心未初始化"}};
+	}
 	else if (method == "getRoutes")
 	{
 		ZMJSON arr = ZMJSON::array();
@@ -231,17 +223,48 @@ void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 			"{\"result\":{\"echo\":{\"key\":\"value\"}}}");
 		add("getRoutes","文档", "获取 JRPC 方法文档列表",
 			"{\"method\":\"getRoutes\",\"params\":{}}",
-			"{\"result\":{\"routes\":[...],\"total\":6}}");
+			"{\"result\":{\"routes\":[...],\"total\":14}}");
 		add("getAbout", "文档", "获取后端和前端技术信息",
 			"{\"method\":\"getAbout\",\"params\":{}}",
 			"{\"result\":{\"backend\":\"...\",\"frontend\":\"...\"}}");
+		// 文件中心
+		add("listFiles",  "文件中心", "列出目录下的文件和文件夹",
+			"{\"method\":\"listFiles\",\"params\":{\"path\":\"\"}}",
+			"{\"result\":{\"ok\":true,\"files\":[...]}}");
+		add("searchFiles","文件中心", "模糊搜索文件/文件夹",
+			"{\"method\":\"searchFiles\",\"params\":{\"keyword\":\"report\"}}",
+			"{\"result\":{\"ok\":true,\"results\":[...]}}");
+		add("createDir",  "文件中心", "新建目录（可选设密码）",
+			"{\"method\":\"createDir\",\"params\":{\"path\":\"\",\"dirName\":\"NewDir\",\"username\":\"\",\"password\":\"\"}}",
+			"{\"result\":{\"ok\":true}}");
+		add("deleteItem", "文件中心", "删除文件或空文件夹",
+			"{\"method\":\"deleteItem\",\"params\":{\"path\":\"dir/file.txt\"}}",
+			"{\"result\":{\"ok\":true}}");
+		add("verifyDirPassword","文件中心","验证目录密码",
+			"{\"method\":\"verifyDirPassword\",\"params\":{\"path\":\"ProtectedDir\",\"password\":\"123\"}}",
+			"{\"result\":{\"ok\":true,\"valid\":true}}");
+		add("changeDirPassword","文件中心","修改目录密码",
+			"{\"method\":\"changeDirPassword\",\"params\":{\"path\":\"Dir\",\"username\":\"alice\",\"oldPassword\":\"old\",\"newPassword\":\"new\"}}",
+			"{\"result\":{\"ok\":true}}");
+		add("batchDelete","文件中心","批量删除文件",
+			"{\"method\":\"batchDelete\",\"params\":{\"paths\":[\"a.txt\",\"b.txt\"]}}",
+			"{\"result\":{\"ok\":true,\"deleted\":2}}");
 
 		result["routes"] = arr;
 		result["total"]  = (int)arr.size();
 	}
 	else if (method == "getAbout")
 	{
-		std::string root = GetProjectRoot();
+		char moduleDir[MAX_PATH];
+		std::string exeDir = ZmSystem::GetModuleDir(moduleDir, MAX_PATH);
+		std::string root;
+		if (!exeDir.empty())
+		{
+			char normalized[MAX_PATH];
+			std::string upOne = exeDir + "\\..";
+			if (GetFullPathNameA(upOne.c_str(), MAX_PATH, normalized, nullptr))
+				root = normalized;
+		}
 		if (root.empty())
 		{
 			error["code"]    = -32603;
@@ -250,13 +273,13 @@ void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 		else
 		{
 			std::string backendMd;
-			if (ReadFileToString(root + "\\README.md", backendMd))
+			if (ZmFile::ReadString((root + "\\README.md").c_str(), backendMd))
 				result["backend"] = backendMd;
 			else
 				result["backend"] = "README.md not found (path: " + root + "\\README.md)";
 
 			std::string frontendMd;
-			if (ReadFileToString(root + "\\www\\doc\\README.md", frontendMd))
+			if (ZmFile::ReadString((root + "\\www\\doc\\README.md").c_str(), frontendMd))
 				result["frontend"] = frontendMd;
 			else
 				result["frontend"] = "www/doc/README.md not found (path: " + root + "\\www\\doc\\README.md)";
