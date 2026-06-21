@@ -313,15 +313,26 @@ void HttpJsonRpcManager::InjectJrpcRequest(const std::string& request_json,
         DEFAULT_LOG_ERROR("InjectJrpcRequest: OnPairAcceptBev failed");
         if (slot != nullptr)
         {
-            // OnPairAcceptBev 失败时 pair[1] 已被直接 free（发生在获取 TAP 之前）
-            // 释放 pair[0] 并重新创建一对放入 slot，再归还到空闲栈
+            // OnPairAcceptBev 失败时，pool 路径下 pair[1] 已被 ReleaseHalf 软归还
+            // （仅 pair1_done=true，未实际 free），此处需同时释放 pair[0] 和 pair[1]
+            // 再重新创建一对放入 slot，归还到空闲栈
             bufferevent_free(pair[0]);
+            bufferevent_free(pair[1]);
+
             struct bufferevent* new_pair[2] = { nullptr, nullptr };
             if (bufferevent_pair_new(m_hubMgr->EvBase(), ZM_EVENT_BEV_OPTIONS, new_pair) == 0)
             {
                 slot->pair[0] = new_pair[0];
                 slot->pair[1] = new_pair[1];
             }
+            else
+            {
+                // 创建失败时清空指针，防止下次 Acquire 拿到悬空指针
+                slot->pair[0] = nullptr;
+                slot->pair[1] = nullptr;
+            }
+            slot->pair0_done = false;
+            slot->pair1_done = false;
             slot->in_use = false;
             m_pairPool->ReturnToFreeStack(slot);
         }

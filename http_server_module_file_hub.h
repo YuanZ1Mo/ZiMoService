@@ -26,7 +26,7 @@ public:
 	~HttpServerModuleFileHub();
 
 	/**
-	 * @brief 注册文件中心 HTTP 路由（/file_hub/download/*、/file_hub/upload/*）
+	 * @brief 注册文件中心 HTTP 路由（/filehub/download/*、/filehub/upload/*）
 	 * @param router  HTTP 路由器
 	 * @param httpMgr HTTP 服务器管理器（用于通用的 SendFile / ReceiveFile）
 	 */

@@ -152,7 +152,7 @@ bool HttpServerModuleFileHub::VerifyPassword(const ZMJSON& config,
 // ============================================================================
 
 /**
- * @brief 将 /file_hub/download/xxx URI 映射到 www/db/filehub/xxx 物理路径
+ * @brief 将 /filehub/download/xxx URI 映射到 www/db/filehub/xxx 物理路径
  */
 static std::string MapHubPath(const std::string& wwwRoot, const std::string& uri,
 	const char* prefix)
@@ -171,16 +171,16 @@ void HttpServerModuleFileHub::RegisterHttpRoutes(ZmHttpRouter& router,
 	HttpServerManager* httpMgr)
 {
 	// 文件中心下载
-	router.Any("/file_hub/download/*", [this, httpMgr](ZmHttpdTask* task, const BYTE*, size_t) {
+	router.Any("/filehub/download/*", [this, httpMgr](ZmHttpdTask* task, const BYTE*, size_t) {
 		std::string uri(task->Uri() ? task->Uri() : "/");
-		std::string physPath = MapHubPath(m_wwwRoot, uri, "/file_hub/download/");
+		std::string physPath = MapHubPath(m_wwwRoot, uri, "/filehub/download/");
 		return httpMgr->SendFile(task, physPath);
 	});
 
 	// 文件中心上传
-	router.Post("/file_hub/upload/*", [this, httpMgr](ZmHttpdTask* task, const BYTE* data, size_t dlen) {
+	router.Post("/filehub/upload/*", [this, httpMgr](ZmHttpdTask* task, const BYTE* data, size_t dlen) {
 		std::string uri(task->Uri() ? task->Uri() : "/");
-		std::string physPath = MapHubPath(m_wwwRoot, uri, "/file_hub/upload/");
+		std::string physPath = MapHubPath(m_wwwRoot, uri, "/filehub/upload/");
 		return httpMgr->ReceiveFile(task, physPath, data, dlen);
 	});
 }

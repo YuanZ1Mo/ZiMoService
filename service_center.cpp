@@ -45,8 +45,9 @@ void ServiceCenter::OnStart(DWORD /*argc*/, TCHAR** /*argv[]*/)
             wwwRoot = wwwRoot.substr(0, pos);
         wwwRoot += "\\..\\www";  // Release\..\www → 项目根目录\www
         m_netDock->OpenHttpServer(wwwRoot.c_str());
-        m_netDock->OpenBroadcastServer(ZM_BROADCAST_SERVER_PORT);
     }
+
+    m_netDock->OpenBroadcastServer(ZM_BROADCAST_SERVER_PORT);
 
     // 注册 HTTP 80 端口路由（/control → 控制中心 SPA）
     m_servicePortal->RegisterHttpRoutes(m_netDock->GetHttpServerManager());
