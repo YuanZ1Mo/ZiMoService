@@ -345,7 +345,7 @@ void HttpJsonRpcManager::InjectJrpcRequest(const std::string& request_json,
         return;
     }
 
-    auto* rctx = new ResponseReadCtx{ std::move(callback), slot, 0, false, {} };
+    auto* rctx = new ResponseReadCtx{ std::move(callback), slot, 0, false, false, {} };
     bufferevent_setcb(pair[0], HttpJsonRpcManager::OnResponseRead, nullptr,
                        HttpJsonRpcManager::OnResponseEvent, rctx);
     bufferevent_setwatermark(pair[0], EV_READ, 4, 0);
@@ -360,6 +360,12 @@ void HttpJsonRpcManager::OnResponseRead(struct bufferevent* bev, void* ctx)
 {
     auto* rctx = static_cast<ResponseReadCtx*>(ctx);
     struct evbuffer* input = bufferevent_get_input(bev);
+
+    // ★ 防止双回调：WriteResponse 在写响应后立即 Drop TAP，
+    //    可能触发 ReleaseHalf(pair1)→bufferevent_trigger_event(BEV_EVENT_EOF)，
+    //    若 BEV_EVENT_EOF 在 OnResponseRead 之后到达，OnResponseEvent 会再次调用 callback。
+    if (rctx->callback_fired)
+        return;
 
     if (!rctx->header_read)
     {
@@ -378,6 +384,7 @@ void HttpJsonRpcManager::OnResponseRead(struct bufferevent* bev, void* ctx)
         rctx->buffer.resize(rctx->response_len);
         evbuffer_remove(input, &rctx->buffer[0], rctx->response_len);
 
+        rctx->callback_fired = true;
         rctx->callback(std::move(rctx->buffer));
 
         // 归还 pair[0]：来自池则归还槽位，否则直接释放
@@ -393,9 +400,16 @@ void HttpJsonRpcManager::OnResponseEvent(struct bufferevent* bev, short events, 
 {
     auto* rctx = static_cast<ResponseReadCtx*>(ctx);
 
+    // ★ 防止双回调：若 OnResponseRead 已触发（在回调执行后、ResetPair 清理前），
+    //    BEV_EVENT_EOF 可能在此期间到达。ResetPair 会将 errorcb 置 nullptr，
+    //    此后 BEV_EVENT_EOF 不再触发本回调。此 guard 覆盖窄窗口竞态。
+    if (rctx->callback_fired)
+        return;
+
     if (events & (BEV_EVENT_EOF | BEV_EVENT_ERROR))
     {
         DEFAULT_LOG_WARN("JRPC response channel closed before full response, events={}", events);
+        rctx->callback_fired = true;
         rctx->callback(std::string());
     }
 

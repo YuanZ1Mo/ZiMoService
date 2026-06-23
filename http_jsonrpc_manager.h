@@ -21,14 +21,15 @@ struct bufferevent;
  * ShutdownPairPool() 中销毁。调用者须确保在 delete 本对象前已关闭 Hub（所有 TAP
  * 已 Drop），防止在飞请求访问已释放的 pair bufferevent。详见 NetDock::UnInit() 中的关闭顺序。
  *
- * 异步处理流程：
+ * 异步处理流程（零等待线程）：
  *   ① HTTP JRPC 请求到达（端口 39440，自有事件循环线程）
  *   ② ZmJsonRpcServer → 异步回调 OnJsonRpcAsync（Worker 线程）
- *   ③ 构建请求 JSON → m_hub_channel->Submit() → Worker 立即返回（不阻塞）
- *   ④ 独立等待线程 wait_for future → 事件循环 InjectJrpcRequest → Hub 链处理
- *   ⑤ 响应到达 → reply(result, error) → task->SendDeferredReply() → HTTP 响应
+ *   ③ 构建请求 JSON → m_hub_channel->SubmitAsync() → Worker 立即返回（不阻塞）
+ *   ④ Drain() → InjectJrpcRequest（事件循环线程）→ bufferevent_pair 注入 Hub 链
+ *   ⑤ Hub 链 → JRPC delegate → 线程池 → 业务逻辑 → Response → pair 回写
+ *   ⑥ pair[0] 响应回调 → 直接触发 reply(result, error) → HTTP 响应
  *
- * Worker 线程不阻塞等待 JRPC 响应，线程池利用率不受内部请求延迟影响。
+ * 全程零额外线程：Worker 不阻塞等待，响应通过 bufferevent_pair 直接在事件循环线程回调。
  */
 class HttpJsonRpcManager
 {
@@ -103,6 +104,7 @@ private:
         void*                            pool_slot;       ///< 池槽位指针（用于归还 pair[0]）
         uint32_t                         response_len;
         bool                             header_read;
+        bool                             callback_fired;  ///< 防止 OnResponseRead/Event 双回调（pair1 Drop 可能触发 BEV_EVENT_EOF）
         std::string                      buffer;
     };
 
