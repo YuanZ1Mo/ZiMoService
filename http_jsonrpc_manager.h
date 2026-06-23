@@ -7,6 +7,7 @@
 class ZmEvBaseRunLoop;
 class HubProxyManager;
 class BuffereventPairPool;
+struct BuffereventPairHandle;
 class ZmNetRequestChannel;
 struct bufferevent;
 
@@ -101,10 +102,9 @@ private:
     struct ResponseReadCtx
     {
         std::function<void(std::string)> callback;
-        void*                            pool_slot;       ///< 池槽位指针（用于归还 pair[0]）
+        BuffereventPairHandle*           pair_handle;     ///< 池句柄（用于归还 pair[0]）
         uint32_t                         response_len;
         bool                             header_read;
-        bool                             callback_fired;  ///< 防止 OnResponseRead/Event 双回调（pair1 Drop 可能触发 BEV_EVENT_EOF）
         std::string                      buffer;
     };
 

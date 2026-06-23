@@ -263,13 +263,13 @@ void HttpJsonRpcManager::InjectJrpcRequest(const std::string& request_json,
                                             std::function<void(std::string)> callback)
 {
     // 从对象池获取 bufferevent_pair（池耗尽时自动扩容，仅内存不足时返回 nullptr）
-    PairPoolSlot* slot = m_pairPool ? m_pairPool->Acquire() : nullptr;
+    BuffereventPairHandle* handle = m_pairPool ? m_pairPool->Acquire() : nullptr;
 
     struct bufferevent* pair[2] = { nullptr, nullptr };
-    if (slot != nullptr)
+    if (handle != nullptr)
     {
-        pair[0] = slot->pair[0];
-        pair[1] = slot->pair[1];
+        pair[0] = handle->bev0;
+        pair[1] = handle->bev1;
     }
     else
     {
@@ -291,11 +291,9 @@ void HttpJsonRpcManager::InjectJrpcRequest(const std::string& request_json,
         evbuffer_add(output, request_json.data(), request_json.size()) < 0)
     {
         DEFAULT_LOG_ERROR("InjectJrpcRequest: evbuffer_add failed");
-        if (slot != nullptr)
+        if (handle != nullptr)
         {
-            // 归还槽位（写失败，尚未送出，两端都未用）
-            slot->in_use = false;
-            m_pairPool->ReturnToFreeStack(slot);
+            handle->Cancel();
         }
         else
         {
@@ -306,46 +304,17 @@ void HttpJsonRpcManager::InjectJrpcRequest(const std::string& request_json,
         return;
     }
 
-    // 注入 Hub：传递 slot 和归还回调，TAP 释放时通过回调归还 pair[1]
-    if (!ZmTapContextEventHandler::OnPairAcceptBev(m_hubMgr->HubProxy(), pair[1],
-            slot, &BuffereventPairPool::ReleaseHalf))
+    // 注入 Hub：传递句柄，TAP 释放时通过 handle->ReleasePair1() 归还
+    if (!ZmTapContextEventHandler::OnPairAcceptBev(m_hubMgr->HubProxy(), pair[1], handle))
     {
         DEFAULT_LOG_ERROR("InjectJrpcRequest: OnPairAcceptBev failed");
-        if (slot != nullptr)
-        {
-            // OnPairAcceptBev 失败时，pool 路径下 pair[1] 已被 ReleaseHalf 软归还
-            // （仅 pair1_done=true，未实际 free），此处需同时释放 pair[0] 和 pair[1]
-            // 再重新创建一对放入 slot，归还到空闲栈
-            bufferevent_free(pair[0]);
-            bufferevent_free(pair[1]);
-
-            struct bufferevent* new_pair[2] = { nullptr, nullptr };
-            if (bufferevent_pair_new(m_hubMgr->EvBase(), ZM_EVENT_BEV_OPTIONS, new_pair) == 0)
-            {
-                slot->pair[0] = new_pair[0];
-                slot->pair[1] = new_pair[1];
-            }
-            else
-            {
-                // 创建失败时清空指针，防止下次 Acquire 拿到悬空指针
-                slot->pair[0] = nullptr;
-                slot->pair[1] = nullptr;
-            }
-            slot->pair0_done = false;
-            slot->pair1_done = false;
-            slot->in_use = false;
-            m_pairPool->ReturnToFreeStack(slot);
-        }
-        else
-        {
-            bufferevent_free(pair[0]);
-            // pair[1] 已被 OnPairAcceptBev 在失败路径中释放
-        }
+        handle->ReleasePair0();
+        handle->ReleasePair1();
         callback(std::string());
         return;
     }
 
-    auto* rctx = new ResponseReadCtx{ std::move(callback), slot, 0, false, false, {} };
+    auto* rctx = new ResponseReadCtx{ std::move(callback), handle, 0, false, {} };
     bufferevent_setcb(pair[0], HttpJsonRpcManager::OnResponseRead, nullptr,
                        HttpJsonRpcManager::OnResponseEvent, rctx);
     bufferevent_setwatermark(pair[0], EV_READ, 4, 0);
@@ -360,12 +329,6 @@ void HttpJsonRpcManager::OnResponseRead(struct bufferevent* bev, void* ctx)
 {
     auto* rctx = static_cast<ResponseReadCtx*>(ctx);
     struct evbuffer* input = bufferevent_get_input(bev);
-
-    // ★ 防止双回调：WriteResponse 在写响应后立即 Drop TAP，
-    //    可能触发 ReleaseHalf(pair1)→bufferevent_trigger_event(BEV_EVENT_EOF)，
-    //    若 BEV_EVENT_EOF 在 OnResponseRead 之后到达，OnResponseEvent 会再次调用 callback。
-    if (rctx->callback_fired)
-        return;
 
     if (!rctx->header_read)
     {
@@ -384,12 +347,18 @@ void HttpJsonRpcManager::OnResponseRead(struct bufferevent* bev, void* ctx)
         rctx->buffer.resize(rctx->response_len);
         evbuffer_remove(input, &rctx->buffer[0], rctx->response_len);
 
-        rctx->callback_fired = true;
         rctx->callback(std::move(rctx->buffer));
 
-        // 归还 pair[0]：来自池则归还槽位，否则直接释放
-        if (rctx->pool_slot)
-            BuffereventPairPool::ReleaseHalf(rctx->pool_slot, false);
+        // ★ 先清除回调再归还 pair：消除延迟事件在 rctx 释放后触发的 use-after-free 窗口
+        bufferevent_disable(bev, EV_READ | EV_WRITE);
+        bufferevent_setcb(bev, nullptr, nullptr, nullptr, nullptr);
+
+        // 归还 pair
+        if (rctx->pair_handle)
+        {
+            rctx->pair_handle->ReleasePair0();
+            rctx->pair_handle->ReleasePair1();
+        }
         else
             bufferevent_free(bev);
         delete rctx;
@@ -400,22 +369,22 @@ void HttpJsonRpcManager::OnResponseEvent(struct bufferevent* bev, short events, 
 {
     auto* rctx = static_cast<ResponseReadCtx*>(ctx);
 
-    // ★ 防止双回调：若 OnResponseRead 已触发（在回调执行后、ResetPair 清理前），
-    //    BEV_EVENT_EOF 可能在此期间到达。ResetPair 会将 errorcb 置 nullptr，
-    //    此后 BEV_EVENT_EOF 不再触发本回调。此 guard 覆盖窄窗口竞态。
-    if (rctx->callback_fired)
-        return;
-
     if (events & (BEV_EVENT_EOF | BEV_EVENT_ERROR))
     {
         DEFAULT_LOG_WARN("JRPC response channel closed before full response, events={}", events);
-        rctx->callback_fired = true;
         rctx->callback(std::string());
     }
 
-    // 归还 pair[0]：来自池则归还槽位，否则直接释放
-    if (rctx->pool_slot)
-        BuffereventPairPool::ReleaseHalf(rctx->pool_slot, false);
+    // ★ 先清除回调再归还 pair：消除延迟事件在 rctx 释放后触发的 use-after-free 窗口
+    bufferevent_disable(bev, EV_READ | EV_WRITE);
+    bufferevent_setcb(bev, nullptr, nullptr, nullptr, nullptr);
+
+    // 归还 pair
+    if (rctx->pair_handle)
+    {
+        rctx->pair_handle->ReleasePair0();
+        rctx->pair_handle->ReleasePair1();
+    }
     else
         bufferevent_free(bev);
     delete rctx;

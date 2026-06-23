@@ -214,6 +214,7 @@
     <ClInclude Include="..\ZiMoPublic\libevent\include\evhttp.h" />
     <ClInclude Include="..\ZiMoPublic\libevent\include\evrpc.h" />
     <ClInclude Include="..\ZiMoPublic\libevent\include\evutil.h" />
+    <ClInclude Include="..\ZiMoPublic\net\zm_bufferevent_pair_pool.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_dns.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_http.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_http_router.h" />
@@ -502,6 +503,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\ZiMoPublic\json\zm_json.cpp" />
+    <ClCompile Include="..\ZiMoPublic\net\zm_bufferevent_pair_pool.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_dns.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_http.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_http_router.cpp" />
