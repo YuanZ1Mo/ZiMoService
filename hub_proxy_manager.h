@@ -46,32 +46,21 @@ public:
      */
     void Close(std::function<void()> beforeLoopStop = nullptr);
 
-    // --- 供协议前端访问的只读接口 ---
-
-    /** @brief 获取 libevent 事件循环基 */
-    event_base*      EvBase()     const { return m_evLoop ? m_evLoop->GetEventBase() : nullptr; }
-    /** @brief 获取事件循环线程 */
-    ZmEvBaseRunLoop* EvRunLoop()  const { return m_evLoop; }
-    /** @brief 获取 libevent DNS 解析基 */
-    evdns_base*      EvDnsBase()  const { return m_evLoop ? m_evLoop->GetEventDnsBase() : nullptr; }
-    /** @brief 获取 TAP 上下文池 */
-    ZmTapContext*    TapContext() const { return m_tapContext; }
-    /** @brief 获取 Hub 代理 */
-    ZmTapHubProxy*   HubProxy()   const { return m_tapHubProxy; }
-
     /** @brief 查询 Hub 路由层是否已启动 */
-    bool IsOpen() const { return m_tapHubProxy != nullptr; }
+    bool IsHubOpen() const { return m_tapHubProxy != nullptr && IsHubLooped(); }
     /** @brief 查询 JRPC Delegate 是否已启动 */
-    bool IsJrpcProxyOpen() const { return m_tapDelegateJRPC != nullptr; }
+    bool IsJrpcDelegateOpen() const { return m_tapDelegateJRPC != nullptr && IsJrpcLooped(); }
     /** @brief 查询事件循环是否就绪（可用于跨线程调度前的检查） */
-    bool IsLooped() const { return m_evLoop && m_evLoop->IsLooped(); }
+    bool IsHubLooped() const { return m_evLoopHub && m_evLoopHub->IsLooped(); }
+    bool IsJrpcLooped() const { return m_evLoopJRPC && m_evLoopJRPC->IsLooped(); }
 
 private:
     ZmTapContext*      m_tapContext;       ///< TAP 上下文池（所有前端共享）
     ZmTapDelegateJRPC* m_tapDelegateJRPC;  ///< JRPC 协议委托处理器
     ZmTapHubProxy*     m_tapHubProxy;      ///< Hub 代理（共享消息路由）
     uint16_t           m_hubSocks5Port;    ///< Hub 代理监听端口，用于转发 socks5 代理
-    ZmEvBaseRunLoop*   m_evLoop;           ///< libevent 事件循环线程（Hub 拥有所有权）
+    ZmEvBaseRunLoop*   m_evLoopHub;        ///< libevent 事件循环线程（Hub 拥有所有权）
+    ZmEvBaseRunLoop*   m_evLoopJRPC;       ///< libevent 事件循环线程（JRPC 拥有所有权）
 };
 
 #endif // HUB_PROXY_MANAGER_H

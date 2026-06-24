@@ -3,7 +3,6 @@
 #include "service_define.h"
 #include "hub_proxy_manager.h"
 
-#include "zm_net_request_channel.h"
 #include "zm_net_runloop.h"
 #include "zm_logger.h"
 #include "zm_net_tap.h"
@@ -16,10 +15,9 @@
 // ============================================================================
 
 HttpJsonRpcManager::HttpJsonRpcManager()
-    : m_evLoop(nullptr)
+    : m_evLoopHttpServerJRPC(nullptr)
     , m_httpServerJRPC(nullptr)
-    , m_hubMgr(nullptr)
-    , m_hub_channel(nullptr)
+    , m_evLoopPairPool(nullptr)
     , m_pairPool(nullptr)
 {
 }
@@ -27,71 +25,58 @@ HttpJsonRpcManager::HttpJsonRpcManager()
 HttpJsonRpcManager::~HttpJsonRpcManager()
 {
     Close();
-
-    // ★ Pair 池应在析构前通过 ShutdownPairPool() 显式销毁（在 Hub 事件循环停止前调用）。
-    // 此处作为兜底：若调用者未提前调用 ShutdownPairPool()，则在此处销毁。
-    // 但此时 event_base 可能已释放，bufferevent_free 存在崩溃风险，
-    // 因此调用者须确保在 delete 前已通过 NetDock::CloseHub() → HubProxyManager::Close(beforeLoopStop)
-    // 路径提前销毁 pair 池。
-    if (m_pairPool != nullptr)
-    {
-        m_pairPool->Shutdown();
-        delete m_pairPool;
-        m_pairPool = nullptr;
-    }
+    ShutdownPairPool();  // 兜底：若 NetDock 未通过 CloseHub 回调提前销毁
 }
 
-bool HttpJsonRpcManager::Open(HubProxyManager* hubMgr)
+bool HttpJsonRpcManager::Open()
 {
-    if (hubMgr == nullptr)
-        return false;
-
-    m_hubMgr = hubMgr;
-
-    // 1. 创建 bufferevent_pair 对象池（预创建，减少高并发下的系统调用开销）
-    //    ★ 注意：pair pool 使用 Hub 的事件循环，因为 pair[1] 要注入 Hub 代理链
-    if (m_pairPool == nullptr)
+    if (!m_evLoopPairPool)
     {
-        m_pairPool = new BuffereventPairPool();
-        m_pairPool->Init(hubMgr->EvBase(), 128);
-    }
-
-    // 2. 创建内部 JRPC 请求通道（走 Hub 事件循环，因需要注入 Hub 代理链）
-    if (!OpenJrpcChannel(hubMgr))
-    {
-        DEFAULT_LOG_ERROR("OpenJrpcChannel failed");
-        return false;
-    }
-
-    // 3. 创建自有事件循环线程（供 HTTP JRPC 服务器使用，与 Hub 事件循环独立）
-    if (m_evLoop == nullptr)
-    {
-        m_evLoop = new ZmEvBaseRunLoop("JrpcHttpServerLoop");
-        if (!m_evLoop->Loop())
+        m_evLoopPairPool = new ZmEvBaseRunLoop("JRPCPairPoolLoop");
+        if (!m_evLoopPairPool->Loop())
         {
-            DEFAULT_LOG_ERROR("JRPC HTTP 事件循环启动失败");
-            delete m_evLoop;
-            m_evLoop = nullptr;
+            delete m_evLoopPairPool;
+            m_evLoopPairPool = nullptr;
             return false;
         }
     }
 
-    // 4. 创建 HTTP JSON-RPC 服务器（绑定到自有事件循环），注册异步回调
+    // 1. 创建 bufferevent_pair 对象池（预创建，减少高并发下的系统调用开销）
+    if (m_pairPool == nullptr)
+    {
+        m_pairPool = new BuffereventPairPool();
+        m_pairPool->Init(m_evLoopPairPool->GetEventBase(), 128);
+    }
+
+    // 2. 创建自有事件循环线程（供 HTTP JRPC 服务器使用，与 Hub 事件循环独立）
+    if (m_evLoopHttpServerJRPC == nullptr)
+    {
+        m_evLoopHttpServerJRPC = new ZmEvBaseRunLoop("JrpcHttpServerLoop");
+        if (!m_evLoopHttpServerJRPC->Loop())
+        {
+            DEFAULT_LOG_ERROR("JRPC HTTP 事件循环启动失败");
+            delete m_evLoopHttpServerJRPC;
+            m_evLoopHttpServerJRPC = nullptr;
+            return false;
+        }
+    }
+
+    // 3. 创建 HTTP JSON-RPC 服务器（绑定到自有事件循环），注册异步回调
     if (m_httpServerJRPC == nullptr)
     {
-        m_httpServerJRPC = new ZmJsonRpcServer(m_evLoop->GetEventBase(),
+        m_httpServerJRPC = new ZmJsonRpcServer(m_evLoopHttpServerJRPC->GetEventBase(),
             ZM_HTTPSERVER_ROOT_URI, ZM_JSONRPC_SERVER_PORT);
         if (!m_httpServerJRPC->Init())
         {
             DEFAULT_LOG_ERROR("JRPC HTTP 服务器初始化失败");
             delete m_httpServerJRPC;
             m_httpServerJRPC = nullptr;
-            m_evLoop->Stop();
-            delete m_evLoop;
-            m_evLoop = nullptr;
+            m_evLoopHttpServerJRPC->Stop();
+            delete m_evLoopHttpServerJRPC;
+            m_evLoopHttpServerJRPC = nullptr;
             return false;
         }
-        m_httpServerJRPC->SetJsonRpcCBAsync(std::bind(&HttpJsonRpcManager::OnJsonRpcAsync, this,
+        m_httpServerJRPC->SetJsonRpcCBAsync(std::bind(&HttpJsonRpcManager::OnJsonRpcCBAsync, this,
             std::placeholders::_1, std::placeholders::_2,
             std::placeholders::_3, std::placeholders::_4));
     }
@@ -101,10 +86,10 @@ bool HttpJsonRpcManager::Open(HubProxyManager* hubMgr)
 
 void HttpJsonRpcManager::Close()
 {
-    // ★ 先关通道（拒绝所有 pending promise）
-    CloseJrpcChannel();
+    // ★ 仅软关闭 HTTP 前端，不碰 pair 池
+    // Pair 池由 ShutdownPairPool() 单独销毁，在 Hub 清完 TAP 之后调用
 
-    // 再停 HTTP 服务器（join 线程池，释放 evhttp）
+    // 停 HTTP 服务器（join 线程池，释放 evhttp）
     if (m_httpServerJRPC != nullptr)
     {
         m_httpServerJRPC->Close();
@@ -112,213 +97,131 @@ void HttpJsonRpcManager::Close()
         m_httpServerJRPC = nullptr;
     }
 
-    // 再停自有事件循环（evhttp 已释放，evbase 安全释放）
-    if (m_evLoop != nullptr)
+    // 停自有事件循环（evhttp 已释放，evbase 安全释放）
+    if (m_evLoopHttpServerJRPC != nullptr)
     {
-        m_evLoop->Stop();
-        delete m_evLoop;
-        m_evLoop = nullptr;
+        m_evLoopHttpServerJRPC->Stop();
+        delete m_evLoopHttpServerJRPC;
+        m_evLoopHttpServerJRPC = nullptr;
     }
-
-    // ★ Pair 池不在此处销毁 — 已注入 Hub 链的在飞请求仍需 pair 完成响应回写
-    // Pair 池的销毁通过 ShutdownPairPool() 在 Hub 事件循环停止前执行
-
-    m_hubMgr = nullptr;
 }
 
 void HttpJsonRpcManager::ShutdownPairPool()
 {
     if (m_pairPool != nullptr)
     {
-        // bufferevent_free 内部调用 event_del 需 event_base 存活，
-        // 调用者须确保在 Hub 事件循环停止前调用本方法
         m_pairPool->Shutdown();
         delete m_pairPool;
         m_pairPool = nullptr;
     }
+
+    if (m_evLoopPairPool != nullptr)
+    {
+        m_evLoopPairPool->Stop();
+        delete m_evLoopPairPool;
+        m_evLoopPairPool = nullptr;
+    }
 }
 
-// ============================================================================
-// 内部 JRPC 请求通道
-// ============================================================================
 
-bool HttpJsonRpcManager::OpenJrpcChannel(HubProxyManager* hubMgr)
-{
-    if (m_hub_channel != nullptr)
-    {
-        DEFAULT_LOG_WARN("ZmNetRequestChannel already opened, skipping");
-        return true;
-    }
-
-    if (hubMgr == nullptr || hubMgr->HubProxy() == nullptr)
-    {
-        DEFAULT_LOG_ERROR("OpenJrpcChannel failed: Hub not available");
-        return false;
-    }
-
-    if (m_hubMgr->EvBase() == nullptr)
-    {
-        DEFAULT_LOG_ERROR("OpenJrpcChannel failed: evbase not set");
-        return false;
-    }
-
-    m_hub_channel = new ZmNetRequestChannel();
-    if (!m_hub_channel->Open(m_hubMgr->EvBase(),
-            std::bind(&HttpJsonRpcManager::InjectJrpcRequest, this,
-                std::placeholders::_1, std::placeholders::_2)))
-    {
-        DEFAULT_LOG_ERROR("OpenJrpcChannel failed: channel Open() returned false");
-        delete m_hub_channel;
-        m_hub_channel = nullptr;
-        return false;
-    }
-
-    DEFAULT_LOG_INFO("JrpcChannel opened");
-    return true;
-}
-
-void HttpJsonRpcManager::CloseJrpcChannel()
-{
-    if (m_hub_channel == nullptr)
-        return;
-
-    m_hub_channel->Close(m_hubMgr->EvBase());
-    delete m_hub_channel;
-    m_hub_channel = nullptr;
-
-    DEFAULT_LOG_INFO("JrpcChannel closed");
-}
 
 // ============================================================================
-// 异步 JRPC 请求处理（Worker 线程不阻塞）
+// 异步 JRPC 请求处理（Worker 线程，直接写 pair，零中间队列）
 // ============================================================================
 
-/**
- * @brief JSON-RPC 异步回调入口（由 ZmJsonRpcServer 在 Worker 线程中调用，立即返回）
- *
- * 构建请求 JSON → 通过 SubmitAsync 提交到事件循环线程 → Worker 立即返回。
- * 事件循环线程处理完成后，响应回调直接在事件循环线程中触发 reply()。
- * 全程零额外线程：Worker 不阻塞，也无 detach 等待线程。
- */
-void HttpJsonRpcManager::OnJsonRpcAsync(ZmHttpdTask* task, const std::string& method,
+void HttpJsonRpcManager::OnJsonRpcCBAsync(ZmHttpdTask* task, const std::string& method,
                                          const ZMJSON& params,
                                          std::function<void(const ZMJSON&, const ZMJSON&)> reply)
 {
-    // 1. 构建内部请求 JSON（携带 method / ip / port / useragent / params）
+    // 1. 构建请求 JSON
     ZMJSON reqobj;
     reqobj["method"] = method;
-    reqobj["ip"] = task->Ip();
-    reqobj["port"] = task->Port();
-    reqobj["request_useragent"] = task->GetRequestHeader("User-Agent");
+    //reqobj["request_useragent"] = task->GetRequestHeader("User-Agent");
     reqobj["params"] = params;
+    std::string reqjs = reqobj.dump();
 
-    if (m_hub_channel == nullptr)
+    // 2. 构建响应回调（pair[0] 读到响应后直接调 reply）
+    auto replyPtr = std::make_shared<std::function<void(const ZMJSON&, const ZMJSON&)>>(std::move(reply));
+    auto callback = [replyPtr](std::string rspjs) {
+        auto& reply = *replyPtr;
+        if (rspjs.empty())
+        {
+            ZMJSON err;
+            err["code"] = ZM_JRPC_ERR_EMPTY_RSP;
+            err["message"] = "Response is empty";
+            reply(ZMJSON(), err);
+            return;
+        }
+        std::string jerrstr;
+        ZMJSON repjson = zm_json_parse(rspjs, jerrstr);
+        if (!repjson.is_object())
+        {
+            ZMJSON err;
+            err["code"] = ZM_JRPC_ERR_FORMAT;
+            err["message"] = "Response format error";
+            reply(ZMJSON(), err);
+            return;
+        }
+        reply(repjson["result"], repjson["error"]);
+    };
+
+    // 3. 从池获取 bufferevent_pair
+    BuffereventPairHandle* handle = m_pairPool ? m_pairPool->Acquire() : nullptr;
+
+    if (handle == nullptr)
     {
-        ZMJSON err;
-        err["code"] = ZM_JRPC_ERR_SEND_HUB;
-        err["message"] = "Internal channel not available";
-        reply(ZMJSON(), err);
+        callback(std::string());
         return;
     }
 
-    std::string reqjs = reqobj.dump();
+    // 4. 写请求到 pair[0] 输出端：[4 字节 "JRPC"][4 字节大端长度][请求 JSON]
+    char head[8];
+    memcpy(head, "JRPC", 4);
+    uint32_t qlen = htonl((uint32_t)reqjs.size());
+    memcpy(head + 4, &qlen, 4);
 
-    // 2. SubmitAsync：请求入队 + 注册直接回调，Worker 线程立即返回
-    //    回调在事件循环线程中触发（Drain → InjectJrpcRequest → Hub → Response → OnResponseRead → callback）
-    //    用 shared_ptr 包装 reply 避免 move-only lambda 导致 std::function 构造失败
-    auto replyPtr = std::make_shared<std::function<void(const ZMJSON&, const ZMJSON&)>>(std::move(reply));
-    m_hub_channel->SubmitAsync(reqjs,
-        [replyPtr](std::string rspjs) {
-            auto& reply = *replyPtr;
-
-            if (rspjs.empty())
-            {
-                ZMJSON err;
-                err["code"] = ZM_JRPC_ERR_EMPTY_RSP;
-                err["message"] = "Response is empty";
-                reply(ZMJSON(), err);
-                return;
-            }
-
-            std::string jerrstr;
-            ZMJSON repjson = zm_json_parse(rspjs, jerrstr);
-            if (!repjson.is_object())
-            {
-                ZMJSON err;
-                err["code"] = ZM_JRPC_ERR_FORMAT;
-                err["message"] = "Response format error";
-                reply(ZMJSON(), err);
-                return;
-            }
-
-            reply(repjson["result"], repjson["error"]);
-        });
-}
-
-// ============================================================================
-// bufferevent_pair + Hub 注入
-// ============================================================================
-
-void HttpJsonRpcManager::InjectJrpcRequest(const std::string& request_json,
-                                            std::function<void(std::string)> callback)
-{
-    // 从对象池获取 bufferevent_pair（池耗尽时自动扩容，仅内存不足时返回 nullptr）
-    BuffereventPairHandle* handle = m_pairPool ? m_pairPool->Acquire() : nullptr;
-
-    struct bufferevent* pair[2] = { nullptr, nullptr };
-    if (handle != nullptr)
+    struct evbuffer* output = bufferevent_get_output(handle->bev0);
+    if (evbuffer_add(output, head, 8) < 0 ||
+        evbuffer_add(output, reqjs.data(), reqjs.size()) < 0)
     {
-        pair[0] = handle->bev0;
-        pair[1] = handle->bev1;
+        DEFAULT_LOG_ERROR("OnJsonRpcAsync: evbuffer_add failed");
+        handle->ReleasePair();
+        callback(std::string());
+        return;
+    }
+
+    // 5. pair[1] 注入 Hub 代理链，携带真实请求 IP（v4/v6 自适应）
+    struct sockaddr_storage srcAddr = {};
+    std::string ip = task->Ip();
+    if (ip.find(':') != std::string::npos)
+    {
+        auto* addr6 = (struct sockaddr_in6*)&srcAddr;
+        addr6->sin6_family = AF_INET6;
+        evutil_inet_pton(AF_INET6, ip.c_str(), &addr6->sin6_addr);
+        addr6->sin6_port = htons((uint16_t)task->Port());
     }
     else
     {
-        if (bufferevent_pair_new(m_hubMgr->EvBase(), ZM_EVENT_BEV_OPTIONS, pair) < 0)
-        {
-            DEFAULT_LOG_ERROR("InjectJrpcRequest: bufferevent_pair_new failed");
-            callback(std::string());
-            return;
-        }
+        auto* addr4 = (struct sockaddr_in*)&srcAddr;
+        addr4->sin_family = AF_INET;
+        evutil_inet_pton(AF_INET, ip.c_str(), &addr4->sin_addr);
+        addr4->sin_port = htons((uint16_t)task->Port());
     }
 
-    char head[8];
-    memcpy(head, "JRPC", 4);
-    uint32_t qlen = htonl((uint32_t)request_json.size());
-    memcpy(head + 4, &qlen, 4);
-
-    struct evbuffer* output = bufferevent_get_output(pair[0]);
-    if (evbuffer_add(output, head, 8) < 0 ||
-        evbuffer_add(output, request_json.data(), request_json.size()) < 0)
+    if (!ZmTapContextEventHandler::OnPairAcceptBev("HubProxy", handle->bev1, (struct sockaddr*)&srcAddr, handle))
     {
-        DEFAULT_LOG_ERROR("InjectJrpcRequest: evbuffer_add failed");
-        if (handle != nullptr)
-        {
-            handle->Cancel();
-        }
-        else
-        {
-            bufferevent_free(pair[0]);
-            bufferevent_free(pair[1]);
-        }
+        DEFAULT_LOG_ERROR("OnJsonRpcAsync: OnPairAcceptBev failed");
+        handle->ReleasePair();
         callback(std::string());
         return;
     }
 
-    // 注入 Hub：传递句柄，TAP 释放时通过 handle->ReleasePair1() 归还
-    if (!ZmTapContextEventHandler::OnPairAcceptBev(m_hubMgr->HubProxy(), pair[1], handle))
-    {
-        DEFAULT_LOG_ERROR("InjectJrpcRequest: OnPairAcceptBev failed");
-        handle->ReleasePair0();
-        handle->ReleasePair1();
-        callback(std::string());
-        return;
-    }
-
+    // 6. 注册 pair[0] 响应回调
     auto* rctx = new ResponseReadCtx{ std::move(callback), handle, 0, false, {} };
-    bufferevent_setcb(pair[0], HttpJsonRpcManager::OnResponseRead, nullptr,
+    bufferevent_setcb(handle->bev0, HttpJsonRpcManager::OnResponseRead, nullptr,
                        HttpJsonRpcManager::OnResponseEvent, rctx);
-    bufferevent_setwatermark(pair[0], EV_READ, 4, 0);
-    bufferevent_enable(pair[0], EV_READ | EV_WRITE);
+    bufferevent_setwatermark(handle->bev0, EV_READ, 4, 0);
+    bufferevent_enable(handle->bev0, EV_READ | EV_WRITE);
 }
 
 // ============================================================================
@@ -348,20 +251,8 @@ void HttpJsonRpcManager::OnResponseRead(struct bufferevent* bev, void* ctx)
         evbuffer_remove(input, &rctx->buffer[0], rctx->response_len);
 
         rctx->callback(std::move(rctx->buffer));
-
-        // ★ 先清除回调再归还 pair：消除延迟事件在 rctx 释放后触发的 use-after-free 窗口
-        bufferevent_disable(bev, EV_READ | EV_WRITE);
-        bufferevent_setcb(bev, nullptr, nullptr, nullptr, nullptr);
-
-        // 归还 pair
-        if (rctx->pair_handle)
-        {
-            rctx->pair_handle->ReleasePair0();
-            rctx->pair_handle->ReleasePair1();
-        }
-        else
-            bufferevent_free(bev);
-        delete rctx;
+        rctx->callback = nullptr;          // ★ 标记已消费，OnResponseEvent 看到后不再回调
+        // ★ 不回收，不 delete rctx — 等待 OnResponseEvent 统揽收尾
     }
 }
 
@@ -369,23 +260,15 @@ void HttpJsonRpcManager::OnResponseEvent(struct bufferevent* bev, short events, 
 {
     auto* rctx = static_cast<ResponseReadCtx*>(ctx);
 
-    if (events & (BEV_EVENT_EOF | BEV_EVENT_ERROR))
+    // ★ 若 callback 非空，说明 OnResponseRead 还没消费（纯 EOF 路径）
+    if ((events & (BEV_EVENT_EOF | BEV_EVENT_ERROR)) && rctx->callback)
     {
         DEFAULT_LOG_WARN("JRPC response channel closed before full response, events={}", events);
         rctx->callback(std::string());
+        rctx->callback = nullptr;
     }
 
-    // ★ 先清除回调再归还 pair：消除延迟事件在 rctx 释放后触发的 use-after-free 窗口
-    bufferevent_disable(bev, EV_READ | EV_WRITE);
-    bufferevent_setcb(bev, nullptr, nullptr, nullptr, nullptr);
-
-    // 归还 pair
     if (rctx->pair_handle)
-    {
-        rctx->pair_handle->ReleasePair0();
-        rctx->pair_handle->ReleasePair1();
-    }
-    else
-        bufferevent_free(bev);
+        rctx->pair_handle->ReleasePair();
     delete rctx;
 }

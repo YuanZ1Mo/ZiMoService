@@ -183,9 +183,6 @@
     <ClCompile Include="http_server_manager.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_request_channel.cpp">
-      <Filter>源文件\Public\net</Filter>
-    </ClCompile>
     <ClCompile Include="broadcast_manager.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
@@ -200,6 +197,12 @@
     </ClCompile>
     <ClCompile Include="..\ZiMoPublic\json\zm_json.cpp">
       <Filter>源文件\Public\json</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ZiMoPublic\net\zm_bufferevent_pair_pool.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="http_server_module_file_hub.cpp">
+      <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -1145,9 +1148,6 @@
     <ClInclude Include="..\ZiMoPublic\net\zm_net_runloop.h">
       <Filter>头文件\Public\net</Filter>
     </ClInclude>
-    <ClInclude Include="..\ZiMoPublic\net\zm_net_request_channel.h">
-      <Filter>头文件\Public\net</Filter>
-    </ClInclude>
     <ClInclude Include="broadcast_manager.h">
       <Filter>头文件</Filter>
     </ClInclude>
@@ -1168,6 +1168,12 @@
     </ClInclude>
     <ClInclude Include="..\ZiMoPublic\net\zm_net_broadcast_base.h">
       <Filter>头文件\Public\net</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ZiMoPublic\net\zm_bufferevent_pair_pool.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="http_server_module_file_hub.h">
+      <Filter>头文件</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

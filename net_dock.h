@@ -32,9 +32,10 @@ using TapDelegateJrpcRequestReadCB = std::function<void(struct ZM_TAP_CTX*, cons
  *   Init → OpenHub → OpenHttpJsonRpcServer（内部自行创建 ZmNetRequestChannel）
  *
  * 关闭顺序约束：
- *   ① HTTP 前端先软关闭 — Close 内部先关 ZmNetRequestChannel 再 join Worker（Pair 池暂保留）
- *   ② Hub 停 — 内部 Drop 所有 TAP → 销毁 pair 池（在事件循环停止前）→ 停止 ZmEvBaseRunLoop
- *   ③ HttpJsonRpcManager delete — 析构（pair 池已在步骤②中销毁）
+ *   ① HTTP 前端软关闭 — Close() 停 HTTP Server + 线程池（Pair 池保留给在飞请求）
+ *   ② Hub 停 — StopThreadPool → 清所有 TAP（pair1 EOF → pair 归还池）
+ *              → beforeLoopStop 回调销毁 pair 池 → 停 event loop
+ *   ③ HttpJsonRpcManager delete — 析构兜底（pair 池已在步骤②中销毁，跳过）
  */
 class NetDock
 {

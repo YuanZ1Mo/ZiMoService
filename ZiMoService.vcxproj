@@ -219,7 +219,6 @@
     <ClInclude Include="..\ZiMoPublic\net\zm_net_http.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_http_router.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_ip.h" />
-    <ClInclude Include="..\ZiMoPublic\net\zm_net_request_channel.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_runloop.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_socket.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_tap.h" />
@@ -508,7 +507,6 @@
     <ClCompile Include="..\ZiMoPublic\net\zm_net_http.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_http_router.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_ip.cpp" />
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_request_channel.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_runloop.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_socket.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_tap.cpp" />
