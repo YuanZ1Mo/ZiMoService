@@ -79,7 +79,7 @@ private:
      */
     void OnJsonRpcCBAsync(ZmHttpdTask* task, const std::string& method,
                          const ZMJSON& params,
-                         std::function<void(const ZMJSON&, const ZMJSON&)> reply);
+                         std::function<void(const ZMJSON&, const ZMJSON&, const ZMJSON&)> reply);
 
     // ========================================================================
     // bufferevent_pair 响应回调

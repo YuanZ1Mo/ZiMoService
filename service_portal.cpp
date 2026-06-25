@@ -68,6 +68,7 @@ void ServicePortal::RegisterHttpRoutes(HttpServerManager* httpMgr)
 
 void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 {
+	ZMJSON header;
 	ZMJSON result;
 	ZMJSON error;
 	std::string err;
@@ -88,6 +89,7 @@ void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 	if (method == "ping")
 	{
 		result["pong"] = true;
+		header["123"] = {"456","789","1024"};
 	}
 	else if (method == "getTime")
 	{
@@ -306,5 +308,6 @@ void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 		rsp["error"] = error;
 	else
 		rsp["result"] = result;
+	rsp["header"] = header;
 	ZmTapContext::Response(tap, rsp);
 }

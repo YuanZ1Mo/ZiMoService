@@ -131,7 +131,7 @@ void HttpJsonRpcManager::ShutdownPairPool()
 
 void HttpJsonRpcManager::OnJsonRpcCBAsync(ZmHttpdTask* task, const std::string& method,
                                          const ZMJSON& params,
-                                         std::function<void(const ZMJSON&, const ZMJSON&)> reply)
+                                         std::function<void(const ZMJSON&, const ZMJSON&, const ZMJSON&)> reply)
 {
     // 1. 构建请求 JSON
     ZMJSON reqobj;
@@ -141,7 +141,7 @@ void HttpJsonRpcManager::OnJsonRpcCBAsync(ZmHttpdTask* task, const std::string& 
     std::string reqjs = reqobj.dump();
 
     // 2. 构建响应回调（pair[0] 读到响应后直接调 reply）
-    auto replyPtr = std::make_shared<std::function<void(const ZMJSON&, const ZMJSON&)>>(std::move(reply));
+    auto replyPtr = std::make_shared<std::function<void(const ZMJSON&, const ZMJSON&, const ZMJSON&)>>(std::move(reply));
     auto callback = [replyPtr](std::string rspjs) {
         auto& reply = *replyPtr;
         if (rspjs.empty())
@@ -149,7 +149,7 @@ void HttpJsonRpcManager::OnJsonRpcCBAsync(ZmHttpdTask* task, const std::string& 
             ZMJSON err;
             err["code"] = ZM_JRPC_ERR_EMPTY_RSP;
             err["message"] = "Response is empty";
-            reply(ZMJSON(), err);
+            reply(ZMJSON(), err, ZMJSON());
             return;
         }
         std::string jerrstr;
@@ -159,10 +159,14 @@ void HttpJsonRpcManager::OnJsonRpcCBAsync(ZmHttpdTask* task, const std::string& 
             ZMJSON err;
             err["code"] = ZM_JRPC_ERR_FORMAT;
             err["message"] = "Response format error";
-            reply(ZMJSON(), err);
+            reply(ZMJSON(), err, ZMJSON());
             return;
         }
-        reply(repjson["result"], repjson["error"]);
+        // ★ 使用 value() 而非 operator[]，避免 "error" 键不存在时触发内部
+        // vector 扩容，导致 result/header 引用失效（即便求值顺序侥幸正确也危险）
+        reply(repjson.value("result", ZMJSON()),
+              repjson.value("error", ZMJSON()),
+              repjson.value("header", ZMJSON::object()));
     };
 
     // 3. 从池获取 bufferevent_pair
