@@ -44,7 +44,7 @@ bool HttpJsonRpcManager::Open()
     // 1. 创建 bufferevent_pair 对象池（预创建，减少高并发下的系统调用开销）
     if (m_pairPool == nullptr)
     {
-        m_pairPool = new BuffereventPairPool();
+        m_pairPool = new ZmBuffereventPairPool();
         m_pairPool->Init(m_evLoopPairPool->GetEventBase(), 128);
     }
 
@@ -78,7 +78,7 @@ bool HttpJsonRpcManager::Open()
         }
         m_httpServerJRPC->SetJsonRpcCBAsync(std::bind(&HttpJsonRpcManager::OnJsonRpcCBAsync, this,
             std::placeholders::_1, std::placeholders::_2,
-            std::placeholders::_3, std::placeholders::_4));
+            std::placeholders::_3));
     }
 
     return (m_httpServerJRPC != nullptr);
@@ -129,72 +129,54 @@ void HttpJsonRpcManager::ShutdownPairPool()
 // 异步 JRPC 请求处理（Worker 线程，直接写 pair，零中间队列）
 // ============================================================================
 
-void HttpJsonRpcManager::OnJsonRpcCBAsync(ZmHttpdTask* task, const std::string& method,
-                                         const ZMJSON& params,
-                                         std::function<void(const ZMJSON&, const ZMJSON&, const ZMJSON&)> reply)
+void HttpJsonRpcManager::OnJsonRpcCBAsync(ZmHttpdTask* task, const ZMJSON& request,
+    std::function<void(const ZMJSON& response)> replyCB)
 {
-    // 1. 构建请求 JSON
-    ZMJSON reqobj;
-    reqobj["method"] = method;
-    //reqobj["request_useragent"] = task->GetRequestHeader("User-Agent");
-    reqobj["params"] = params;
-    std::string reqjs = reqobj.dump();
+    // 堆分配，配合 evbuffer_add_reference 零拷贝写入 evbuffer
+    std::string* reqjs = new std::string(request.dump());  // 拷贝①: JSON树→堆string（必要开销）
 
-    // 2. 构建响应回调（pair[0] 读到响应后直接调 reply）
-    auto replyPtr = std::make_shared<std::function<void(const ZMJSON&, const ZMJSON&, const ZMJSON&)>>(std::move(reply));
-    auto callback = [replyPtr](std::string rspjs) {
-        auto& reply = *replyPtr;
-        if (rspjs.empty())
-        {
-            ZMJSON err;
-            err["code"] = ZM_JRPC_ERR_EMPTY_RSP;
-            err["message"] = "Response is empty";
-            reply(ZMJSON(), err, ZMJSON());
-            return;
-        }
-        std::string jerrstr;
-        ZMJSON repjson = zm_json_parse(rspjs, jerrstr);
-        if (!repjson.is_object())
-        {
-            ZMJSON err;
-            err["code"] = ZM_JRPC_ERR_FORMAT;
-            err["message"] = "Response format error";
-            reply(ZMJSON(), err, ZMJSON());
-            return;
-        }
-        // ★ 使用 value() 而非 operator[]，避免 "error" 键不存在时触发内部
-        // vector 扩容，导致 result/header 引用失效（即便求值顺序侥幸正确也危险）
-        reply(repjson.value("result", ZMJSON()),
-              repjson.value("error", ZMJSON()),
-              repjson.value("header", ZMJSON::object()));
-    };
-
-    // 3. 从池获取 bufferevent_pair
-    BuffereventPairHandle* handle = m_pairPool ? m_pairPool->Acquire() : nullptr;
+    // 1. 从池获取 bufferevent_pair
+    ZmBuffereventPairHandle* handle = m_pairPool ? m_pairPool->Acquire() : nullptr;
 
     if (handle == nullptr)
     {
-        callback(std::string());
+        delete reqjs;
+        replyCB(ZMJSON());
         return;
     }
 
-    // 4. 写请求到 pair[0] 输出端：[4 字节 "JRPC"][4 字节大端长度][请求 JSON]
+    // 2. 写请求到 pair[0] 输出端：[4 字节 "JRPC"][4 字节大端长度][请求 JSON]
     char head[8];
     memcpy(head, "JRPC", 4);
-    uint32_t qlen = htonl((uint32_t)reqjs.size());
+    uint32_t qlen = htonl((uint32_t)reqjs->size());
     memcpy(head + 4, &qlen, 4);
 
     struct evbuffer* output = bufferevent_get_output(handle->bev0);
-    if (evbuffer_add(output, head, 8) < 0 ||
-        evbuffer_add(output, reqjs.data(), reqjs.size()) < 0)
+
+    // 8 字节帧头：小数据 evbuffer_add 直接拷贝
+    if (evbuffer_add(output, head, 8) < 0)
     {
-        DEFAULT_LOG_ERROR("OnJsonRpcAsync: evbuffer_add failed");
+        DEFAULT_LOG_ERROR("OnJsonRpcAsync: evbuffer_add header failed");
+        delete reqjs;
         handle->ReleasePair();
-        callback(std::string());
+        replyCB(ZMJSON());
         return;
     }
 
-    // 5. pair[1] 注入 Hub 代理链，携带真实请求 IP（v4/v6 自适应）
+    // JSON body：evbuffer_add_reference 零拷贝引用，libevent 消费后自动 delete
+    if (evbuffer_add_reference(output, reqjs->data(), reqjs->size(),
+            [](const void*, size_t, void* extra) {
+                delete static_cast<std::string*>(extra);
+            }, reqjs) < 0)
+    {
+        DEFAULT_LOG_ERROR("OnJsonRpcAsync: evbuffer_add_reference failed");
+        delete reqjs;
+        handle->ReleasePair();
+        replyCB(ZMJSON());
+        return;
+    }
+
+    // 3. pair[1] 注入 Hub 代理链，携带真实请求 IP（v4/v6 自适应）
     struct sockaddr_storage srcAddr = {};
     std::string ip = task->Ip();
     if (ip.find(':') != std::string::npos)
@@ -216,12 +198,12 @@ void HttpJsonRpcManager::OnJsonRpcCBAsync(ZmHttpdTask* task, const std::string& 
     {
         DEFAULT_LOG_ERROR("OnJsonRpcAsync: OnPairAcceptBev failed");
         handle->ReleasePair();
-        callback(std::string());
+        replyCB(ZMJSON());
         return;
     }
 
-    // 6. 注册 pair[0] 响应回调
-    auto* rctx = new ResponseReadCtx{ std::move(callback), handle, 0, false, {} };
+    // 4. 注册 pair[0] 响应回调
+    auto* rctx = new ResponseReadCtx{ std::move(replyCB), handle, 0, false, {} };
     bufferevent_setcb(handle->bev0, HttpJsonRpcManager::OnResponseRead, nullptr,
                        HttpJsonRpcManager::OnResponseEvent, rctx);
     bufferevent_setwatermark(handle->bev0, EV_READ, 4, 0);
@@ -254,7 +236,16 @@ void HttpJsonRpcManager::OnResponseRead(struct bufferevent* bev, void* ctx)
         rctx->buffer.resize(rctx->response_len);
         evbuffer_remove(input, &rctx->buffer[0], rctx->response_len);
 
-        rctx->callback(std::move(rctx->buffer));
+
+        std::string jerrstr;
+        ZMJSON repjson = zm_json_parse(rctx->buffer, jerrstr);
+        if (!jerrstr.empty())
+        {
+            repjson.clear();
+            repjson = { {"error", ZmJsonRpcServer::MakeError(ZM_JRPC_ERR_FORMAT,"Response format error")} };
+        }
+
+        rctx->callback(repjson);
         rctx->callback = nullptr;          // ★ 标记已消费，OnResponseEvent 看到后不再回调
         // ★ 不回收，不 delete rctx — 等待 OnResponseEvent 统揽收尾
     }
@@ -268,7 +259,9 @@ void HttpJsonRpcManager::OnResponseEvent(struct bufferevent* bev, short events, 
     if ((events & (BEV_EVENT_EOF | BEV_EVENT_ERROR)) && rctx->callback)
     {
         DEFAULT_LOG_WARN("JRPC response channel closed before full response, events={}", events);
-        rctx->callback(std::string());
+
+        ZMJSON err = { {"error", ZmJsonRpcServer::MakeError(ZM_JRPC_ERR_DROPPED,"Response is dropped")} };
+        rctx->callback(err);
         rctx->callback = nullptr;
     }
 

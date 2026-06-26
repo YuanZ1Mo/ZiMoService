@@ -6,8 +6,8 @@
 // 前向声明（头文件中仅通过指针使用）
 class ZmEvBaseRunLoop;
 class HubProxyManager;
-class BuffereventPairPool;
-struct BuffereventPairHandle;
+class ZmBuffereventPairPool;
+struct ZmBuffereventPairHandle;
 struct bufferevent;
 
 /**
@@ -77,9 +77,8 @@ private:
      * BEV_OPT_THREADSAFE 保证跨线程操作安全性。
      * 响应到达后调用 reply(result, error) 发送 HTTP 响应。
      */
-    void OnJsonRpcCBAsync(ZmHttpdTask* task, const std::string& method,
-                         const ZMJSON& params,
-                         std::function<void(const ZMJSON&, const ZMJSON&, const ZMJSON&)> reply);
+    void OnJsonRpcCBAsync(ZmHttpdTask* task, const ZMJSON& request,
+        std::function<void(const ZMJSON& response)> replyCB);
 
     // ========================================================================
     // bufferevent_pair 响应回调
@@ -90,8 +89,8 @@ private:
 
     struct ResponseReadCtx
     {
-        std::function<void(std::string)> callback;
-        BuffereventPairHandle*           pair_handle;     ///< 池句柄（用于归还 pair[0]）
+        std::function<void(const ZMJSON& response)> callback;
+        ZmBuffereventPairHandle*         pair_handle;     ///< 池句柄（用于归还 pair[0]）
         uint32_t                         response_len;
         bool                             header_read;
         std::string                      buffer;
@@ -104,7 +103,7 @@ private:
     ZmEvBaseRunLoop*     m_evLoopHttpServerJRPC;           ///< 自有事件循环线程（供 ZmJsonRpcServer 使用）
     ZmJsonRpcServer*     m_httpServerJRPC;   ///< HTTP JSON-RPC 服务器实例
     ZmEvBaseRunLoop*     m_evLoopPairPool;   ///< libevent 事件循环线程（pairPool 拥有所有权）
-    BuffereventPairPool* m_pairPool;         ///< bufferevent_pair 对象池（走 Hub 事件循环）
+    ZmBuffereventPairPool* m_pairPool;         ///< bufferevent_pair 对象池（走 Hub 事件循环）
 };
 
 #endif // HTTP_JSONRPC_MANAGER_H

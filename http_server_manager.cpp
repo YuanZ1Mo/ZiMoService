@@ -154,18 +154,18 @@ int HttpServerManager::ServeStaticFile(ZmHttpdTask* task, const std::string& uri
 	std::wstring wRaw = ZmString::UTF8_To_Unicode(rawPath);
 	WCHAR normalized[MAX_PATH];
 	if (!GetFullPathNameW(wRaw.c_str(), MAX_PATH, normalized, nullptr))
-		return 403;
+		return ZM_HTTP_STATUS_CODE_FORBIDDEN;
 	std::string normPath = ZmString::Unicode_To_UTF8(normalized);
 
 	WCHAR normRoot[MAX_PATH];
 	std::wstring wRoot = ZmString::UTF8_To_Unicode(m_wwwRoot);
 	if (!GetFullPathNameW(wRoot.c_str(), MAX_PATH, normRoot, nullptr))
-		return 500;
+		return ZM_HTTP_STATUS_CODE_INTERNAL_ERROR;
 	std::string normRootStr = ZmString::Unicode_To_UTF8(normRoot);
 
 	if (normPath.size() < normRootStr.size() ||
 	    _strnicmp(normPath.c_str(), normRootStr.c_str(), normRootStr.size()) != 0)
-		return 403;
+		return ZM_HTTP_STATUS_CODE_FORBIDDEN;
 
 	auto trySendFile = [&](const std::string& path) -> bool {
 		int fd = -1;
@@ -181,13 +181,13 @@ int HttpServerManager::ServeStaticFile(ZmHttpdTask* task, const std::string& uri
 		return true;
 	};
 
-	if (trySendFile(normPath)) return 200;
+	if (trySendFile(normPath)) return ZM_HTTP_STATUS_CODE_OK;
 
 	// 兜底：文件不存在时转到 404 页面（避免 404 页面自身再次兜底导致无限递归）
 	std::string notFoundPath = normRootStr + "\\html\\404.html";
-	if (normPath != notFoundPath && trySendFile(notFoundPath)) return 404;
+	if (normPath != notFoundPath && trySendFile(notFoundPath)) return ZM_HTTP_STATUS_CODE_NOT_FOUND;
 
-	return 404;
+	return ZM_HTTP_STATUS_CODE_NOT_FOUND;
 }
 
 // ============================================================================
@@ -234,15 +234,15 @@ int HttpServerManager::ServeFileWithRange(ZmHttpdTask* task, const std::string& 
 	}
 
 	if (start < 0 || end >= fileSize || start > end) {
-		task->SetReply(416, "Range Not Satisfiable");
+		task->SetReply(ZM_HTTP_STATUS_CODE_RANGE_NOT_SATISFIABLE, "Range Not Satisfiable");
 		task->PutReplyHeader("Content-Range", ("bytes */" + std::to_string(fileSize)).c_str());
-		return 416;
+		return ZM_HTTP_STATUS_CODE_RANGE_NOT_SATISFIABLE;
 	}
 
 	int64_t rangeLength = end - start + 1;
 	int fd = -1;
 	if (_wsopen_s(&fd, ZmString::UTF8_To_Unicode(path).c_str(), _O_RDONLY | _O_BINARY, _SH_DENYNO, 0) != 0 || fd == -1)
-		return 404;
+		return ZM_HTTP_STATUS_CODE_NOT_FOUND;
 
 	task->PutReplyHeader("Content-type", GetMimeType(path));
 	task->PutReplyHeader("Content-Disposition",
@@ -250,20 +250,20 @@ int HttpServerManager::ServeFileWithRange(ZmHttpdTask* task, const std::string& 
 	task->PutReplyHeader("Accept-Ranges", "bytes");
 	task->PutReplyHeader("Content-Range",
 		("bytes " + std::to_string(start) + "-" + std::to_string(end) + "/" + std::to_string(fileSize)).c_str());
-	task->SetReply(206, "Partial Content");
+	task->SetReply(ZM_HTTP_STATUS_CODE_PARTIAL_CONTENT, "Partial Content");
 
-	if (task->SetReplyFile(fd, start, rangeLength) != 0) { _close(fd); return 500; }
-	return 206;
+	if (task->SetReplyFile(fd, start, rangeLength) != 0) { _close(fd); return ZM_HTTP_STATUS_CODE_INTERNAL_ERROR; }
+	return ZM_HTTP_STATUS_CODE_PARTIAL_CONTENT;
 }
 
 int HttpServerManager::SendFile(ZmHttpdTask* task, const std::string& physicalPath)
 {
 	int fd = -1;
 	if (_wsopen_s(&fd, ZmString::UTF8_To_Unicode(physicalPath).c_str(), _O_RDONLY | _O_BINARY, _SH_DENYNO, 0) != 0 || fd == -1)
-		return 404;
+		return ZM_HTTP_STATUS_CODE_NOT_FOUND;
 
 	int64_t fileSize = _filelengthi64(fd);
-	if (fileSize <= 0) { _close(fd); return 404; }
+	if (fileSize <= 0) { _close(fd); return ZM_HTTP_STATUS_CODE_NOT_FOUND; }
 
 	const char* rangeHeader = task->GetRequestHeader("Range");
 	if (rangeHeader && rangeHeader[0]) {
@@ -271,7 +271,7 @@ int HttpServerManager::SendFile(ZmHttpdTask* task, const std::string& physicalPa
 		int rangeResult = ServeFileWithRange(task, physicalPath, rangeHeader, fileSize);
 		if (rangeResult > 0) return rangeResult;
 		if (_wsopen_s(&fd, ZmString::UTF8_To_Unicode(physicalPath).c_str(), _O_RDONLY | _O_BINARY, _SH_DENYNO, 0) != 0 || fd == -1)
-			return 404;
+			return ZM_HTTP_STATUS_CODE_NOT_FOUND;
 	}
 
 	task->PutReplyHeader("Content-type", GetMimeType(physicalPath));
@@ -279,14 +279,14 @@ int HttpServerManager::SendFile(ZmHttpdTask* task, const std::string& physicalPa
 		("attachment; filename=\"" + ExtractFilename(physicalPath) + "\"").c_str());
 	task->PutReplyHeader("Accept-Ranges", "bytes");
 
-	if (task->SetReplyFile(fd, 0, fileSize) != 0) { _close(fd); return 500; }
-	return 200;
+	if (task->SetReplyFile(fd, 0, fileSize) != 0) { _close(fd); return ZM_HTTP_STATUS_CODE_INTERNAL_ERROR; }
+	return ZM_HTTP_STATUS_CODE_OK;
 }
 
 int HttpServerManager::ReceiveFile(ZmHttpdTask* task, const std::string& physicalPath,
 	const BYTE* data, size_t dlen)
 {
-	if (!data || dlen == 0) return 400;
+	if (!data || dlen == 0) return ZM_HTTP_STATUS_CODE_BAD_REQUEST;
 
 	// 确保父目录存在
 	std::string dirPath = physicalPath;
@@ -296,7 +296,7 @@ int HttpServerManager::ReceiveFile(ZmHttpdTask* task, const std::string& physica
 		std::wstring wDir = ZmString::UTF8_To_Unicode(dirPath);
 		if (!CreateDirectoryW(wDir.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS) {
 			DEFAULT_LOG_ERROR("创建上传目录失败: {}", dirPath);
-			return 500;
+			return ZM_HTTP_STATUS_CODE_INTERNAL_ERROR;
 		}
 	}
 
@@ -305,21 +305,21 @@ int HttpServerManager::ReceiveFile(ZmHttpdTask* task, const std::string& physica
 		0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (hFile == INVALID_HANDLE_VALUE) {
 		DEFAULT_LOG_ERROR("创建上传文件失败: {}", physicalPath);
-		return 500;
+		return ZM_HTTP_STATUS_CODE_INTERNAL_ERROR;
 	}
 
 	LARGE_INTEGER liSize;
 	liSize.QuadPart = (LONGLONG)dlen;
 	if (!SetFilePointerEx(hFile, liSize, NULL, FILE_BEGIN) || !SetEndOfFile(hFile)) {
-		CloseHandle(hFile); return 500;
+		CloseHandle(hFile); return ZM_HTTP_STATUS_CODE_INTERNAL_ERROR;
 	}
 
 	HANDLE hMapping = CreateFileMappingW(hFile, NULL, PAGE_READWRITE,
 		liSize.HighPart, liSize.LowPart, NULL);
-	if (!hMapping) { CloseHandle(hFile); return 500; }
+	if (!hMapping) { CloseHandle(hFile); return ZM_HTTP_STATUS_CODE_INTERNAL_ERROR; }
 
 	BYTE* mappedView = (BYTE*)MapViewOfFile(hMapping, FILE_MAP_WRITE, 0, 0, dlen);
-	if (!mappedView) { CloseHandle(hMapping); CloseHandle(hFile); return 500; }
+	if (!mappedView) { CloseHandle(hMapping); CloseHandle(hFile); return ZM_HTTP_STATUS_CODE_INTERNAL_ERROR; }
 
 	struct evbuffer* inbuf = task->GetInputBuffer();
 	if (inbuf && evbuffer_get_length(inbuf) >= dlen) {
@@ -334,7 +334,7 @@ int HttpServerManager::ReceiveFile(ZmHttpdTask* task, const std::string& physica
 	CloseHandle(hFile);
 
 	DEFAULT_LOG_INFO("文件上传成功: {} ({} bytes)", physicalPath, dlen);
-	return 201;
+	return ZM_HTTP_STATUS_CODE_CREATED;
 }
 
 // ============================================================================

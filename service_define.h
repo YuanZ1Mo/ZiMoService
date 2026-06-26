@@ -21,15 +21,6 @@
 /** SOCKS5 服务器监听端口 */
 #define ZM_SOCKS5_SERVER_PORT   39540
 
-/** JRPC 协议帧魔数（4 字节） */
-#define ZM_JRPC_MAGIC           "JRPC"
-
-/** JRPC 错误码：SendToHubProxy 失败 */
-#define ZM_JRPC_ERR_SEND_HUB    601
-/** JRPC 错误码：响应为空 */
-#define ZM_JRPC_ERR_EMPTY_RSP   602
-/** JRPC 错误码：响应格式错误 */
-#define ZM_JRPC_ERR_FORMAT      603
 
 /** 文件中心 HMAC 密钥（用于密码哈希） */
 #define ZM_FILE_HUB_HMAC_KEY    "ZiMoFileHub2024"

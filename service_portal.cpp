@@ -68,9 +68,9 @@ void ServicePortal::RegisterHttpRoutes(HttpServerManager* httpMgr)
 
 void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 {
-	ZMJSON header;
-	ZMJSON result;
-	ZMJSON error;
+	ZMJSON rsp_headers;
+	ZMJSON rsp_result;
+	ZMJSON rsp_error;
 	std::string err;
 
 	ZMJSON reqJson = zm_json_parse(reqData, err);
@@ -83,127 +83,132 @@ void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 		return;
 	}
 
-	std::string method = zm_json_get_str(reqJson, "method");
-	ZMJSON params = reqJson["params"];
+	std::string req_method = zm_json_get_str(reqJson, "method");
+	ZMJSON req_params = reqJson["params"];
+	ZMJSON req_headers = reqJson["headers"];
 
-	if (method == "ping")
+	if (req_method == "ping")
 	{
-		result["pong"] = true;
-		header["123"] = {"456","789","1024"};
+		rsp_result["pong"] = true;
 	}
-	else if (method == "getTime")
+	else if (req_method == "drop")
+	{
+		tap->Drop();
+		return;
+	}
+	else if (req_method == "getTime")
 	{
 		time_t now = time(nullptr);
 		char buf[32];
 		ZmSystem::CurrentTimeStr(buf, sizeof(buf));
-		result["time"] = buf;
-		result["timestamp"] = (long)now;
+		rsp_result["time"] = buf;
+		rsp_result["timestamp"] = (long)now;
 	}
-	else if (method == "getStatus")
+	else if (req_method == "getStatus")
 	{
 		time_t now = time(nullptr);
 		char buf[32];
 		ZmSystem::CurrentTimeStr(buf, sizeof(buf));
-		result["time"] = buf;
-		result["timestamp"] = (long)now;
+		rsp_result["time"] = buf;
+		rsp_result["timestamp"] = (long)now;
 
-		result["http"]["status"] = (m_netDock && m_netDock->IsHttpOpen()) ? "running" : "stopped";
-		result["http"]["port"]   = ZM_HTTP_SERVER_PORT;
+		rsp_result["http"]["status"] = (m_netDock && m_netDock->IsHttpOpen()) ? "running" : "stopped";
+		rsp_result["http"]["port"]   = ZM_HTTP_SERVER_PORT;
 
-		result["jrpc_http"]["status"] = (m_netDock && m_netDock->IsJrpcHttpOpen()) ? "running" : "stopped";
-		result["jrpc_http"]["port"]   = ZM_JSONRPC_SERVER_PORT;
+		rsp_result["jrpc_http"]["status"] = (m_netDock && m_netDock->IsJrpcHttpOpen()) ? "running" : "stopped";
+		rsp_result["jrpc_http"]["port"]   = ZM_JSONRPC_SERVER_PORT;
 
-		result["hub"]["status"] = (m_netDock && m_netDock->IsHubOpen()) ? "running" : "stopped";
+		rsp_result["hub"]["status"] = (m_netDock && m_netDock->IsHubOpen()) ? "running" : "stopped";
 
-		result["jrpc_proxy"]["status"] = (m_netDock && m_netDock->IsJrpcProxyOpen()) ? "running" : "stopped";
+		rsp_result["jrpc_proxy"]["status"] = (m_netDock && m_netDock->IsJrpcProxyOpen()) ? "running" : "stopped";
 
-		result["broadcast"]["status"]      = (m_netDock && m_netDock->IsBroadcastOpen()) ? "running" : "stopped";
-		result["broadcast"]["port"]        = (m_netDock && m_netDock->GetBroadcastManager()) ? m_netDock->GetBroadcastManager()->GetPort() : 0;
-		result["broadcast"]["connections"] = (m_netDock && m_netDock->GetBroadcastManager()) ? m_netDock->GetBroadcastManager()->GetConnectionCount() : 0;
-		result["broadcast"]["sent"]        = (m_netDock && m_netDock->GetBroadcastManager()) ? m_netDock->GetBroadcastManager()->GetSentCount() : 0;
+		rsp_result["broadcast"]["status"]      = (m_netDock && m_netDock->IsBroadcastOpen()) ? "running" : "stopped";
+		rsp_result["broadcast"]["port"]        = (m_netDock && m_netDock->GetBroadcastManager()) ? m_netDock->GetBroadcastManager()->GetPort() : 0;
+		rsp_result["broadcast"]["connections"] = (m_netDock && m_netDock->GetBroadcastManager()) ? m_netDock->GetBroadcastManager()->GetConnectionCount() : 0;
+		rsp_result["broadcast"]["sent"]        = (m_netDock && m_netDock->GetBroadcastManager()) ? m_netDock->GetBroadcastManager()->GetSentCount() : 0;
 		auto load = ZmSystem::GetSystemLoad();
-		result["system"]["cpu"]           = load.cpu_percent;
-		result["system"]["memory"]        = load.memory_percent;
-		result["system"]["totalMemMB"]    = load.total_memory_mb;
-		result["system"]["usedMemMB"]     = load.used_memory_mb;
-		result["system"]["gpuAvailable"]  = load.has_gpu;
-		result["system"]["gpu"]           = (load.has_gpu ? load.gpu_percent : -1.0);
+		rsp_result["system"]["cpu"]           = load.cpu_percent;
+		rsp_result["system"]["memory"]        = load.memory_percent;
+		rsp_result["system"]["totalMemMB"]    = load.total_memory_mb;
+		rsp_result["system"]["usedMemMB"]     = load.used_memory_mb;
+		rsp_result["system"]["gpuAvailable"]  = load.has_gpu;
+		rsp_result["system"]["gpu"]           = (load.has_gpu ? load.gpu_percent : -1.0);
 	}
-	else if (method == "broadcast")
+	else if (req_method == "broadcast")
 	{
-		std::string topic   = zm_json_get_str(params, "topic", "");
-		std::string content = zm_json_get_str(params, "content", "");
-		std::string tag     = zm_json_get_str(params, "tag", "");
+		std::string topic   = zm_json_get_str(req_params, "topic", "");
+		std::string content = zm_json_get_str(req_params, "content", "");
+		std::string tag     = zm_json_get_str(req_params, "tag", "");
 
 		if (topic.empty())
 		{
-			result["success"] = false;
-			result["error"]   = "topic is required";
+			rsp_result["success"] = false;
+			rsp_result["error"]   = "topic is required";
 		}
 		else
 		{
-			result["success"] = BroadcastMessage(topic, content, tag);
+			rsp_result["success"] = BroadcastMessage(topic, content, tag);
 		}
 	}
-	else if (method == "echo")
+	else if (req_method == "echo")
 	{
-		result["echo"] = params;
+		rsp_result["echo"] = req_params;
 	}
 	// --- 文件中心 API ---
-	else if (method == "listFiles")
+	else if (req_method == "listFiles")
 	{
-		std::string path = zm_json_get_str(params, "path", "");
-		result = m_netDock->GetHttpServerManager()->GetFileHub() ? m_netDock->GetHttpServerManager()->GetFileHub()->ListFiles(path)
+		std::string path = zm_json_get_str(req_params, "path", "");
+		rsp_result = m_netDock->GetHttpServerManager()->GetFileHub() ? m_netDock->GetHttpServerManager()->GetFileHub()->ListFiles(path)
 			: ZMJSON{{"ok", false}, {"error", "文件中心未初始化"}};
 	}
-	else if (method == "searchFiles")
+	else if (req_method == "searchFiles")
 	{
-		std::string keyword = zm_json_get_str(params, "keyword", "");
-		result = m_netDock->GetHttpServerManager()->GetFileHub() ? m_netDock->GetHttpServerManager()->GetFileHub()->SearchFiles(keyword)
+		std::string keyword = zm_json_get_str(req_params, "keyword", "");
+		rsp_result = m_netDock->GetHttpServerManager()->GetFileHub() ? m_netDock->GetHttpServerManager()->GetFileHub()->SearchFiles(keyword)
 			: ZMJSON{{"ok", false}, {"error", "文件中心未初始化"}};
 	}
-	else if (method == "createDir")
+	else if (req_method == "createDir")
 	{
-		std::string path     = zm_json_get_str(params, "path", "");
-		std::string dirName  = zm_json_get_str(params, "dirName", "");
-		std::string username = zm_json_get_str(params, "username", "");
-		std::string password = zm_json_get_str(params, "password", "");
-		result = m_netDock->GetHttpServerManager()->GetFileHub() ? m_netDock->GetHttpServerManager()->GetFileHub()->CreateDir(path, dirName, username, password)
+		std::string path     = zm_json_get_str(req_params, "path", "");
+		std::string dirName  = zm_json_get_str(req_params, "dirName", "");
+		std::string username = zm_json_get_str(req_params, "username", "");
+		std::string password = zm_json_get_str(req_params, "password", "");
+		rsp_result = m_netDock->GetHttpServerManager()->GetFileHub() ? m_netDock->GetHttpServerManager()->GetFileHub()->CreateDir(path, dirName, username, password)
 			: ZMJSON{{"ok", false}, {"error", "文件中心未初始化"}};
 	}
-	else if (method == "deleteItem")
+	else if (req_method == "deleteItem")
 	{
-		std::string path     = zm_json_get_str(params, "path", "");
-		std::string username = zm_json_get_str(params, "username", "");
-		std::string password = zm_json_get_str(params, "password", "");
-		result = m_netDock->GetHttpServerManager()->GetFileHub() ? m_netDock->GetHttpServerManager()->GetFileHub()->DeleteItem(path, username, password)
+		std::string path     = zm_json_get_str(req_params, "path", "");
+		std::string username = zm_json_get_str(req_params, "username", "");
+		std::string password = zm_json_get_str(req_params, "password", "");
+		rsp_result = m_netDock->GetHttpServerManager()->GetFileHub() ? m_netDock->GetHttpServerManager()->GetFileHub()->DeleteItem(path, username, password)
 			: ZMJSON{{"ok", false}, {"error", "文件中心未初始化"}};
 	}
-	else if (method == "verifyDirPassword")
+	else if (req_method == "verifyDirPassword")
 	{
-		std::string path     = zm_json_get_str(params, "path", "");
-		std::string password = zm_json_get_str(params, "password", "");
-		result = m_netDock->GetHttpServerManager()->GetFileHub() ? m_netDock->GetHttpServerManager()->GetFileHub()->VerifyDirPassword(path, password)
+		std::string path     = zm_json_get_str(req_params, "path", "");
+		std::string password = zm_json_get_str(req_params, "password", "");
+		rsp_result = m_netDock->GetHttpServerManager()->GetFileHub() ? m_netDock->GetHttpServerManager()->GetFileHub()->VerifyDirPassword(path, password)
 			: ZMJSON{{"ok", false}, {"error", "文件中心未初始化"}};
 	}
-	else if (method == "changeDirPassword")
+	else if (req_method == "changeDirPassword")
 	{
-		std::string path        = zm_json_get_str(params, "path", "");
-		std::string username    = zm_json_get_str(params, "username", "");
-		std::string oldPassword = zm_json_get_str(params, "oldPassword", "");
-		std::string newPassword = zm_json_get_str(params, "newPassword", "");
-		result = m_netDock->GetHttpServerManager()->GetFileHub() ? m_netDock->GetHttpServerManager()->GetFileHub()->ChangeDirPassword(path, username, oldPassword, newPassword)
+		std::string path        = zm_json_get_str(req_params, "path", "");
+		std::string username    = zm_json_get_str(req_params, "username", "");
+		std::string oldPassword = zm_json_get_str(req_params, "oldPassword", "");
+		std::string newPassword = zm_json_get_str(req_params, "newPassword", "");
+		rsp_result = m_netDock->GetHttpServerManager()->GetFileHub() ? m_netDock->GetHttpServerManager()->GetFileHub()->ChangeDirPassword(path, username, oldPassword, newPassword)
 			: ZMJSON{{"ok", false}, {"error", "文件中心未初始化"}};
 	}
-	else if (method == "batchDelete")
+	else if (req_method == "batchDelete")
 	{
-		ZMJSON paths          = params["paths"];
-		std::string username = zm_json_get_str(params, "username", "");
-		std::string password = zm_json_get_str(params, "password", "");
-		result = m_netDock->GetHttpServerManager()->GetFileHub() ? m_netDock->GetHttpServerManager()->GetFileHub()->BatchDelete(paths, username, password)
+		ZMJSON paths          = req_params["paths"];
+		std::string username = zm_json_get_str(req_params, "username", "");
+		std::string password = zm_json_get_str(req_params, "password", "");
+		rsp_result = m_netDock->GetHttpServerManager()->GetFileHub() ? m_netDock->GetHttpServerManager()->GetFileHub()->BatchDelete(paths, username, password)
 			: ZMJSON{{"ok", false}, {"error", "文件中心未初始化"}};
 	}
-	else if (method == "getRoutes")
+	else if (req_method == "getRoutes")
 	{
 		ZMJSON arr = ZMJSON::array();
 
@@ -262,10 +267,10 @@ void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 			"{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"batchDelete\",\"params\":{\"paths\":[\"a.txt\",\"b.txt\"]}}",
 			"{\"result\":{\"ok\":true,\"deleted\":2}}");
 
-		result["routes"] = arr;
-		result["total"]  = (int)arr.size();
+		rsp_result["routes"] = arr;
+		rsp_result["total"]  = (int)arr.size();
 	}
-	else if (method == "getAbout")
+	else if (req_method == "getAbout")
 	{
 		char moduleDir[MAX_PATH];
 		std::string exeDir = ZmSystem::GetModuleDir(moduleDir, MAX_PATH);
@@ -279,35 +284,35 @@ void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 		}
 		if (root.empty())
 		{
-			error["code"]    = -32603;
-			error["message"] = "无法获取项目根目录";
+			rsp_error["code"]    = -32603;
+			rsp_error["message"] = "无法获取项目根目录";
 		}
 		else
 		{
 			std::string backendMd;
 			if (ZmFile::ReadString((root + "\\README.md").c_str(), backendMd))
-				result["backend"] = backendMd;
+				rsp_result["backend"] = backendMd;
 			else
-				result["backend"] = "README.md not found (path: " + root + "\\README.md)";
+				rsp_result["backend"] = "README.md not found (path: " + root + "\\README.md)";
 
 			std::string frontendMd;
 			if (ZmFile::ReadString((root + "\\www\\doc\\README.md").c_str(), frontendMd))
-				result["frontend"] = frontendMd;
+				rsp_result["frontend"] = frontendMd;
 			else
-				result["frontend"] = "www/doc/README.md not found (path: " + root + "\\www\\doc\\README.md)";
+				rsp_result["frontend"] = "www/doc/README.md not found (path: " + root + "\\www\\doc\\README.md)";
 		}
 	}
 	else
 	{
-		error["code"]    = -32601;
-		error["message"] = "Method not found: " + method;
+		rsp_error["code"]    = -32601;
+		rsp_error["message"] = "Method not found: " + req_method;
 	}
 
 	ZMJSON rsp;
-	if (!error.empty())
-		rsp["error"] = error;
+	if (!rsp_error.empty())
+		rsp["error"] = rsp_error;
 	else
-		rsp["result"] = result;
-	rsp["header"] = header;
+		rsp["result"] = rsp_result;
+	rsp["headers"] = rsp_headers;
 	ZmTapContext::Response(tap, rsp);
 }

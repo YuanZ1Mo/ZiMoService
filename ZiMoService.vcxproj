@@ -214,7 +214,6 @@
     <ClInclude Include="..\ZiMoPublic\libevent\include\evhttp.h" />
     <ClInclude Include="..\ZiMoPublic\libevent\include\evrpc.h" />
     <ClInclude Include="..\ZiMoPublic\libevent\include\evutil.h" />
-    <ClInclude Include="..\ZiMoPublic\net\zm_bufferevent_pair_pool.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_dns.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_http.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_http_router.h" />
@@ -481,6 +480,7 @@
     <ClInclude Include="..\ZiMoPublic\spdlog\zm_logger.h" />
     <ClInclude Include="..\ZiMoPublic\ssl\zm_ssl_ctx.h" />
     <ClInclude Include="..\ZiMoPublic\ssl\zm_ssl_fingerprint.h" />
+    <ClInclude Include="..\ZiMoPublic\util\zm_util_bufferevent_pair_pool.h" />
     <ClInclude Include="..\ZiMoPublic\util\zm_util_container.h" />
     <ClInclude Include="..\ZiMoPublic\util\zm_util_file.h" />
     <ClInclude Include="..\ZiMoPublic\util\zm_util_libevent.h" />
@@ -502,7 +502,6 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\ZiMoPublic\json\zm_json.cpp" />
-    <ClCompile Include="..\ZiMoPublic\net\zm_bufferevent_pair_pool.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_dns.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_http.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_http_router.cpp" />
@@ -520,6 +519,7 @@
     <ClCompile Include="..\ZiMoPublic\spdlog\zm_logger.cpp" />
     <ClCompile Include="..\ZiMoPublic\ssl\zm_ssl_ctx.cpp" />
     <ClCompile Include="..\ZiMoPublic\ssl\zm_ssl_fingerprint.cpp" />
+    <ClCompile Include="..\ZiMoPublic\util\zm_util_bufferevent_pair_pool.cpp" />
     <ClCompile Include="..\ZiMoPublic\util\zm_util_container.cpp" />
     <ClCompile Include="..\ZiMoPublic\util\zm_util_file.cpp" />
     <ClCompile Include="..\ZiMoPublic\util\zm_util_libevent.cpp" />
