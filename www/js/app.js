@@ -40,6 +40,8 @@ createApp({
       routes: [],
       testMethod: 'getStatus', testParams: '', tResult: '', tLoading: false,
       testId: 1, testJsonrpc: '2.0',
+      jsonInput: '', jsonOutput: '', jsonError: '',
+      toasts: [], _toastId: 0,
       aboutBackend: '<p>加载中...</p>', aboutFrontend: '<p>加载中...</p>',
       _timer: null,
     };
@@ -185,8 +187,75 @@ createApp({
     },
 
     async copy(text) {
-      try { await navigator.clipboard.writeText(text); }
-      catch { /* fallback */ }
-    }
+      if (!text || text.trim() === '') {
+        this.showTip('⚠️ 没有可复制的内容', 'err');
+        return;
+      }
+      let ok = false;
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+          ok = true;
+        } else {
+          ok = this.fallbackCopy(text);
+        }
+      } catch {
+        ok = this.fallbackCopy(text);
+      }
+      this.showTip(ok ? '✅ 已复制' : '❌ 复制失败', ok ? 'ok' : 'err');
+    },
+
+    fallbackCopy(text) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      ta.style.top = '-9999px';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      try { document.execCommand('copy'); return true; } catch { return false; }
+      finally { document.body.removeChild(ta); }
+    },
+
+    showTip(msg, type) {
+      const id = ++this._toastId;
+      this.toasts.push({ id, msg, type });
+      setTimeout(() => {
+        this.toasts = this.toasts.filter(t => t.id !== id);
+      }, 3000);
+    },
+
+    jsonFormat(indent) {
+      this.jsonError = '';
+      try {
+        const obj = JSON.parse(this.jsonInput);
+        this.jsonOutput = JSON.stringify(obj, null, indent);
+      } catch(e) {
+        this.jsonError = e.message;
+        this.jsonOutput = '';
+      }
+    },
+
+    jsonEscape() {
+      this.jsonError = '';
+      this.jsonOutput = JSON.stringify(this.jsonInput);
+    },
+
+    jsonUnescape() {
+      this.jsonError = '';
+      try {
+        this.jsonOutput = JSON.parse(this.jsonInput);
+        if (typeof this.jsonOutput === 'string') {
+          // 输入是转义后的 JSON 字符串，直接显示
+        } else {
+          // 输入是完整 JSON，重新格式化展示
+          this.jsonOutput = JSON.stringify(this.jsonOutput, null, 4);
+        }
+      } catch(e) {
+        this.jsonError = e.message;
+        this.jsonOutput = '';
+      }
+    },
   }
 }).mount('#app');

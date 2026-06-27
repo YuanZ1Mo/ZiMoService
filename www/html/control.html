@@ -8,6 +8,11 @@
 </head>
 <body>
 <div id="app" v-cloak>
+  <!-- Toast -->
+  <div class="toast-wrap">
+    <div v-for="t in toasts" :key="t.id" class="toast" :class="t.type">{{ t.msg }}</div>
+  </div>
+
   <!-- 导航 -->
   <nav class="nav">
     <div class="nav-brand">⚡ ZiMo Service</div>
@@ -81,6 +86,28 @@
           <div class="test-panel-h">返回体 <button class="cp" @click="copy(tResult)">📋 复制</button></div>
           <div class="test-result"><pre v-if="tResult">{{ tResult }}</pre><p class="muted" v-else>点击发送查看结果</p></div>
         </div>
+      </div>
+
+      <!-- JSON 格式化 -->
+      <h3 style="margin-top:32px;">🔧 JSON 格式化</h3>
+      <div class="test-panels" style="margin-top:12px;">
+        <div class="test-panel">
+          <div class="test-panel-h">输入 <button class="cp" @click="jsonInput='';jsonOutput='';jsonError=''">🗑 清空</button></div>
+          <textarea v-model="jsonInput" placeholder="粘贴 JSON 到这里..."></textarea>
+        </div>
+        <div class="test-panel">
+          <div class="test-panel-h">输出 <button class="cp" @click="copy(jsonOutput||jsonInput)">📋 复制</button></div>
+          <textarea v-if="jsonOutput" v-model="jsonOutput" readonly></textarea>
+          <div v-else class="test-result"><p class="muted">点击下方按钮查看结果</p></div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:10px;">
+        <button class="btn" @click="jsonFormat(4)">✨ 美化</button>
+        <button class="btn" @click="jsonFormat(-1)">📦 压缩</button>
+        <button class="btn btn2" @click="jsonEscape">🔀 转义</button>
+        <button class="btn btn2" @click="jsonUnescape">🔁 去转义</button>
+        <span v-if="jsonError" style="color:var(--err);font-size:13px;">❌ {{ jsonError }}</span>
+        <span v-else-if="jsonOutput" style="color:var(--ok);font-size:13px;">✅ 有效 JSON</span>
       </div>
     </section>
 

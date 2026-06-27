@@ -10,7 +10,7 @@
 #define ZM_HTTP_SERVER_PORT     80
 
 /** 本地 HTTP URI 路径 */
-#define ZM_HTTPSERVER_ROOT_URI	"/ZiMo/JRPC"
+#define ZM_HTTPSERVER_ROOT_URI	"/zimo/jrpc"
 
 /** HTTP JSON-RPC 服务器监听端口 */
 #define ZM_JSONRPC_SERVER_PORT  39440

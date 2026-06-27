@@ -552,6 +552,16 @@ ZMJSON HttpServerModuleFileHub::VerifyDirPassword(const std::string& relativePat
 		return result;
 	}
 
+	// 检查目录是否实际存在
+	std::wstring wAbs = ZmString::UTF8_To_Unicode(absPath);
+	DWORD attrs = GetFileAttributesW(wAbs.c_str());
+	if (attrs == INVALID_FILE_ATTRIBUTES || !(attrs & FILE_ATTRIBUTE_DIRECTORY))
+	{
+		result["ok"] = false;
+		result["error"] = "目录不存在";
+		return result;
+	}
+
 	ZMJSON config;
 	if (!ReadUserConfig(absPath, config))
 	{
