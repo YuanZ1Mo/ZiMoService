@@ -1,19 +1,25 @@
 const { createApp } = Vue;
 
-const JRPC_URL = `http://${window.location.hostname}:39440/ZiMo/JRPC`;
-const DL_BASE   = '/filehub/download/';
-const UL_BASE   = '/filehub/upload/';
+const REST_URL = `http://${window.location.hostname}:39441/zimo/api`;
 
-/** JRPC 调用 */
-async function jrpcCall(method, params = {}) {
-  const r = await fetch(JRPC_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: Date.now(), jsonrpc: '2.0', method, params }),
-  });
+/**
+ * @brief RESTful API 调用（全部走 query string，不使用 JSON 请求体）
+ * @param method HTTP 方法
+ * @param path   路径（/api 之后的部分）
+ * @param params 参数对象
+ */
+async function restCall(method, path, params = {}) {
+  let url = REST_URL + path;
+  const qs = Object.entries(params)
+    .filter(([, v]) => v !== '' && v !== null && v !== undefined)
+    .map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v))
+    .join('&');
+  if (qs) url += '?' + qs;
+
+  const r = await fetch(url, { method });
   const json = await r.json();
   if (json.error) throw new Error(json.error.message || JSON.stringify(json.error));
-  return json.result;
+  return json;
 }
 
 createApp({
@@ -73,41 +79,32 @@ createApp({
       uploadStatus: '',
       uploadPct: 0,
       _xhr: null,
+
+      // 搜索关键词
+      _srch: '',
     };
   },
 
   computed: {
-    /** 文件列表（搜索时返回过滤结果，否则返回全量） */
     displayFiles() {
       return this._filteredFiles !== null ? this._filteredFiles : this.files;
     },
-
-    /** 选中文件数 */
     checkedCount() {
       return this.files.filter(f => f.type === 'file' && f._checked).length;
     },
-
-    /** 可选中文件总数 */
     totalCheckable() {
       return this.files.filter(f => f.type === 'file').length;
     },
-
-    /** 是否有勾选 */
     hasSelection() {
       return this.checkedCount > 0;
     },
-
-    /** 全选按钮文字 */
     selectStateText() {
-      const c = this.checkedCount;
-      const t = this.totalCheckable;
+      const c = this.checkedCount, t = this.totalCheckable;
       if (t === 0) return '☐ 全选';
       if (c === 0) return '☐ 全选';
       if (c === t) return '☑ 取消全选';
       return '☒ 部分选择';
     },
-
-    /** 面包屑 */
     crumbs() {
       return this.currentPath ? this.currentPath.split('/') : [];
     },
@@ -126,7 +123,7 @@ createApp({
       this._filteredFiles = null;
       this.loading = true;
       try {
-        const r = await jrpcCall('listFiles', { path: this.currentPath });
+        const r = await restCall('GET', '/files', { path: this.currentPath });
         if (r.ok) {
           this.files = (r.files || []).map(f => ({ ...f, _checked: false }));
         }
@@ -140,11 +137,10 @@ createApp({
     async enterDir(item) {
       const newPath = this.currentPath ? this.currentPath + '/' + item.name : item.name;
 
-      // 检查是否有密码
       try {
-        const r = await jrpcCall('verifyDirPassword', { path: newPath, password: '' });
+        const r = await restCall('GET', '/files/verify-password',
+          { path: newPath, password: '' });
         if (r.ok && !r.valid) {
-          // 需要密码
           this.passwordTarget = item.name;
           this.passwordPath = newPath;
           this.passwordInput = '';
@@ -175,7 +171,6 @@ createApp({
       }
       this.currentPath = this.parentPath;
       this.isRoot = (this.currentPath === '');
-      // 计算新的 parentPath
       if (this.isRoot) {
         this.parentPath = '';
       } else {
@@ -186,7 +181,6 @@ createApp({
       this.loadFiles();
     },
 
-    /** 返回文件中心根目录 */
     goToRoot() {
       this.currentPath = '';
       this.parentPath = '';
@@ -195,7 +189,6 @@ createApp({
       this.loadFiles();
     },
 
-    /** 面包屑点击导航 */
     goToCrumb(index) {
       const parts = this.currentPath.split('/');
       this.currentPath = parts.slice(0, index + 1).join('/');
@@ -205,43 +198,36 @@ createApp({
       this.loadFiles();
     },
 
-    /** 行点击 */
     onRowClick(item, event) {
-      // 忽略在按钮和 checkbox 上的点击
       if (event.target.tagName === 'BUTTON' || event.target.tagName === 'INPUT') return;
-
-      if (item.type === 'folder') {
-        this.enterDir(item);
-      }
+      if (item.type === 'folder') this.enterDir(item);
     },
 
     // ================================================================
     // 搜索
     // ================================================================
 
-    /** 过滤非字母数字字符 */
     filterAlnum(field) {
       this[field] = this[field].replace(/[^A-Za-z0-9]/g, '');
     },
 
-    doSearch() {
+    async doSearch() {
       const kw = this.searchKeyword.trim().toLowerCase();
-      if (!kw) {
-        this._filteredFiles = null;
-        return;
-      }
+      if (!kw) { this._filteredFiles = null; return; }
 
       this.sLoading = true;
-      // 过滤当前文件列表
-      const filtered = this.files.filter(f =>
-        f.name.toLowerCase().indexOf(kw) !== -1
-      );
-      this._filteredFiles = filtered;
-
-      if (filtered.length > 0) {
-        this.showTip('找到 ' + filtered.length + ' 个结果', 'ok');
-      } else {
-        this.showTip('未找到任何结果', 'err');
+      try {
+        const r = await restCall('GET', '/files/search', { keyword: kw });
+        if (r.ok) {
+          this._filteredFiles = (r.results || []).map(f => ({ ...f, _checked: false }));
+          this.showTip('找到 ' + this._filteredFiles.length + ' 个结果', 'ok');
+        } else {
+          this._filteredFiles = [];
+          this.showTip('未找到任何结果', 'err');
+        }
+      } catch (e) {
+        this._filteredFiles = [];
+        this.showTip('搜索失败: ' + e.message, 'err');
       }
       this.sLoading = false;
     },
@@ -258,17 +244,12 @@ createApp({
     // 选择
     // ================================================================
 
-    onCheckChanged() {
-      // 被动更新，Vue 自动处理
-    },
-
+    onCheckChanged() {},
     toggleSelectAll() {
       const files = this.files.filter(f => f.type === 'file');
       if (files.length === 0) return;
-
       const allChecked = this.checkedCount === files.length;
-      const newVal = !allChecked;
-      files.forEach(f => f._checked = newVal);
+      files.forEach(f => f._checked = !allChecked);
     },
 
     // ================================================================
@@ -278,9 +259,8 @@ createApp({
     async verifyPassword() {
       this.passwordError = '';
       try {
-        const r = await jrpcCall('verifyDirPassword', {
-          path: this.passwordPath,
-          password: this.passwordInput,
+        const r = await restCall('GET', '/files/verify-password', {
+          path: this.passwordPath, password: this.passwordInput,
         });
         if (r.ok && r.valid) {
           this.showPassword = false;
@@ -299,7 +279,7 @@ createApp({
 
     downloadItem(item) {
       const path = this.currentPath ? this.currentPath + '/' + item.name : item.name;
-      const url = DL_BASE + path;
+      const url = REST_URL + '/files/download?path=' + encodeURIComponent(path);
       const a = document.createElement('a');
       a.href = url;
       a.download = item.name;
@@ -336,13 +316,14 @@ createApp({
       try {
         let r;
         if (this._batchPaths && this._batchPaths.length > 0) {
-          r = await jrpcCall('batchDelete', {
-            paths: this._batchPaths,
+          // 批量删除：paths 用逗号拼接
+          r = await restCall('POST', '/files/batch-delete', {
+            paths: this._batchPaths.join(','),
             username: this.delUsername,
             password: this.delPassword,
           });
         } else {
-          r = await jrpcCall('deleteItem', {
+          r = await restCall('DELETE', '/files', {
             path: this.delTargetPath,
             username: this.delUsername,
             password: this.delPassword,
@@ -351,7 +332,6 @@ createApp({
         if (r.ok) {
           this.showDelConfirm = false;
           this._batchPaths = null;
-          // 删除的是当前目录则返回上级
           if (this.delTargetPath === this.currentPath) {
             this.goBack();
           } else {
@@ -382,9 +362,8 @@ createApp({
       this.showDelConfirm = true;
     },
 
-    /** 删除当前目录（非 root） */
     onDeleteDir() {
-      this.delTargetName = '删除文件目录 📁 ' + this.currentPath + ' 及其所有内容';
+      this.delTargetName = '删除目录 📁 ' + this.currentPath + ' 及其所有内容';
       this.delTargetPath = this.currentPath;
       this.delNeedUser = true;
       this.delNeedAuth = false;
@@ -409,7 +388,7 @@ createApp({
     async createDir() {
       this.newDirError = '';
       try {
-        const r = await jrpcCall('createDir', {
+        const r = await restCall('POST', '/files/dirs', {
           path: this.currentPath,
           dirName: this.newDirName.trim(),
           username: this.isRoot ? this.newDirUser.trim() : '',
@@ -458,17 +437,14 @@ createApp({
           return;
         }
         const file = fileList[idx];
-        this.uploadSingle(file, () => {
-          idx++;
-          uploadNext();
-        });
+        this.uploadSingle(file, () => { idx++; uploadNext(); });
       };
       uploadNext();
     },
 
     uploadSingle(file, cb) {
       const path = this.currentPath ? this.currentPath + '/' + file.name : file.name;
-      const url = UL_BASE + path;
+      const url = REST_URL + '/files/upload?path=' + encodeURIComponent(path);
       this.uploadStatus = '上传: ' + file.name;
 
       const xhr = new XMLHttpRequest();
@@ -482,7 +458,7 @@ createApp({
       };
 
       xhr.onload = () => {
-        if (xhr.status === 201) {
+        if (xhr.status === 201 || xhr.status === 200) {
           cb();
         } else {
           this.showTip('上传失败: ' + file.name + ' (HTTP ' + xhr.status + ')', 'err');
@@ -513,9 +489,8 @@ createApp({
       this.cpNewPwd = '';
       this.cpError = '';
 
-      // 检查当前目录是否有旧密码
       try {
-        const r = await jrpcCall('verifyDirPassword', {
+        const r = await restCall('GET', '/files/verify-password', {
           path: this.currentPath, password: ''
         });
         this.cpHasOldPassword = (r.ok && !r.valid);
@@ -527,7 +502,7 @@ createApp({
     async changePassword() {
       this.cpError = '';
       try {
-        const r = await jrpcCall('changeDirPassword', {
+        const r = await restCall('PUT', '/files/password', {
           path: this.currentPath,
           username: this.cpUsername.trim(),
           oldPassword: this.cpOldPwd,
@@ -551,8 +526,7 @@ createApp({
     formatSize(bytes) {
       if (bytes === 0) return '0 B';
       const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-      let i = 0;
-      let n = bytes;
+      let i = 0, n = bytes;
       while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
       return n.toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
     },
@@ -560,7 +534,6 @@ createApp({
 
   watch: {
     showChangePwd(val) {
-      // 在打开对话框时检查是否有旧密码
       if (val) this.showChangePwdDialog();
     },
   },

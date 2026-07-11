@@ -9,11 +9,16 @@
 /** 通用 HTTP 服务器监听端口 */
 #define ZM_HTTP_SERVER_PORT     80
 
-/** 本地 HTTP URI 路径 */
-#define ZM_HTTPSERVER_ROOT_URI	"/zimo/jrpc"
+/** 本地 HTTP JRPC URI 路径 */
+#define ZM_HTTP_JRPC_SERVER_ROOT_URI	"/zimo/jrpc"
+
+#define ZM_HTTP_RESTFUL_SERVER_ROOT_URI	"/zimo/api"
 
 /** HTTP JSON-RPC 服务器监听端口 */
 #define ZM_JSONRPC_SERVER_PORT  39440
+
+/** HTTP RESTful 服务器监听端口 */
+#define ZM_RESTFUL_SERVER_PORT  39441
 
 /** 广播服务端监听端口 */
 #define ZM_BROADCAST_SERVER_PORT 39640

@@ -30,8 +30,12 @@ void ServiceCenter::OnStart(DWORD /*argc*/, TCHAR** /*argv[]*/)
 
     m_netDock->SetJrpcRequestReadCB(std::bind(&ServicePortal::JrpcRequestReadCB, m_servicePortal,
         std::placeholders::_1, std::placeholders::_2));
+    m_netDock->SetRESTfulRequestCB(std::bind(&ServicePortal::RestfulRequestCB, m_servicePortal,
+        std::placeholders::_1, std::placeholders::_2,
+        std::placeholders::_3));
     m_netDock->OpenHub();
     m_netDock->OpenHttpJsonRpcServer();
+    m_netDock->OpenHttpRESTfulServer();
 
     // 启动通用 HTTP 服务器（端口 80）
     // exe 在 $(SolutionDir)$(Configuration)\ 下，www/ 在 $(SolutionDir) 下，需上翻一层

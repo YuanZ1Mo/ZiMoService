@@ -1,36 +1,44 @@
-#ifndef HTTP_SERVER_MODULE_FILE_HUB_H
-#define HTTP_SERVER_MODULE_FILE_HUB_H
+#ifndef HTTP_MODULE_FILE_HUB_H
+#define HTTP_MODULE_FILE_HUB_H
 
 #include "zm_json.h"
-#include "zm_net_http_router.h"
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
-class HttpServerManager;
+class ZmHttpdTask;
 
 /**
  * @brief 文件中心模块
  *
- * 管理 www/module_file_hub/ 下的文件/文件夹，提供列表、搜索、创建、
- * 删除、密码验证等功能。每个文件目录可配置独立的用户名/密码（HMAC 哈希存储）。
+ * 管理 www/db/filehub/ 下的文件/文件夹，提供列表、搜索、创建、
+ * 删除、密码验证等功能，以及通用文件上传下载能力。
+ * 每个文件目录可配置独立的用户名/密码（HMAC 哈希存储）。
+ *
+ * 所有功能由 业务层 调用。
  */
-class HttpServerModuleFileHub
+class HttpModuleFileHub
 {
 public:
 	/**
 	 * @brief 构造文件中心模块
 	 * @param wwwRoot www 根目录绝对路径
 	 */
-	explicit HttpServerModuleFileHub(const std::string& wwwRoot);
-	~HttpServerModuleFileHub();
+	explicit HttpModuleFileHub(const std::string& wwwRoot);
+	~HttpModuleFileHub();
 
-	/**
-	 * @brief 注册文件中心 HTTP 路由（/filehub/download/*、/filehub/upload/*）
-	 * @param router  HTTP 路由器
-	 * @param httpMgr HTTP 服务器管理器（用于通用的 SendFile / ReceiveFile）
-	 */
-	void RegisterHttpRoutes(ZmHttpRouter& router, HttpServerManager* httpMgr);
+	// ========================================================================
+	// 通用文件下载 / 上传
+	// ========================================================================
+
+	int SendFile(ZmHttpdTask* task, const std::string& physicalPath);
+	int ReceiveFile(ZmHttpdTask* task, const std::string& physicalPath,
+		const unsigned char* data, size_t dlen);
+
+	// ========================================================================
+	// 业务
+	// ========================================================================
 
 	/**
 	 * @brief 列出指定路径下的一层文件和文件夹
@@ -58,7 +66,7 @@ public:
 		const std::string& username = "", const std::string& password = "");
 
 	/**
-	 * @brief 删除文件或空文件夹
+	 * @brief 删除文件或目录
 	 * @param relativePath 要删除的文件/文件夹的相对路径
 	 * @param username     用户名（有密码保护的目录需要）
 	 * @param password     密码（有密码保护的目录需要）
@@ -126,8 +134,16 @@ private:
 	void SearchRecursive(const std::string& absDir, const std::string& relativeDir,
 		const std::string& keyword, std::vector<std::string>& results);
 
+	// ========================================================================
+	// 文件下载 / 上传 内部辅助
+	// ========================================================================
+
+	static std::string ExtractFilename(const std::string& uri);
+	int ServeFileWithRange(ZmHttpdTask* task, const std::string& path,
+		const std::string& rangeStr, int64_t fileSize);
+
 private:
 	std::string m_wwwRoot;  ///< www 根目录绝对路径
 };
 
-#endif // HTTP_SERVER_MODULE_FILE_HUB_H
+#endif // HTTP_MODULE_FILE_HUB_H

@@ -2,6 +2,7 @@
 
 #include "hub_proxy_manager.h"
 #include "http_jsonrpc_manager.h"
+#include "http_restful_manager.h"
 #include "http_server_manager.h"
 #include "broadcast_manager.h"
 
@@ -13,6 +14,7 @@
 NetDock::NetDock()
     : m_hubProxyMgr(nullptr)
     , m_httpJsonRpcMgr(nullptr)
+    , m_httpRestfulMgr(nullptr)
     , m_httpServerMgr(nullptr)
     , m_broadcastMgr(nullptr)
     , m_unInited(false)
@@ -41,6 +43,7 @@ void NetDock::UnInit()
 
     // ② HTTP JRPC 软关闭（停 HTTP Server + 线程池，pair 池保留给在飞请求）
     CloseHttpJsonRpcServer();
+    CloseHttpRESTfulServer();
 
     // ③ Hub 关闭：StopThreadPool → 清所有 TAP（pair1 全部 EOF → pair 归还池）
     //    → beforeLoopStop 回调销毁 pair 池 → 停 event loop
@@ -52,6 +55,12 @@ void NetDock::UnInit()
         delete m_httpJsonRpcMgr;
         m_httpJsonRpcMgr = nullptr;
     }
+
+    if (m_httpRestfulMgr)
+    {
+        delete m_httpRestfulMgr;
+        m_httpRestfulMgr = nullptr;
+    }
 }
 
 void NetDock::OpenHub()
@@ -59,7 +68,7 @@ void NetDock::OpenHub()
     if (!m_hubProxyMgr)
     {
         m_hubProxyMgr = new HubProxyManager();
-        m_hubProxyMgr->Open(m_jrpcRequestReadCB);
+        m_hubProxyMgr->Open(m_jrpcRequestReadCB, m_restfulRequestCB);
     }
 }
 
@@ -71,6 +80,8 @@ void NetDock::CloseHub()
         m_hubProxyMgr->Close([this]() {
             if (m_httpJsonRpcMgr)
                 m_httpJsonRpcMgr->ShutdownPairPool();
+            if (m_httpRestfulMgr)
+                m_httpRestfulMgr->ShutdownPairPool();
         });
         delete m_hubProxyMgr;
         m_hubProxyMgr = nullptr;
@@ -106,6 +117,39 @@ void NetDock::CloseHttpJsonRpcServer()
     {
         m_httpJsonRpcMgr->Close();
     }
+}
+
+void NetDock::OpenHttpRESTfulServer()
+{
+    if (!m_hubProxyMgr)
+    {
+        DEFAULT_LOG_ERROR("OpenHttpRESTfulServer failed: Hub not started");
+        return;
+    }
+
+    if (!m_httpRestfulMgr)
+    {
+        m_httpRestfulMgr = new HttpRestfulManager();
+        if (!m_httpRestfulMgr->Open())
+        {
+            DEFAULT_LOG_ERROR("OpenHttpRESTfulServer failed: HttpRestfulManager::Open() returned false");
+            delete m_httpRestfulMgr;
+            m_httpRestfulMgr = nullptr;
+        }
+    }
+}
+
+void NetDock::CloseHttpRESTfulServer()
+{
+    if (m_httpRestfulMgr)
+    {
+        m_httpRestfulMgr->Close();
+    }
+}
+
+bool NetDock::IsRESTfulHttpOpen() const
+{
+    return m_httpRestfulMgr && m_httpRestfulMgr->IsOpen();
 }
 
 void NetDock::OpenHttpServer(const char* wwwRoot)
@@ -174,6 +218,11 @@ void NetDock::CloseSocks5Server()
 void NetDock::SetJrpcRequestReadCB(TapDelegateJrpcRequestReadCB cb)
 {
     m_jrpcRequestReadCB = cb;
+}
+
+void NetDock::SetRESTfulRequestCB(TapDelegateRESTfulRequestCB cb)
+{
+    m_restfulRequestCB = cb;
 }
 
 void NetDock::OpenBroadcastServer(uint16_t port)

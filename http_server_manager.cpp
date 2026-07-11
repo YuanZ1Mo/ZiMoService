@@ -1,5 +1,5 @@
 #include "http_server_manager.h"
-#include "http_server_module_file_hub.h"
+#include "http_module_file_hub.h"
 
 #include "zm_net_http.h"
 #include "zm_net_runloop.h"
@@ -8,12 +8,9 @@
 #include "zm_util_sys.h"
 #include "zm_util_str.h"
 
-#include <event2/buffer.h>
-
 #include <algorithm>
-#include <cstring>
-#include <io.h>
 #include <fcntl.h>
+#include <io.h>
 #include <share.h>
 
 HttpServerManager::HttpServerManager()
@@ -70,9 +67,8 @@ bool HttpServerManager::Open(const char* wwwRoot)
 	DEFAULT_LOG_INFO("HTTP 服务器已启动，端口:80，wwwRoot:{}",
 		m_wwwRoot.empty() ? "(无)" : m_wwwRoot);
 
-	// 创建文件中心模块并注册路由
-	m_fileHub = new HttpServerModuleFileHub(m_wwwRoot);
-	m_fileHub->RegisterHttpRoutes(m_router, this);
+	// 创建文件中心模块（功能通过 RESTful API 暴露）
+	m_fileHub = new HttpModuleFileHub(m_wwwRoot);
 
 	return true;
 }
@@ -125,7 +121,6 @@ void HttpServerManager::SetupRouter()
 			std::string uri(task->Uri() ? task->Uri() : "/");
 			return ServeStaticFile(task, uri);
 		});
-		// 文件中心路由由 HttpServerModuleFileHub 外部注册
 	}
 }
 
@@ -175,7 +170,7 @@ int HttpServerManager::ServeStaticFile(ZmHttpdTask* task, const std::string& uri
 		int64_t fileSize = _filelengthi64(fd);
 		if (fileSize <= 0) { _close(fd); return false; }
 
-		task->PutReplyHeader("Content-type", GetMimeType(path));
+		task->PutReplyHeader("Content-type", ZmHttpUtil::GetMimeType(path));
 
 		if (task->SetReplyFile(fd, 0, fileSize) != 0) { _close(fd); return false; }
 		return true;
@@ -188,183 +183,4 @@ int HttpServerManager::ServeStaticFile(ZmHttpdTask* task, const std::string& uri
 	if (normPath != notFoundPath && trySendFile(notFoundPath)) return ZM_HTTP_STATUS_CODE_NOT_FOUND;
 
 	return ZM_HTTP_STATUS_CODE_NOT_FOUND;
-}
-
-// ============================================================================
-// 通用文件下载 / 上传
-// ============================================================================
-
-std::string HttpServerManager::ExtractFilename(const std::string& uri)
-{
-	std::string path = uri;
-	size_t qpos = path.find('?');
-	if (qpos != std::string::npos) path = path.substr(0, qpos);
-	size_t slash = path.find_last_of("/\\");
-	if (slash != std::string::npos) return path.substr(slash + 1);
-	return path;
-}
-
-int HttpServerManager::ServeFileWithRange(ZmHttpdTask* task, const std::string& path,
-	const std::string& rangeStr, int64_t fileSize)
-{
-	if (rangeStr.size() < 7 || _strnicmp(rangeStr.c_str(), "bytes=", 6) != 0)
-		return -1;
-
-	std::string rangeVal = rangeStr.substr(6);
-	if (rangeVal.find(',') != std::string::npos) return -1;
-
-	size_t dashPos = rangeVal.find('-');
-	if (dashPos == std::string::npos) return -1;
-
-	int64_t start = 0, end = fileSize - 1;
-	std::string startStr = rangeVal.substr(0, dashPos);
-	std::string endStr = rangeVal.substr(dashPos + 1);
-
-	if (startStr.empty() && !endStr.empty()) {
-		int64_t suffixLen = std::stoll(endStr);
-		if (suffixLen >= fileSize) start = 0;
-		else start = fileSize - suffixLen;
-		end = fileSize - 1;
-	} else if (!startStr.empty() && endStr.empty()) {
-		start = std::stoll(startStr);
-		end = fileSize - 1;
-	} else {
-		start = std::stoll(startStr);
-		end = std::stoll(endStr);
-	}
-
-	if (start < 0 || end >= fileSize || start > end) {
-		task->SetReply(ZM_HTTP_STATUS_CODE_RANGE_NOT_SATISFIABLE, "Range Not Satisfiable");
-		task->PutReplyHeader("Content-Range", ("bytes */" + std::to_string(fileSize)).c_str());
-		return ZM_HTTP_STATUS_CODE_RANGE_NOT_SATISFIABLE;
-	}
-
-	int64_t rangeLength = end - start + 1;
-	int fd = -1;
-	if (_wsopen_s(&fd, ZmString::UTF8_To_Unicode(path).c_str(), _O_RDONLY | _O_BINARY, _SH_DENYNO, 0) != 0 || fd == -1)
-		return ZM_HTTP_STATUS_CODE_NOT_FOUND;
-
-	task->PutReplyHeader("Content-type", GetMimeType(path));
-	task->PutReplyHeader("Content-Disposition",
-		("attachment; filename=\"" + ExtractFilename(path) + "\"").c_str());
-	task->PutReplyHeader("Accept-Ranges", "bytes");
-	task->PutReplyHeader("Content-Range",
-		("bytes " + std::to_string(start) + "-" + std::to_string(end) + "/" + std::to_string(fileSize)).c_str());
-	task->SetReply(ZM_HTTP_STATUS_CODE_PARTIAL_CONTENT, "Partial Content");
-
-	if (task->SetReplyFile(fd, start, rangeLength) != 0) { _close(fd); return ZM_HTTP_STATUS_CODE_INTERNAL_ERROR; }
-	return ZM_HTTP_STATUS_CODE_PARTIAL_CONTENT;
-}
-
-int HttpServerManager::SendFile(ZmHttpdTask* task, const std::string& physicalPath)
-{
-	int fd = -1;
-	if (_wsopen_s(&fd, ZmString::UTF8_To_Unicode(physicalPath).c_str(), _O_RDONLY | _O_BINARY, _SH_DENYNO, 0) != 0 || fd == -1)
-		return ZM_HTTP_STATUS_CODE_NOT_FOUND;
-
-	int64_t fileSize = _filelengthi64(fd);
-	if (fileSize <= 0) { _close(fd); return ZM_HTTP_STATUS_CODE_NOT_FOUND; }
-
-	const char* rangeHeader = task->GetRequestHeader("Range");
-	if (rangeHeader && rangeHeader[0]) {
-		_close(fd);
-		int rangeResult = ServeFileWithRange(task, physicalPath, rangeHeader, fileSize);
-		if (rangeResult > 0) return rangeResult;
-		if (_wsopen_s(&fd, ZmString::UTF8_To_Unicode(physicalPath).c_str(), _O_RDONLY | _O_BINARY, _SH_DENYNO, 0) != 0 || fd == -1)
-			return ZM_HTTP_STATUS_CODE_NOT_FOUND;
-	}
-
-	task->PutReplyHeader("Content-type", GetMimeType(physicalPath));
-	task->PutReplyHeader("Content-Disposition",
-		("attachment; filename=\"" + ExtractFilename(physicalPath) + "\"").c_str());
-	task->PutReplyHeader("Accept-Ranges", "bytes");
-
-	if (task->SetReplyFile(fd, 0, fileSize) != 0) { _close(fd); return ZM_HTTP_STATUS_CODE_INTERNAL_ERROR; }
-	return ZM_HTTP_STATUS_CODE_OK;
-}
-
-int HttpServerManager::ReceiveFile(ZmHttpdTask* task, const std::string& physicalPath,
-	const BYTE* data, size_t dlen)
-{
-	if (!data || dlen == 0) return ZM_HTTP_STATUS_CODE_BAD_REQUEST;
-
-	// 确保父目录存在
-	std::string dirPath = physicalPath;
-	size_t lastSlash = dirPath.find_last_of("\\/");
-	if (lastSlash != std::string::npos) {
-		dirPath = dirPath.substr(0, lastSlash);
-		std::wstring wDir = ZmString::UTF8_To_Unicode(dirPath);
-		if (!CreateDirectoryW(wDir.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS) {
-			DEFAULT_LOG_ERROR("创建上传目录失败: {}", dirPath);
-			return ZM_HTTP_STATUS_CODE_INTERNAL_ERROR;
-		}
-	}
-
-	std::wstring wPath = ZmString::UTF8_To_Unicode(physicalPath);
-	HANDLE hFile = CreateFileW(wPath.c_str(), GENERIC_READ | GENERIC_WRITE,
-		0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-	if (hFile == INVALID_HANDLE_VALUE) {
-		DEFAULT_LOG_ERROR("创建上传文件失败: {}", physicalPath);
-		return ZM_HTTP_STATUS_CODE_INTERNAL_ERROR;
-	}
-
-	LARGE_INTEGER liSize;
-	liSize.QuadPart = (LONGLONG)dlen;
-	if (!SetFilePointerEx(hFile, liSize, NULL, FILE_BEGIN) || !SetEndOfFile(hFile)) {
-		CloseHandle(hFile); return ZM_HTTP_STATUS_CODE_INTERNAL_ERROR;
-	}
-
-	HANDLE hMapping = CreateFileMappingW(hFile, NULL, PAGE_READWRITE,
-		liSize.HighPart, liSize.LowPart, NULL);
-	if (!hMapping) { CloseHandle(hFile); return ZM_HTTP_STATUS_CODE_INTERNAL_ERROR; }
-
-	BYTE* mappedView = (BYTE*)MapViewOfFile(hMapping, FILE_MAP_WRITE, 0, 0, dlen);
-	if (!mappedView) { CloseHandle(hMapping); CloseHandle(hFile); return ZM_HTTP_STATUS_CODE_INTERNAL_ERROR; }
-
-	struct evbuffer* inbuf = task->GetInputBuffer();
-	if (inbuf && evbuffer_get_length(inbuf) >= dlen) {
-		evbuffer_copyout(inbuf, mappedView, dlen);
-		evbuffer_drain(inbuf, dlen);
-	} else {
-		memcpy(mappedView, data, dlen);
-	}
-
-	UnmapViewOfFile(mappedView);
-	CloseHandle(hMapping);
-	CloseHandle(hFile);
-
-	DEFAULT_LOG_INFO("文件上传成功: {} ({} bytes)", physicalPath, dlen);
-	return ZM_HTTP_STATUS_CODE_CREATED;
-}
-
-// ============================================================================
-// 工具函数
-// ============================================================================
-
-const char* HttpServerManager::GetMimeType(const std::string& path)
-{
-	size_t dot = path.find_last_of('.');
-	if (dot == std::string::npos) return "application/octet-stream";
-
-	std::string ext = path.substr(dot);
-	for (auto& c : ext) c = (char)tolower((unsigned char)c);
-
-	if (ext == ".html" || ext == ".htm") return "text/html; charset=utf-8";
-	if (ext == ".css")                    return "text/css; charset=utf-8";
-	if (ext == ".js")                     return "application/javascript; charset=utf-8";
-	if (ext == ".json")                   return "application/json; charset=utf-8";
-	if (ext == ".png")                    return "image/png";
-	if (ext == ".jpg" || ext == ".jpeg")  return "image/jpeg";
-	if (ext == ".gif")                    return "image/gif";
-	if (ext == ".svg")                    return "image/svg+xml";
-	if (ext == ".ico")                    return "image/x-icon";
-	if (ext == ".woff")                   return "font/woff";
-	if (ext == ".woff2")                  return "font/woff2";
-	if (ext == ".ttf")                    return "font/ttf";
-	if (ext == ".txt")                    return "text/plain; charset=utf-8";
-	if (ext == ".xml")                    return "application/xml; charset=utf-8";
-	if (ext == ".pdf")                    return "application/pdf";
-	if (ext == ".zip")                    return "application/zip";
-
-	return "application/octet-stream";
 }

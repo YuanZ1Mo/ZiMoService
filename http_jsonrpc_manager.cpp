@@ -65,7 +65,7 @@ bool HttpJsonRpcManager::Open()
     if (m_httpServerJRPC == nullptr)
     {
         m_httpServerJRPC = new ZmJsonRpcServer(m_evLoopHttpServerJRPC->GetEventBase(),
-            ZM_HTTPSERVER_ROOT_URI, ZM_JSONRPC_SERVER_PORT);
+            ZM_HTTP_JRPC_SERVER_ROOT_URI, ZM_JSONRPC_SERVER_PORT);
         if (!m_httpServerJRPC->Init())
         {
             DEFAULT_LOG_ERROR("JRPC HTTP 服务器初始化失败");
@@ -194,7 +194,7 @@ void HttpJsonRpcManager::OnJsonRpcCBAsync(ZmHttpdTask* task, const ZMJSON& reque
         addr4->sin_port = htons((uint16_t)task->Port());
     }
 
-    if (!ZmTapContextEventHandler::OnPairAcceptBev("HubProxy", handle->bev1, (struct sockaddr*)&srcAddr, handle))
+    if (!ZmTapContextEventHandler::OnPairAcceptBev("HubProxy", handle->bev1, (struct sockaddr*)&srcAddr, handle, task))
     {
         DEFAULT_LOG_ERROR("OnJsonRpcAsync: OnPairAcceptBev failed");
         handle->ReleasePair();

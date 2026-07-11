@@ -10,9 +10,11 @@
 HubProxyManager::HubProxyManager()
     : m_tapContext(nullptr)
     , m_tapDelegateJRPC(nullptr)
+    , m_tapDelegateRESTful(nullptr)
     , m_tapHubProxy(nullptr)
     , m_evLoopHub(nullptr)
     , m_evLoopJRPC(nullptr)
+    , m_evLoopRESTful(nullptr)
 {
 }
 
@@ -21,7 +23,7 @@ HubProxyManager::~HubProxyManager()
     Close();
 }
 
-bool HubProxyManager::Open(TapDelegateJrpcRequestReadCB jrpcCB)
+bool HubProxyManager::Open(TapDelegateJrpcRequestReadCB jrpcCB, TapDelegateRESTfulRequestCB restCB)
 {
 
     if (nullptr == m_tapContext)
@@ -64,11 +66,35 @@ bool HubProxyManager::Open(TapDelegateJrpcRequestReadCB jrpcCB)
         m_tapDelegateJRPC->SetJrpcRequestReadCB(jrpcCB);
     }
 
+    // 2.5 创建 RESTful 协议委托处理器
+    if (nullptr == m_tapDelegateRESTful)
+    {
+        if (!m_evLoopRESTful)
+        {
+            m_evLoopRESTful = new ZmEvBaseRunLoop("DelegateRESTfulLoop");
+            if (!m_evLoopRESTful->Loop())
+            {
+                DEFAULT_LOG_ERROR("HubProxyManager::Open failed: RESTful event loop start failed");
+                delete m_evLoopRESTful;
+                m_evLoopRESTful = nullptr;
+                return false;
+            }
+        }
+
+        m_tapDelegateRESTful = new ZmTapDelegateRESTful(m_evLoopRESTful->GetEventBase());
+        m_tapDelegateRESTful->StartTapDelegate(ZM_DELEGATE_MODE_PROXY_INTERNAL_RESTFUL);
+        m_tapDelegateRESTful->SetEvDns(m_evLoopRESTful->GetEventDnsBase());
+        if (restCB)
+            m_tapDelegateRESTful->SetRESTfulRequestCB(restCB);
+    }
+
     // 3. 创建 TAP 上下文池和 Hub 代理（共享路由层）
     if (nullptr == m_tapHubProxy)
     {
         m_tapHubProxy = new ZmTapHubProxy(m_evLoopHub->GetEventBase());
         m_tapHubProxy->SetJrpcDelegate(m_tapDelegateJRPC);
+        if (m_tapDelegateRESTful)
+            m_tapHubProxy->SetRESTfulDelegate(m_tapDelegateRESTful);
         m_tapHubProxy->SetEvDns(m_evLoopHub->GetEventDnsBase());
         m_tapHubProxy->StartTapDelegate(ZM_DELEGATE_MODE_PROXY_INTERNAL_HUB);
         //m_hubSocks5Port = m_tapHubProxy->AddListenPort(ZM_SOCKS5_SERVER_PORT);
@@ -96,6 +122,11 @@ void HubProxyManager::Close(std::function<void()> beforeLoopStop)
         m_tapDelegateJRPC->StopThreadPool();
     }
 
+    if (m_tapDelegateRESTful)
+    {
+        m_tapDelegateRESTful->StopThreadPool();
+    }
+
     if (m_tapContext)
     {
         m_tapContext->Clear();
@@ -115,6 +146,13 @@ void HubProxyManager::Close(std::function<void()> beforeLoopStop)
         m_tapDelegateJRPC->StopTapDelegate();
         delete m_tapDelegateJRPC;
         m_tapDelegateJRPC = nullptr;
+    }
+
+    if (m_tapDelegateRESTful)
+    {
+        m_tapDelegateRESTful->StopTapDelegate();
+        delete m_tapDelegateRESTful;
+        m_tapDelegateRESTful = nullptr;
     }
 
     m_hubSocks5Port = 0;
@@ -138,5 +176,12 @@ void HubProxyManager::Close(std::function<void()> beforeLoopStop)
         m_evLoopJRPC->Stop();
         delete m_evLoopJRPC;
         m_evLoopJRPC = nullptr;
+    }
+
+    if (m_evLoopRESTful)
+    {
+        m_evLoopRESTful->Stop();
+        delete m_evLoopRESTful;
+        m_evLoopRESTful = nullptr;
     }
 }

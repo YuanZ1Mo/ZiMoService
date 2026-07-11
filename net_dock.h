@@ -4,9 +4,14 @@
 #include <cstdint>
 #include <functional>
 
+#include "zm_json.h"
+#include "zm_util_str.h"
+
 // 前向声明（头文件中仅通过指针/引用使用）
 class HubProxyManager;
 class HttpJsonRpcManager;
+class HttpRestfulManager;
+class ZmTapDelegateRESTful;
 class HttpServerManager;
 class BroadcastManager;
 class ZmHttpRouter;
@@ -15,6 +20,7 @@ struct ZM_TAP_CTX;
 // TapDelegateJrpcRequestReadCB using 别名
 // （原始定义位于 zm_net_tap_jrpc.h，此处复制以避免拉入完整 zm_net_tap.h 链）
 using TapDelegateJrpcRequestReadCB = std::function<void(struct ZM_TAP_CTX*, const char*)>;
+using TapDelegateRESTfulRequestCB = std::function<void(struct ZM_TAP_CTX*, const BYTE*, size_t)>;
 
 /**
  * @brief 网络层生命周期编排者
@@ -78,6 +84,11 @@ public:
     /** @brief 停止 HTTP JSON-RPC 前端（内部先关通道再 join Worker） */
     void CloseHttpJsonRpcServer();
 
+    /** @brief 启动 HTTP RESTful 前端（端口独立，依赖 Hub 已启动） */
+    void OpenHttpRESTfulServer();
+    /** @brief 停止 HTTP RESTful 前端 */
+    void CloseHttpRESTfulServer();
+
     /**
      * @brief 启动通用 HTTP 服务器（端口 80，不依赖 Hub/JRPC）
      * @param wwwRoot 静态文件根目录路径（绝对路径），为空不启用静态文件
@@ -118,12 +129,17 @@ public:
      */
     HttpServerManager* GetHttpServerManager();
 
+    /** @brief 获取 RESTful HTTP 管理器指针 */
+    HttpRestfulManager* GetHttpRestfulManager() { return m_httpRestfulMgr; }
+
     // --- 状态查询 ---
 
     /** @brief HTTP 服务器是否运行中 */
     bool IsHttpOpen() const;
     /** @brief JRPC HTTP 服务器是否运行中 */
     bool IsJrpcHttpOpen() const;
+    /** @brief RESTful HTTP 服务器是否运行中 */
+    bool IsRESTfulHttpOpen() const;
     /** @brief Hub 路由层是否运行中 */
     bool IsHubOpen() const;
     /** @brief JRPC Proxy delegate 是否运行中 */
@@ -137,14 +153,17 @@ public:
      * @note 需在 OpenHub 之前调用
      */
     void SetJrpcRequestReadCB(TapDelegateJrpcRequestReadCB cb);
+    void SetRESTfulRequestCB(TapDelegateRESTfulRequestCB cb);
 
 private:
     // --- 成员变量 ---
     HubProxyManager*       m_hubProxyMgr;         ///< TAP Hub 路由层（多协议前端共享，内部持有 ZmEvBaseRunLoop）
     HttpJsonRpcManager*    m_httpJsonRpcMgr;      ///< HTTP JSON-RPC 前端（含内部请求通道）
+    HttpRestfulManager*    m_httpRestfulMgr;      ///< HTTP RESTful 前端（含内部 pair 池 + delegate）
     HttpServerManager*     m_httpServerMgr;       ///< 通用 HTTP 前端（端口 80）
     BroadcastManager*      m_broadcastMgr;        ///< 广播服务端管理器
-    TapDelegateJrpcRequestReadCB m_jrpcRequestReadCB;  ///< JRPC 外部回调，OpenHub 时注入
+    TapDelegateJrpcRequestReadCB m_jrpcRequestReadCB;   ///< JRPC 回调
+    TapDelegateRESTfulRequestCB  m_restfulRequestCB;    ///< RESTful 回调
     bool                   m_unInited;            ///< 防止 UnInit 重复执行
 };
 

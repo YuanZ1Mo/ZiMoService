@@ -23,7 +23,7 @@ service_main.cpp                     # 入口：install | uninstall | debug
             ├─ HubProxyManager       # TAP Hub 路由层（★ 内部持有 EvBaseRunLoop）
             ├─ HttpServerManager     # 通用 HTTP 服务器 (端口 80)
             │     ├─ ZmHttpRouter        # 路由中间件链
-            │     └─ HttpServerModuleFileHub  # 文件中心模块（内部持有，自注册路由）
+            │     └─ HttpModuleFileHub    # 文件中心模块（内部持有，通过 RESTful API 暴露）
             ├─ HttpJsonRpcManager    # HTTP JSON-RPC 前端 (端口 39440)
             └─ BroadcastManager      # 消息广播服务端 (端口 39640)
 ```
@@ -85,9 +85,6 @@ ServicePortal::RegisterHttpRoutes()        # 页面入口路由
   ├── GET /control   → control.html
   └── GET /filehub   → file_hub.html
 
-HttpServerModuleFileHub::RegisterHttpRoutes()  # 文件中心业务路由
-  ├── ANY /file_hub/download/* → SendFile    # 通用下载（Range 支持）
-  └── POST /file_hub/upload/*  → ReceiveFile # 通用上传（mmap 零拷贝）
 
 HttpServerManager 暴露通用能力：
   SendFile(task, physicalPath)              # 零拷贝下载
@@ -160,7 +157,7 @@ HttpServerManager 暴露通用能力：
 - **中文路径** — 全链路 Wide API（`CreateFileW`/`FindFirstFileW`），`ZmString::UTF8_To_Unicode`/`Unicode_To_UTF8` 转换
 - **线程模型** — 四条独立事件循环 + 三个线程池，跨线程通过 `event_active` + SPSC 队列通信
 - **路由中间件** — Express 风格，`(task, next)` 管道 + 前缀树匹配
-- **架构分离** — 通用层（HttpServerManager）与业务层（HttpServerModuleFileHub）分离，文件中心自注册路由
+- **架构分离** — 通用层（HttpServerManager）与业务层（HttpModuleFileHub）分离，文件中心通过 RESTful API 暴露
 
 ## 构建
 

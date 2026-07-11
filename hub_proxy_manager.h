@@ -3,6 +3,7 @@
 
 #include "zm_net_tap.h"
 #include "zm_net_tap_jrpc.h"
+#include "zm_net_tap_rest.h"
 #include "zm_net_runloop.h"
 
 // 前向声明（头文件中仅通过指针使用）
@@ -33,7 +34,10 @@ public:
      * @param jrpcCB  JRPC 请求到达时的外部回调
      * @return true 初始化成功
      */
-    bool Open(TapDelegateJrpcRequestReadCB jrpcCB);
+    bool Open(TapDelegateJrpcRequestReadCB jrpcCB, TapDelegateRESTfulRequestCB restCB = nullptr);
+
+    /** @brief 获取 RESTful delegate 指针（供业务层注册回调 / HttpRestfulManager 引用） */
+    ZmTapDelegateRESTful* GetRESTfulDelegate() { return m_tapDelegateRESTful; }
 
     /**
      * @brief 关闭路由层，逆序释放所有 TAP 组件和事件循环
@@ -50,17 +54,21 @@ public:
     bool IsHubOpen() const { return m_tapHubProxy != nullptr && IsHubLooped(); }
     /** @brief 查询 JRPC Delegate 是否已启动 */
     bool IsJrpcDelegateOpen() const { return m_tapDelegateJRPC != nullptr && IsJrpcLooped(); }
+    bool IsRESTfulDelegateOpen() const { return m_tapDelegateRESTful != nullptr && IsRESTfulLooped(); }
+    bool IsRESTfulLooped() const { return m_evLoopRESTful && m_evLoopRESTful->IsLooped(); }
     /** @brief 查询事件循环是否就绪（可用于跨线程调度前的检查） */
     bool IsHubLooped() const { return m_evLoopHub && m_evLoopHub->IsLooped(); }
     bool IsJrpcLooped() const { return m_evLoopJRPC && m_evLoopJRPC->IsLooped(); }
 
 private:
     ZmTapContext*      m_tapContext;       ///< TAP 上下文池（所有前端共享）
-    ZmTapDelegateJRPC* m_tapDelegateJRPC;  ///< JRPC 协议委托处理器
-    ZmTapHubProxy*     m_tapHubProxy;      ///< Hub 代理（共享消息路由）
+    ZmTapDelegateJRPC*  m_tapDelegateJRPC;    ///< JRPC 协议委托处理器
+    ZmTapDelegateRESTful* m_tapDelegateRESTful; ///< RESTful 协议委托处理器
+    ZmTapHubProxy*      m_tapHubProxy;        ///< Hub 代理（共享消息路由）
     uint16_t           m_hubSocks5Port;    ///< Hub 代理监听端口，用于转发 socks5 代理
     ZmEvBaseRunLoop*   m_evLoopHub;        ///< libevent 事件循环线程（Hub 拥有所有权）
     ZmEvBaseRunLoop*   m_evLoopJRPC;       ///< libevent 事件循环线程（JRPC 拥有所有权）
+    ZmEvBaseRunLoop*   m_evLoopRESTful;    ///< libevent 事件循环线程（RESTful 拥有所有权）
 };
 
 #endif // HUB_PROXY_MANAGER_H

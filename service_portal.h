@@ -7,7 +7,7 @@
 
 class NetDock;
 class HttpServerManager;
-class HttpServerModuleFileHub;
+class HttpModuleFileHub;
 
 /**
  * @brief JRPC 请求处理门户，接收从 TAP 代理链转发来的 JRPC 请求并按 method 分发
@@ -34,6 +34,9 @@ public:
 public:
 	/** @brief TAP 链入口：JRPC 请求回调（在 JRPC delegate 线程池中执行） */
 	void JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData);
+
+	/** @brief TAP 链入口：REFTful 请求回调（在 REFTful delegate 线程池中执行） */
+	void RestfulRequestCB(ZM_TAP_CTX* tap, const BYTE* body, size_t body_len);
 
 private:
 	NetDock* m_netDock = nullptr;

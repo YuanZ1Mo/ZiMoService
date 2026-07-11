@@ -5,6 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ZiMo 服务中心</title>
 <link rel="stylesheet" href="/css/style.css">
+<style>
+  .sub-tabs { display:flex; gap:4px; margin-bottom:18px; }
+  .sub-tab { padding:6px 16px; border-radius:6px; font-size:13px; cursor:pointer; color:var(--fg3); background:var(--bg3); border:none; transition:all .15s; }
+  .sub-tab.active { color:var(--bg0); background:var(--ac); font-weight:600; }
+  .sub-tab:hover:not(.active) { color:var(--fg); }
+  .doc-method.JRPC { background:rgba(203,166,247,.15); color:#cba6f7; }
+  .doc-method.DELETE { background:rgba(243,139,168,.15); color:var(--err); }
+  .doc-method.PUT { background:rgba(249,226,175,.15); color:var(--warn); }
+  .rest-method-row { display:flex; gap:8px; align-items:center; }
+  .rest-method-row .sel { min-width:80px; }
+</style>
 </head>
 <body>
 <div id="app" v-cloak>
@@ -18,7 +29,7 @@
     <div class="nav-brand">⚡ ZiMo Service</div>
     <div class="nav-tabs">
       <a href="#/"      :class="{active: page==='home'}">📊 服务状态</a>
-      <a href="#/docs"  :class="{active: page==='docs'}">📚 文档</a>
+      <a href="#/docs"  :class="{active: page==='docs'}">📚 接口文档</a>
       <a href="#/test"  :class="{active: page==='test'}">🧪 接口测试</a>
       <a href="/filehub">📁 文件中心</a>
       <a href="#/about" :class="{active: page==='about'}">ℹ️ 关于</a>
@@ -29,7 +40,6 @@
   <main class="main">
     <!-- ==================== 服务状态 ==================== -->
     <section v-if="page==='home'">
-      <!-- 时钟 -->
       <div class="clock">{{ time }}</div>
       <div class="grid-3">
         <div class="scard" v-for="c in cards" :key="c.key">
@@ -41,52 +51,118 @@
       </div>
     </section>
 
-    <!-- ==================== 文档 ==================== -->
+    <!-- ==================== 接口文档 ==================== -->
     <section v-if="page==='docs'">
       <h2>📚 API 接口文档</h2>
-      <p class="muted">共 {{ routes.length }} 个接口 · 点击展开详情 · 支持一键复制和在线测试</p>
-      <div class="doc-card" v-for="(r,i) in routes" :key="i" :class="{open: r._open}">
-        <div class="doc-head" @click="r._open=!r._open">
-          <span class="doc-method POST">JRPC</span>
-          <span class="doc-path">{{ r.method }}</span>
-          <span class="doc-desc">{{ r.description }}</span>
-          <span class="doc-arrow">{{ r._open ? '▾' : '▸' }}</span>
-        </div>
-        <div class="doc-body" v-if="r._open">
-          <div class="doc-block">
-            <div class="doc-block-h">📤 请求 <button class="cp" @click.stop="copy(r.requestExample)">📋 复制</button></div>
-            <pre>{{ r.requestExample }}</pre>
-          </div>
-          <div class="doc-block">
-            <div class="doc-block-h">📥 响应 <button class="cp" @click.stop="copy(r.responseExample)">📋 复制</button></div>
-            <pre>{{ r.responseExample }}</pre>
-          </div>
-          <button class="btn" @click.stop="goTest(r)">▶ 在测试页打开</button>
-        </div>
+      <div class="sub-tabs">
+        <button class="sub-tab" :class="{active:docTab==='jrpc'}" @click="docTab='jrpc'">📡 JRPC 接口</button>
+        <button class="sub-tab" :class="{active:docTab==='rest'}" @click="docTab='rest'">🔌 RESTful 接口</button>
       </div>
+
+      <!-- JRPC 文档 -->
+      <template v-if="docTab==='jrpc'">
+        <p class="muted">共 {{ jrpcRoutes.length }} 个接口 · JSON-RPC 2.0 协议 · POST http://{{ host }}:39440/zimo/jrpc</p>
+        <div class="doc-card" v-for="(r,i) in jrpcRoutes" :key="'j'+i" :class="{open: r._open}">
+          <div class="doc-head" @click="r._open=!r._open">
+            <span class="doc-method JRPC">JRPC</span>
+            <span class="doc-path">{{ r.method }}</span>
+            <span class="doc-desc">{{ r.description }}</span>
+            <span class="doc-arrow">{{ r._open ? '▾' : '▸' }}</span>
+          </div>
+          <div class="doc-body" v-if="r._open">
+            <div class="doc-block">
+              <div class="doc-block-h">📤 请求 <button class="cp" @click.stop="copy(jrpcReqExample(r))">📋 复制</button></div>
+              <pre>{{ jrpcReqExample(r) }}</pre>
+            </div>
+            <div class="doc-block">
+              <div class="doc-block-h">📥 响应示例</div>
+              <pre>{{ r.responseExample }}</pre>
+            </div>
+            <button class="btn" @click.stop="goJrpcTest(r)">▶ 在测试页打开</button>
+          </div>
+        </div>
+      </template>
+
+      <!-- RESTful 文档 -->
+      <template v-if="docTab==='rest'">
+        <p class="muted">共 {{ restRoutes.length }} 个接口 · RESTful API · Base: http://{{ host }}:39441/zimo/api</p>
+        <div class="doc-card" v-for="(r,i) in restRoutes" :key="'r'+i" :class="{open: r._open}">
+          <div class="doc-head" @click="r._open=!r._open">
+            <span class="doc-method" :class="r.method">{{ r.method }}</span>
+            <span class="doc-path">{{ r.path }}</span>
+            <span class="doc-desc">{{ r.description }}</span>
+            <span class="doc-arrow">{{ r._open ? '▾' : '▸' }}</span>
+          </div>
+          <div class="doc-body" v-if="r._open">
+            <div class="doc-block">
+              <div class="doc-block-h">📤 请求示例 <button class="cp" @click.stop="copy(r.requestExample)">📋 复制</button></div>
+              <pre>{{ r.requestExample }}</pre>
+            </div>
+            <div class="doc-block">
+              <div class="doc-block-h">📥 响应示例 <button class="cp" @click.stop="copy(r.responseExample)">📋 复制</button></div>
+              <pre>{{ r.responseExample }}</pre>
+            </div>
+            <button class="btn" @click.stop="goRestTest(r)">▶ 在测试页打开</button>
+          </div>
+        </div>
+      </template>
     </section>
 
     <!-- ==================== 接口测试 ==================== -->
     <section v-if="page==='test'">
       <h2>🧪 接口测试</h2>
-      <div class="test-top">
-        <input v-model.number="testId" class="url-inp" placeholder="id" style="max-width:70px;" title="请求 ID">
-        <input v-model="testJsonrpc" class="url-inp" placeholder="jsonrpc" style="max-width:90px;" title="JSON-RPC 版本">
-        <input v-model="testMethod" class="url-inp" placeholder="方法名，如 getStatus" style="max-width:200px;">
-        <input v-model="testParams" class="url-inp" placeholder='参数 JSON，如 {"key":"value"}'>
-        <button class="btn" @click="doTest" :disabled="tLoading">{{ tLoading?'发送中...':'▶ 发送' }}</button>
-        <button class="btn btn2" @click="tResult='';testParams=''">🗑 清空</button>
+      <div class="sub-tabs">
+        <button class="sub-tab" :class="{active:testTab==='jrpc'}" @click="testTab='jrpc'">📡 JRPC 测试</button>
+        <button class="sub-tab" :class="{active:testTab==='rest'}" @click="testTab='rest'">🔌 RESTful 测试</button>
       </div>
-      <div class="test-panels">
-        <div class="test-panel">
-          <div class="test-panel-h">请求体 <button class="cp" @click="copy(requestPreview)">📋 复制</button></div>
-          <textarea v-model="requestPreview" readonly></textarea>
+
+      <!-- JRPC 测试 -->
+      <template v-if="testTab==='jrpc'">
+        <div class="test-top">
+          <input v-model.number="jrpcId" class="url-inp" placeholder="id" style="max-width:70px;" title="请求 ID">
+          <input v-model="jrpcJsonrpc" class="url-inp" placeholder="jsonrpc" style="max-width:90px;" title="JSON-RPC 版本">
+          <input v-model="jrpcMethod" class="url-inp" placeholder="方法名，如 getStatus" style="max-width:200px;">
+          <input v-model="jrpcParams" class="url-inp" placeholder='参数 JSON，如 {"key":"value"}'>
+          <button class="btn" @click="doJrpcTest" :disabled="jrpcLoading">{{ jrpcLoading?'发送中...':'▶ 发送' }}</button>
+          <button class="btn btn2" @click="jrpcResult='';jrpcParams=''">🗑 清空</button>
         </div>
-        <div class="test-panel">
-          <div class="test-panel-h">返回体 <button class="cp" @click="copy(tResult)">📋 复制</button></div>
-          <div class="test-result"><pre v-if="tResult">{{ tResult }}</pre><p class="muted" v-else>点击发送查看结果</p></div>
+        <div class="test-panels">
+          <div class="test-panel">
+            <div class="test-panel-h">请求体 <button class="cp" @click="copy(jrpcRequestPreview)">📋 复制</button></div>
+            <textarea :value="jrpcRequestPreview" readonly></textarea>
+          </div>
+          <div class="test-panel">
+            <div class="test-panel-h">返回体 <button class="cp" @click="copy(jrpcResult)">📋 复制</button></div>
+            <div class="test-result"><pre v-if="jrpcResult">{{ jrpcResult }}</pre><p class="muted" v-else>点击发送查看结果</p></div>
+          </div>
         </div>
-      </div>
+      </template>
+
+      <!-- RESTful 测试 -->
+      <template v-if="testTab==='rest'">
+        <div class="test-top">
+          <select v-model="restMethod" class="sel">
+            <option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option>
+          </select>
+          <input v-model="restPath" class="url-inp" placeholder="路径，如 /status" style="max-width:240px;">
+          <input v-model="restParams" class="url-inp" placeholder="Query 参数，如 key=val&k2=v2">
+          <button class="btn" @click="doRestTest" :disabled="restLoading">{{ restLoading?'发送中...':'▶ 发送' }}</button>
+          <button class="btn btn2" @click="restResult='';restParams='';restBody=''">🗑 清空</button>
+        </div>
+        <div v-if="restMethod==='POST'||restMethod==='PUT'" class="test-top">
+          <textarea v-model="restBody" class="url-inp" placeholder="请求体（二进制/文本），上传文件时填写文件内容" style="height:80px;resize:vertical;font-family:Consolas,monospace;"></textarea>
+        </div>
+        <div class="test-panels">
+          <div class="test-panel">
+            <div class="test-panel-h">请求预览 <button class="cp" @click="copy(restRequestPreview)">📋 复制</button></div>
+            <textarea :value="restRequestPreview" readonly></textarea>
+          </div>
+          <div class="test-panel">
+            <div class="test-panel-h">返回体 <button class="cp" @click="copy(restResult)">📋 复制</button></div>
+            <div class="test-result"><pre v-if="restResult">{{ restResult }}</pre><p class="muted" v-else>点击发送查看结果</p></div>
+          </div>
+        </div>
+      </template>
 
       <!-- JSON 格式化 -->
       <h3 style="margin-top:32px;">🔧 JSON 格式化</h3>
