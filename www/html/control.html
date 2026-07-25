@@ -61,7 +61,7 @@
 
       <!-- JRPC 文档 -->
       <template v-if="docTab==='jrpc'">
-        <p class="muted">共 {{ jrpcRoutes.length }} 个接口 · JSON-RPC 2.0 协议 · POST http://{{ host }}:39440/zimo/jrpc</p>
+        <p class="muted">共 {{ jrpcRoutes.length }} 个接口 · JSON-RPC 2.0 协议 · POST //{{ host }}:39440/zimo/jrpc</p>
         <div class="doc-card" v-for="(r,i) in jrpcRoutes" :key="'j'+i" :class="{open: r._open}">
           <div class="doc-head" @click="r._open=!r._open">
             <span class="doc-method JRPC">JRPC</span>
@@ -85,7 +85,7 @@
 
       <!-- RESTful 文档 -->
       <template v-if="docTab==='rest'">
-        <p class="muted">共 {{ restRoutes.length }} 个接口 · RESTful API · Base: http://{{ host }}:39441/zimo/api</p>
+        <p class="muted">共 {{ restRoutes.length }} 个接口 · RESTful API · Base: //{{ host }}:39441/zimo/api</p>
         <div class="doc-card" v-for="(r,i) in restRoutes" :key="'r'+i" :class="{open: r._open}">
           <div class="doc-head" @click="r._open=!r._open">
             <span class="doc-method" :class="r.method">{{ r.method }}</span>

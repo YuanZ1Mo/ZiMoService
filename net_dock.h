@@ -75,25 +75,38 @@ public:
 
     /**
      * @brief 启动 HTTP JSON-RPC 前端
+     * @param certFile  证书 PEM 文件路径，非空时启用 HTTPS；nullptr = HTTP
+     * @param keyFile   私钥 PEM 文件路径，非空时启用 HTTPS；nullptr = HTTP
      * @note 依赖 Hub 已启动，否则仅输出错误日志而不创建 HTTP 服务器
      *
      * HttpJsonRpcManager 内部自行创建 ZmNetRequestChannel 并将请求
      * 通过 bufferevent_pair 注入 Hub 代理链。
      */
-    void OpenHttpJsonRpcServer();
+    void OpenHttpJsonRpcServer(const char* certFile = nullptr,
+                               const char* keyFile = nullptr);
     /** @brief 停止 HTTP JSON-RPC 前端（内部先关通道再 join Worker） */
     void CloseHttpJsonRpcServer();
 
-    /** @brief 启动 HTTP RESTful 前端（端口独立，依赖 Hub 已启动） */
-    void OpenHttpRESTfulServer();
+    /**
+     * @brief 启动 HTTP RESTful 前端（端口独立，依赖 Hub 已启动）
+     * @param certFile  证书 PEM 文件路径，非空时启用 HTTPS；nullptr = HTTP
+     * @param keyFile   私钥 PEM 文件路径，非空时启用 HTTPS；nullptr = HTTP
+     */
+    void OpenHttpRESTfulServer(const char* certFile = nullptr,
+                               const char* keyFile = nullptr);
     /** @brief 停止 HTTP RESTful 前端 */
     void CloseHttpRESTfulServer();
 
     /**
-     * @brief 启动通用 HTTP 服务器（端口 80，不依赖 Hub/JRPC）
-     * @param wwwRoot 静态文件根目录路径（绝对路径），为空不启用静态文件
+     * @brief 启动通用 HTTP 服务器
+     * @param wwwRoot   静态文件根目录路径（绝对路径），为空不启用静态文件
+     * @param certFile  证书 PEM 文件路径，非空时启用 HTTPS；nullptr = HTTP
+     * @param keyFile   私钥 PEM 文件路径，非空时启用 HTTPS；nullptr = HTTP
+     * @note HTTPS 时：443 端口 + 80→443 重定向；HTTP 时：仅 80 端口
      */
-    void OpenHttpServer(const char* wwwRoot = nullptr);
+    void OpenHttpServer(const char* wwwRoot = nullptr,
+                        const char* certFile = nullptr,
+                        const char* keyFile = nullptr);
     /** @brief 停止通用 HTTP 服务器 */
     void CloseHttpServer();
 

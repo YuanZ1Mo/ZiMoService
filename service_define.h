@@ -8,6 +8,8 @@
 
 /** 通用 HTTP 服务器监听端口 */
 #define ZM_HTTP_SERVER_PORT     80
+/** 通用 HTTPS 服务器监听端口（启用 TLS 时使用，HTTP→HTTPS 重定向目标） */
+#define ZM_HTTPS_SERVER_PORT    443
 
 /** 本地 HTTP JRPC URI 路径 */
 #define ZM_HTTP_JRPC_SERVER_ROOT_URI	"/zimo/jrpc"

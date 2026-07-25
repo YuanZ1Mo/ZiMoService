@@ -37,11 +37,13 @@ public:
     ~HttpJsonRpcManager();
 
     /**
-     * @brief 初始化 HTTP JSON-RPC 服务器和内部 JRPC 请求通道
-     * @param hubMgr 已初始化的 Hub 路由层管理器
+     * @brief 初始化 HTTP/HTTPS JSON-RPC 服务器和内部 JRPC 请求通道
+     * @param certFile  证书 PEM 文件路径，非空时启用 HTTPS；nullptr = HTTP
+     * @param keyFile   私钥 PEM 文件路径，非空时启用 HTTPS；nullptr = HTTP
      * @return true 初始化成功
      */
-    bool Open();
+    bool Open(const char* certFile = nullptr,
+              const char* keyFile = nullptr);
 
     /**
      * @brief 关闭 HTTP 服务器和自有事件循环（软关闭，不销毁 pair 池）

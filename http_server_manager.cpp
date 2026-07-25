@@ -1,5 +1,6 @@
 #include "http_server_manager.h"
 #include "http_module_file_hub.h"
+#include "service_define.h"
 
 #include "zm_net_http.h"
 #include "zm_net_runloop.h"
@@ -30,7 +31,9 @@ bool HttpServerManager::IsOpen() const
 	return m_httpServer != nullptr && m_httpServer->IsOpen();
 }
 
-bool HttpServerManager::Open(const char* wwwRoot)
+bool HttpServerManager::Open(const char* wwwRoot,
+                              const char* certFile,
+                              const char* keyFile)
 {
 	if (m_httpServer)
 		return true;
@@ -39,6 +42,10 @@ bool HttpServerManager::Open(const char* wwwRoot)
 		m_wwwRoot = wwwRoot;
 
 	SetupRouter();
+
+	// 判断是否启用 HTTPS（certFile + keyFile 都非空时启用）
+	bool useHttps = (certFile && certFile[0] && keyFile && keyFile[0]);
+	uint16_t httpPort = useHttps ? ZM_HTTPS_SERVER_PORT : ZM_HTTP_SERVER_PORT;
 
 	m_evLoop = new ZmEvBaseRunLoop("HttpServerLoop");
 	if (!m_evLoop->Loop())
@@ -49,22 +56,28 @@ bool HttpServerManager::Open(const char* wwwRoot)
 		return false;
 	}
 
-	m_httpServer = new ZmHttpServer(m_evLoop->GetEventBase(), 80);
+	// redirect_from_port: HTTPS 模式下从端口 80 做 301 重定向（SSL_CTX 由 ZmHttpServer 内部管理）
+	uint16_t redirectPort = useHttps ? ZM_HTTP_SERVER_PORT : 0;
+	m_httpServer = new ZmHttpServer(m_evLoop->GetEventBase(), httpPort,
+	                                certFile, keyFile, redirectPort);
 	m_httpServer->SetRequestCallback(
 		std::bind(&HttpServerManager::OnHttpRequest, this,
 			std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
 	if (!m_httpServer->Init())
 	{
-		DEFAULT_LOG_ERROR("HTTP 服务器初始化失败，端口:80");
+		DEFAULT_LOG_ERROR("{} 服务器初始化失败，端口:{}",
+			useHttps ? "HTTPS" : "HTTP", httpPort);
 		delete m_httpServer;
 		m_httpServer = nullptr;
 		m_evLoop->Stop();
 		delete m_evLoop;
 		m_evLoop = nullptr;
+		// sslCtx 由 ZmHttpServer::Close() 释放，此处无需处理
 		return false;
 	}
 
-	DEFAULT_LOG_INFO("HTTP 服务器已启动，端口:80，wwwRoot:{}",
+	DEFAULT_LOG_INFO("{} 服务器已启动，端口:{}，wwwRoot:{}",
+		useHttps ? "HTTPS" : "HTTP", httpPort,
 		m_wwwRoot.empty() ? "(无)" : m_wwwRoot);
 
 	// 创建文件中心模块（功能通过 RESTful API 暴露）

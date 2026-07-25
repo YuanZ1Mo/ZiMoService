@@ -1,6 +1,6 @@
 const { createApp } = Vue;
 
-const REST_URL = `http://${window.location.hostname}:39441/zimo/api`;
+const REST_URL = `//${window.location.hostname}:39441/zimo/api`;
 
 /**
  * @brief RESTful API 调用（全部走 query string，不使用 JSON 请求体）

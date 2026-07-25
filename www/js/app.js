@@ -1,10 +1,10 @@
 const { createApp } = Vue;
 
 /** RESTful API 端点 */
-const REST_URL = `http://${window.location.hostname}:39441/zimo/api`;
+const REST_URL = `//${window.location.hostname}:39441/zimo/api`;
 
 /** JRPC API 端点 */
-const JRPC_URL = `http://${window.location.hostname}:39440/zimo/jrpc`;
+const JRPC_URL = `//${window.location.hostname}:39440/zimo/jrpc`;
 
 /**
  * @brief 调用 RESTful API

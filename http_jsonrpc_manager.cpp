@@ -28,7 +28,8 @@ HttpJsonRpcManager::~HttpJsonRpcManager()
     ShutdownPairPool();  // 兜底：若 NetDock 未通过 CloseHub 回调提前销毁
 }
 
-bool HttpJsonRpcManager::Open()
+bool HttpJsonRpcManager::Open(const char* certFile,
+                              const char* keyFile)
 {
     if (!m_evLoopPairPool)
     {
@@ -65,7 +66,7 @@ bool HttpJsonRpcManager::Open()
     if (m_httpServerJRPC == nullptr)
     {
         m_httpServerJRPC = new ZmJsonRpcServer(m_evLoopHttpServerJRPC->GetEventBase(),
-            ZM_HTTP_JRPC_SERVER_ROOT_URI, ZM_JSONRPC_SERVER_PORT);
+            ZM_HTTP_JRPC_SERVER_ROOT_URI, ZM_JSONRPC_SERVER_PORT, certFile, keyFile);
         if (!m_httpServerJRPC->Init())
         {
             DEFAULT_LOG_ERROR("JRPC HTTP 服务器初始化失败");

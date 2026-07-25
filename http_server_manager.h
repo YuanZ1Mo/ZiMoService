@@ -21,7 +21,17 @@ public:
 	HttpServerManager();
 	~HttpServerManager();
 
-	bool Open(const char* wwwRoot = nullptr);
+	/**
+	 * @brief 启动 HTTP/HTTPS 服务器
+	 * @param wwwRoot  静态文件根目录路径（绝对路径），为空不启用静态文件
+	 * @param certFile  证书 PEM 文件路径（如 "certs/server.crt"），非空时启用 HTTPS
+	 * @param keyFile   私钥 PEM 文件路径（如 "certs/server.key"），非空时启用 HTTPS
+	 * @note HTTPS 启用时：主服务器监听端口 443，同时在端口 80 创建 301 重定向服务器
+	 * @note HTTP 模式（certFile 为空）：仅监听端口 80，行为与之前完全一致
+	 */
+	bool Open(const char* wwwRoot = nullptr,
+	          const char* certFile = nullptr,
+	          const char* keyFile = nullptr);
 	void Close();
 
 	ZmHttpRouter& GetRouter() { return m_router; }

@@ -31,7 +31,8 @@ HttpRestfulManager::~HttpRestfulManager()
 // 初始化
 // ============================================================================
 
-bool HttpRestfulManager::Open()
+bool HttpRestfulManager::Open(const char* certFile,
+                              const char* keyFile)
 {
     // 1. 创建 pair 池的事件循环
     if (!m_evLoopPairPool)
@@ -70,7 +71,7 @@ bool HttpRestfulManager::Open()
     if (m_httpServerRESTful == nullptr)
     {
         m_httpServerRESTful = new ZmRESTfulServer(
-            m_evLoopHttpServer->GetEventBase(), ZM_HTTP_RESTFUL_SERVER_ROOT_URI, ZM_RESTFUL_SERVER_PORT);
+            m_evLoopHttpServer->GetEventBase(), ZM_HTTP_RESTFUL_SERVER_ROOT_URI, ZM_RESTFUL_SERVER_PORT, certFile, keyFile);
         if (!m_httpServerRESTful->Init())
         {
             DEFAULT_LOG_ERROR("[RESTful] HTTP 服务器初始化失败，端口: {}", ZM_RESTFUL_SERVER_PORT);

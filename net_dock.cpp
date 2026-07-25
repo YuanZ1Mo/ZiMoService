@@ -88,7 +88,8 @@ void NetDock::CloseHub()
     }
 }
 
-void NetDock::OpenHttpJsonRpcServer()
+void NetDock::OpenHttpJsonRpcServer(const char* certFile,
+                                     const char* keyFile)
 {
     if (!m_hubProxyMgr)
     {
@@ -99,7 +100,7 @@ void NetDock::OpenHttpJsonRpcServer()
     {
         m_httpJsonRpcMgr = new HttpJsonRpcManager();
         // 从 Hub 获取 event_base，HttpJsonRpcManager 内部自行创建 ZmNetRequestChannel 并绑定 Hub 注入 handler
-        if (!m_httpJsonRpcMgr->Open())
+        if (!m_httpJsonRpcMgr->Open(certFile, keyFile))
         {
             DEFAULT_LOG_ERROR("OpenHttpJsonRpcServer failed: HttpJsonRpcManager::Open() returned false");
             delete m_httpJsonRpcMgr;
@@ -119,7 +120,8 @@ void NetDock::CloseHttpJsonRpcServer()
     }
 }
 
-void NetDock::OpenHttpRESTfulServer()
+void NetDock::OpenHttpRESTfulServer(const char* certFile,
+                                     const char* keyFile)
 {
     if (!m_hubProxyMgr)
     {
@@ -130,7 +132,7 @@ void NetDock::OpenHttpRESTfulServer()
     if (!m_httpRestfulMgr)
     {
         m_httpRestfulMgr = new HttpRestfulManager();
-        if (!m_httpRestfulMgr->Open())
+        if (!m_httpRestfulMgr->Open(certFile, keyFile))
         {
             DEFAULT_LOG_ERROR("OpenHttpRESTfulServer failed: HttpRestfulManager::Open() returned false");
             delete m_httpRestfulMgr;
@@ -152,12 +154,14 @@ bool NetDock::IsRESTfulHttpOpen() const
     return m_httpRestfulMgr && m_httpRestfulMgr->IsOpen();
 }
 
-void NetDock::OpenHttpServer(const char* wwwRoot)
+void NetDock::OpenHttpServer(const char* wwwRoot,
+                              const char* certFile,
+                              const char* keyFile)
 {
     if (!m_httpServerMgr)
     {
         m_httpServerMgr = new HttpServerManager();
-        m_httpServerMgr->Open(wwwRoot);
+        m_httpServerMgr->Open(wwwRoot, certFile, keyFile);
     }
 }
 
