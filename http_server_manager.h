@@ -36,6 +36,9 @@ public:
 
 	ZmHttpRouter& GetRouter() { return m_router; }
 	bool IsOpen() const;
+
+	/** @brief 热加载 SSL 证书（无需重启服务），HTTP 模式调用无效果 */
+	bool ReloadCertificate(const char* certFile, const char* keyFile);
 	const std::string& GetWwwRoot() const { return m_wwwRoot; }
 
 	/** @brief 获取文件中心模块指针（供 ServicePortal 调用 JRPC 方法和上传下载） */

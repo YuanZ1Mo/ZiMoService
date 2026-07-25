@@ -51,8 +51,8 @@ void ServiceCenter::OnStart(DWORD /*argc*/, TCHAR** /*argv[]*/)
     }
 
     // 构建证书路径（启用 HTTPS），证书不存在时退化为 HTTP
-    std::string certFile = certDir + "\\server.crt";
-    std::string keyFile  = certDir + "\\server.key";
+    std::string certFile   = certDir + "\\server.crt";
+    std::string keyFile    = certDir + "\\server.key";
     bool certAvailable = (GetFileAttributesA(certFile.c_str()) != INVALID_FILE_ATTRIBUTES &&
                           GetFileAttributesA(keyFile.c_str()) != INVALID_FILE_ATTRIBUTES);
     if (!certAvailable)
@@ -60,8 +60,8 @@ void ServiceCenter::OnStart(DWORD /*argc*/, TCHAR** /*argv[]*/)
         DEFAULT_LOG_INFO("未发现 SSL 证书（{}），所有服务器将使用 HTTP 模式", certDir);
     }
 
-    const char* pCert = certAvailable ? certFile.c_str() : nullptr;
-    const char* pKey  = certAvailable ? keyFile.c_str()  : nullptr;
+    const char* pCert   = certAvailable ? certFile.c_str()   : nullptr;
+    const char* pKey    = certAvailable ? keyFile.c_str()    : nullptr;
 
     m_netDock->OpenHub();
     m_netDock->OpenHttpJsonRpcServer(pCert, pKey);

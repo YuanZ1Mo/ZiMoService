@@ -145,6 +145,9 @@ public:
     /** @brief 获取 RESTful HTTP 管理器指针 */
     HttpRestfulManager* GetHttpRestfulManager() { return m_httpRestfulMgr; }
 
+    /** @brief 热加载 SSL 证书（三个 HTTPS 服务器同步更新） */
+    bool ReloadAllCertificates(const char* certFile, const char* keyFile);
+
     // --- 状态查询 ---
 
     /** @brief HTTP 服务器是否运行中 */

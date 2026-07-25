@@ -229,6 +229,18 @@ void NetDock::SetRESTfulRequestCB(TapDelegateRESTfulRequestCB cb)
     m_restfulRequestCB = cb;
 }
 
+bool NetDock::ReloadAllCertificates(const char* certFile, const char* keyFile)
+{
+    bool ok = true;
+    if (m_httpServerMgr)
+        ok &= m_httpServerMgr->ReloadCertificate(certFile, keyFile);
+    if (m_httpJsonRpcMgr)
+        ok &= m_httpJsonRpcMgr->ReloadCertificate(certFile, keyFile);
+    if (m_httpRestfulMgr)
+        ok &= m_httpRestfulMgr->ReloadCertificate(certFile, keyFile);
+    return ok;
+}
+
 void NetDock::OpenBroadcastServer(uint16_t port)
 {
     if (!m_broadcastMgr)

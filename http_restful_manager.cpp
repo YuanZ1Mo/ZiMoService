@@ -71,7 +71,8 @@ bool HttpRestfulManager::Open(const char* certFile,
     if (m_httpServerRESTful == nullptr)
     {
         m_httpServerRESTful = new ZmRESTfulServer(
-            m_evLoopHttpServer->GetEventBase(), ZM_HTTP_RESTFUL_SERVER_ROOT_URI, ZM_RESTFUL_SERVER_PORT, certFile, keyFile);
+            m_evLoopHttpServer->GetEventBase(), ZM_HTTP_RESTFUL_SERVER_ROOT_URI, ZM_RESTFUL_SERVER_PORT, certFile, keyFile,
+            4096, "REST");
         if (!m_httpServerRESTful->Init())
         {
             DEFAULT_LOG_ERROR("[RESTful] HTTP 服务器初始化失败，端口: {}", ZM_RESTFUL_SERVER_PORT);
@@ -113,6 +114,13 @@ void HttpRestfulManager::Close()
         delete m_evLoopHttpServer;
         m_evLoopHttpServer = nullptr;
     }
+}
+
+bool HttpRestfulManager::ReloadCertificate(const char* certFile, const char* keyFile)
+{
+    if (!m_httpServerRESTful || !m_httpServerRESTful->IsHttps())
+        return false;
+    return m_httpServerRESTful->ReloadCertificate(certFile, keyFile);
 }
 
 void HttpRestfulManager::ShutdownPairPool()

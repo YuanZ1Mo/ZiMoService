@@ -67,6 +67,9 @@ public:
     /** @brief 查询 JRPC 服务器是否正常运行 */
     bool IsOpen() const { return m_httpServerJRPC != nullptr && m_httpServerJRPC->IsOpen(); }
 
+    /** @brief 热加载 SSL 证书 */
+    bool ReloadCertificate(const char* certFile, const char* keyFile);
+
 private:
     // ========================================================================
     // 异步 JRPC 回调（ZmJsonRpcServer 的 OnJsonRpcRequestCBAsync）

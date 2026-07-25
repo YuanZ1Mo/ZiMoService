@@ -53,6 +53,9 @@ public:
     /** @brief 查询服务器是否正常运行 */
     bool IsOpen() const { return m_httpServerRESTful != nullptr && m_httpServerRESTful->IsOpen(); }
 
+    /** @brief 热加载 SSL 证书 */
+    bool ReloadCertificate(const char* certFile, const char* keyFile);
+
 private:
     // ========================================================================
     // pair[0] 清理回调（仿 JRPC 的 OnResponseEvent，但 RESTful 不通过 pair 回传响应）

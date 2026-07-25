@@ -66,7 +66,8 @@ bool HttpJsonRpcManager::Open(const char* certFile,
     if (m_httpServerJRPC == nullptr)
     {
         m_httpServerJRPC = new ZmJsonRpcServer(m_evLoopHttpServerJRPC->GetEventBase(),
-            ZM_HTTP_JRPC_SERVER_ROOT_URI, ZM_JSONRPC_SERVER_PORT, certFile, keyFile);
+            ZM_HTTP_JRPC_SERVER_ROOT_URI, ZM_JSONRPC_SERVER_PORT, certFile, keyFile,
+            4096, "JRPC");
         if (!m_httpServerJRPC->Init())
         {
             DEFAULT_LOG_ERROR("JRPC HTTP 服务器初始化失败");
@@ -105,6 +106,13 @@ void HttpJsonRpcManager::Close()
         delete m_evLoopHttpServerJRPC;
         m_evLoopHttpServerJRPC = nullptr;
     }
+}
+
+bool HttpJsonRpcManager::ReloadCertificate(const char* certFile, const char* keyFile)
+{
+    if (!m_httpServerJRPC || !m_httpServerJRPC->IsHttps())
+        return false;
+    return m_httpServerJRPC->ReloadCertificate(certFile, keyFile);
 }
 
 void HttpJsonRpcManager::ShutdownPairPool()

@@ -31,6 +31,13 @@ bool HttpServerManager::IsOpen() const
 	return m_httpServer != nullptr && m_httpServer->IsOpen();
 }
 
+bool HttpServerManager::ReloadCertificate(const char* certFile, const char* keyFile)
+{
+	if (!m_httpServer || !m_httpServer->IsHttps())
+		return false;
+	return m_httpServer->ReloadCertificate(certFile, keyFile);
+}
+
 bool HttpServerManager::Open(const char* wwwRoot,
                               const char* certFile,
                               const char* keyFile)
@@ -59,7 +66,8 @@ bool HttpServerManager::Open(const char* wwwRoot,
 	// redirect_from_port: HTTPS 模式下从端口 80 做 301 重定向（SSL_CTX 由 ZmHttpServer 内部管理）
 	uint16_t redirectPort = useHttps ? ZM_HTTP_SERVER_PORT : 0;
 	m_httpServer = new ZmHttpServer(m_evLoop->GetEventBase(), httpPort,
-	                                certFile, keyFile, redirectPort);
+	                                certFile, keyFile, redirectPort,
+	                                4096, "HTTP");
 	m_httpServer->SetRequestCallback(
 		std::bind(&HttpServerManager::OnHttpRequest, this,
 			std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
