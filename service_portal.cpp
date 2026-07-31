@@ -5,6 +5,7 @@
 #include "http_server_manager.h"
 #include "http_module_file_hub.h"
 #include "broadcast_manager.h"
+#include "audio_stream_manager.h"
 
 #include "zm_net_tap.h"
 #include "zm_logger.h"
@@ -50,6 +51,10 @@ void ServicePortal::RegisterHttpRoutes(HttpServerManager* httpMgr)
 
 	router.Get("/filehub", [httpMgr](ZmHttpdTask* task, const BYTE*, size_t) {
 		return httpMgr->ServeStaticFile(task, "/html/filehub.html");
+	});
+
+	router.Get("/audio", [httpMgr](ZmHttpdTask* task, const BYTE*, size_t) {
+		return httpMgr->ServeStaticFile(task, "/html/audio.html");
 	});
 
 	router.Get("/404", [httpMgr](ZmHttpdTask* task, const BYTE*, size_t) {
@@ -445,6 +450,7 @@ void ServicePortal::RestfulRequestCB(ZM_TAP_CTX* tap,
 		add("POST", "/files/upload",  "上传文件",          "POST /files/upload?path=f.txt (body=二进制)", "{\"ok\":true,\"size\":102400}");
 		add("GET",  "/files/download","下载文件",          "GET /files/download?path=f.txt", "(二进制, Content-Disposition: attachment)");
 		add("GET",  "/events",        "SSE 事件推送",      "GET /events",            "data: {\"id\":0,\"data\":\"event 0\"}\\n\\n");
+		add("GET",  "/audio/stream", "远程音频流",         "GET /audio/stream", "(二进制帧: len(4B)+seq(4B)+Opus 20ms 帧, 48000Hz 立体声)");
 		reply(200, {{"routes", arr}, {"total", (int)arr.size()}});
 	}
 	// ── GET /about ──────────────────────────────────────
@@ -545,5 +551,60 @@ void ServicePortal::RestfulRequestCB(ZM_TAP_CTX* tap,
 			tap->Drop();
 		}).detach();
 	}
+	// ── GET /audio/stream (远程音频流) ─────────────────────
+	else if (verb == EVHTTP_REQ_GET && path == "/audio/stream")
+	{
+		if (!m_audioStreamMgr)
+		{
+			replyErr(503, "音频服务未初始化");
+			return;
+		}
+		// 先订阅(必要时启动采集):失败可真实返回 503(规格 §7 无设备场景)
+		if (!m_audioStreamMgr->Subscribe(task, tap))
+		{
+			DEFAULT_LOG_WARN("[audio] 订阅失败:服务器无可用音频设备");
+			replyErr(503, "服务器无音频输出设备");
+			return;
+		}
+		task->PutReplyHeader("Content-Type", "application/octet-stream");
+		task->PutReplyHeader("Cache-Control", "no-cache");
+		task->StartStreamReply(200);
+		// M1:Subscribe 与 StartStreamReply 之间采集可能瞬时失败收尾、
+		// 订阅者已被移除——此时无人发流,主动结束避免挂死的空流
+		if (!m_audioStreamMgr->IsSubscriberAlive(task))
+		{
+			task->EndStreamReply();
+			tap->Drop();
+		}
+		// 订阅成功:发送由订阅者内部线程执行,本回调直接返回
+	}
 	else { replyErr(404, "Not found: " + std::string(ZmHttpUtil::VerbToString(verb)) + " " + path); }
+}
+
+// ============================================================================
+// 服务停止准备
+// ============================================================================
+
+void ServicePortal::Shutdown()
+{
+	// 业务层停止钩子:NetDock 析构前标记音频模块 task/tap 即将失效
+	// (NetDock 析构触发 closecb,发送线程提前退出时须跳过流收尾,防 UAF)
+	if (m_audioStreamMgr)
+		m_audioStreamMgr->SetTasksGone();
+}
+
+// ============================================================================
+// 构造 / 析构
+// ============================================================================
+
+ServicePortal::ServicePortal()
+{
+	// 业务层自有模块:AudioStreamManager 由本类自建自管,ServiceCenter 不感知
+	m_audioStreamMgr = new AudioStreamManager();
+}
+
+ServicePortal::~ServicePortal()
+{
+	delete m_audioStreamMgr;
+	m_audioStreamMgr = nullptr;
 }

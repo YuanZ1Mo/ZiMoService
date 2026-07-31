@@ -77,14 +77,21 @@ void ServiceCenter::OnStart(DWORD /*argc*/, TCHAR** /*argv[]*/)
 
 void ServiceCenter::OnStop()
 {
-    // ★ 关闭顺序：
+    // ★ 关闭顺序:
     //   ① 先清除 ServicePortal 的 NetDock 引用 — 防止 NetDock 析构后
     //      ServicePortal 通过悬空指针访问已释放的 NetDock
-    //   ② NetDock 释放 — 内部按 前端→Hub→ZmEvBaseRunLoop 顺序清理
-    //      TAP delegate 销毁后不再持有 JrpcRequestReadCB 回调
-    //   ③ ServicePortal 释放 — 此时回调已无持有者，安全删除
+    //   ② NetDock 释放 — 内部按 前端→Hub→ZmEvBaseRunLoop 顺序清理;
+    //      先停 HTTP 前端与线程池,排空在飞请求后 TAP delegate 不再持有回调
+    //   ③ ServicePortal 释放 — 此时无新回调进入;远程音频发送线程通过
+    //      m_tasksGone 标记跳过已失效的 task/tap 访问
     if (m_servicePortal)
         m_servicePortal->SetNetDock(nullptr);
+
+    // 业务层停止钩子(内部处理音频模块 task/tap 失效标记):须在 NetDock 析构前调用。
+    // NetDock 析构期间连接关闭触发 closecb,发送线程可能提前退出——标志未置位时
+    // EndStreamReply/tap->Drop 会访问正在销毁的 task/tap(实测 0xc0000005)
+    if (m_servicePortal)
+        m_servicePortal->Shutdown();
 
     if (m_netDock)
     {

@@ -10,6 +10,7 @@ ZiMo 客户端生态的核心 Windows 服务，基于 libevent 事件循环提�
 - **文件中心** — 文件上传/下载/管理，零拷贝传输，密码保护目录，断点续传
 - **消息广播** — 端口 39640，TCP 一对多推送，基于 ZmBroadcastServer/ZmBroadcastClient
 - **SSE 推送** — `GET /zimo/api/events`，服务端实时事件流推送
+- **远程音频** — WASAPI loopback 采集系统声音 + Opus 编码,RESTful 流式推送,手机网页实时收听
 - **TAP 代理链** — 多协议前端共享 Hub 路由层（JRPC + RESTful 双协议委托）
 - **异步 DNS** — 基于 libevent `evdns_getaddrinfo`，事件驱动
 - **系统监控** — CPU/内存/GPU 实时负载采集
@@ -21,6 +22,7 @@ ZiMo 客户端生态的核心 Windows 服务，基于 libevent 事件循环提�
 service_main.cpp                     # 入口：install | uninstall | debug
   └─ ServiceCenter                   # Windows 服务控制器
        ├─ ServicePortal              # 业务层（JRPC + RESTful 双回调入口）
+       │    └─ AudioStreamManager    # 远程音频（WASAPI 采集 + Opus 编码 + 订阅分发）
        └─ NetDock                    # 网络层编排者
             ├─ HubProxyManager       # TAP Hub 路由层（内部持有 Hub/JRPC/RESTful 三条事件循环）
             ├─ HttpServerManager     # 通用 HTTP 服务器 (端口 80)
@@ -88,6 +90,7 @@ HTTP JRPC 请求 → ZmJsonRpcServer (Worker 线程)
 | `/` | 着陆页 — 进入控制中心 |
 | `/control` | 控制中心 SPA — 首页/文档/接口测试/关于 |
 | `/filehub` | 文件中心 — 文件管理/上传/下载 |
+| `/audio` | 远程音频 — 实时收听服务器声音(WebCodecs 播放) |
 | `/404` | 自定义 404 页面 |
 | `*` | 兜底路由 — 文件不存在则展示 404 页面 |
 
@@ -147,6 +150,12 @@ HttpServerManager 暴露通用能力：
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/events` | SSE 服务端事件推送（text/event-stream） |
+
+### 音频
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/audio/stream` | 远程音频流(服务器系统声音,二进制帧: len(4B)+seq(4B)+Opus 20ms 帧) |
 
 ### 文档
 
@@ -310,6 +319,7 @@ ZiMoService.exe debug       # 前台调试运行
 | `net/` | TCP、HTTP、RESTful 服务器、DNS、TAP 代理（JRPC + RESTful 双协议委托）、路由中间件 |
 | `service/` | ZmServiceBase |
 | `ssl/` | SSL 上下文管理 |
+| `libopus/` | Opus 编码器（静态库 /MT，远程音频编码） |
 | `net/broadcast` | 消息广播服务端与客户端 |
 | `util/` | 线程、线程池、系统监控、字符串工具、文件工具 |
 | `json/` | nlohmann/json 封装 |

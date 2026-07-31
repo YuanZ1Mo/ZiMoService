@@ -1,0 +1,123 @@
+#ifndef AUDIO_STREAM_MANAGER_H
+#define AUDIO_STREAM_MANAGER_H
+
+#include <atomic>
+#include <condition_variable>
+#include <cstdint>
+#include <deque>
+#include <mutex>
+#include <thread>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+class ZmHttpdTask;
+struct ZM_TAP_CTX;
+
+// ── 帧协议常量(小端) ─────────────────────────────────────
+// 每帧 = len(4B) + seq(4B) + Opus 帧数据
+constexpr uint32_t kAudioSampleRate   = 48000;   // 采样率 Hz
+constexpr uint16_t kAudioChannels     = 2;       // 声道数(立体声)
+constexpr uint32_t kAudioBitrate      = 64000;  // 编码码率 bps(立体声)
+constexpr uint32_t kAudioFrameSamples = kAudioSampleRate / 50;  // 960 采样/帧(20ms)
+constexpr uint32_t kAudioFrameMaxLen  = 1500;    // Opus 最大帧 1275B + 余量
+constexpr uint32_t kAudioSubQueueMax  = 600;     // 每订阅者队列上限(600 帧 ≈ 12s)
+
+/**
+ * @brief 远程音频输出管理模块(业务层)
+ *
+ * 按需采集服务器系统声音(WASAPI loopback)→ Opus 编码 →
+ * 向订阅的 HTTP 流式连接推送二进制帧。无订阅者时停止采集、释放音频设备。
+ *
+ * 线程模型:
+ *   - 采集线程:WASAPI loopback 读 PCM → Opus 编码 → 分发帧到各订阅者队列;
+ *     发现无订阅者时自行停止并释放资源(200ms 内)
+ *   - 每个订阅者一个发送线程:队列取帧 → task->SendReplyChunk;
+ *     连接断开或服务停止时退出并自我清理
+ *   - 订阅表与状态机由 m_mutex 保护;队列由 Subscriber::mtx 保护
+ */
+class AudioStreamManager
+{
+public:
+    AudioStreamManager() = default;
+    ~AudioStreamManager();
+
+    AudioStreamManager(const AudioStreamManager&) = delete;
+    AudioStreamManager& operator=(const AudioStreamManager&) = delete;
+
+    /**
+     * @brief 订阅一个 HTTP 流式连接(必要时启动采集管线)
+     * @param task 目标 HTTP 任务(调用方已 StartStreamReply)
+     * @param tap  对应 TAP 上下文(连接断开时由发送线程负责 EndStreamReply + Drop)
+     * @return true 订阅成功;false 服务器无可用音频设备(采集启动失败)
+     * @note 必须在 RESTful delegate 线程池中调用
+     */
+    bool Subscribe(ZmHttpdTask* task, ZM_TAP_CTX* tap);
+
+    /**
+     * @brief 标记 task/tap 即将失效(服务停止时须在 NetDock 析构前调用)
+     * @note 断连检测(I1 closecb)使发送线程可能在 NetDock 析构期间提前退出:
+     *       若 m_tasksGone 尚未置位,其 EndStreamReply/tap->Drop 会访问正在
+     *       销毁的网络对象(实测 0xc0000005 崩溃)。幂等,析构中也会再次置位。
+     */
+    void SetTasksGone();
+
+    /**
+     * @brief 查询指定 task 是否仍是活跃订阅者(锁内检查订阅表)
+     * @param task 目标 HTTP 任务
+     * @return true 仍在订阅表中(发送线程正常运行);false 已被移除(如采集瞬时失败收尾)
+     */
+    bool IsSubscriberAlive(ZmHttpdTask* task) const;
+
+private:
+    /** @brief 订阅者:每连接一个,持有发送线程与帧队列 */
+    struct Subscriber
+    {
+        ZmHttpdTask* task = nullptr;
+        ZM_TAP_CTX*  tap  = nullptr;
+        std::deque<std::pair<uint32_t, std::vector<uint8_t>>> queue;  // <seq, opus帧>
+        std::mutex mtx;
+        std::condition_variable cv;
+        std::thread thread;
+        bool stopped = false;   // 服务停止信号,置位后发送线程尽快退出
+    };
+
+    /** @brief 尝试启动采集管线(要求 m_mutex 已持有);失败时自行清理 */
+    bool TryStartCaptureLocked();
+    /** @brief 停止采集线程(join 并等待其自行释放资源);幂等 */
+    void StopCapture();
+    /**
+     * @brief 回收已退出发送线程的 Subscriber(join 后 delete)
+     * @note 发送线程退出时把自身 Subscriber 移交 m_zombies(锁内),
+     *       由管理器统一回收——发送线程绝不能 delete 自身:其 std::thread
+     *       成员仍 joinable,析构会触发 std::terminate(实测崩溃 0xc0000409)
+     */
+    void ReapZombies();
+
+    /** @brief 采集线程主体 */
+    void CaptureThreadMain();
+    /** @brief 订阅者发送线程主体 */
+    static void SenderThreadMain(AudioStreamManager* mgr, Subscriber* sub);
+    /** @brief 分发一帧 Opus 数据到所有订阅者队列(内部加锁,分配全局 seq) */
+    void DispatchFrame(const unsigned char* data, int len);
+
+    mutable std::mutex m_mutex;
+    bool m_capturing = false;                                   // 采集状态(仅锁内访问)
+    bool m_tasksGone = false;                                   // 析构已开始:task/tap 即将失效(仅锁内访问)
+    std::atomic<bool> m_captureExit {false};
+    std::thread m_captureThread;
+    std::unordered_map<ZmHttpdTask*, Subscriber*> m_subscribers;  // 活跃订阅者(仅锁内访问)
+    std::vector<Subscriber*> m_zombies;                         // 已退出发送线程,待 ReapZombies 回收(仅锁内访问)
+    uint32_t m_nextSeq = 1;                                     // 全局递增序号,重启不归零
+
+    // 采集资源(仅采集线程使用;StopCapture 后置空):
+    void* m_opusEncoder   = nullptr;    // OpusEncoder*
+    void* m_audioClient   = nullptr;    // IAudioClient*
+    void* m_captureClient = nullptr;    // IAudioCaptureClient*
+    void* m_captureEvent  = nullptr;    // HANDLE
+    int   m_mixChannels   = 0;          // 混音格式快照
+    int   m_mixBits       = 0;
+    bool  m_mixFloat      = false;
+};
+
+#endif // AUDIO_STREAM_MANAGER_H
