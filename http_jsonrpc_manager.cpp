@@ -6,6 +6,7 @@
 #include "zm_net_runloop.h"
 #include "zm_logger.h"
 #include "zm_net_tap.h"
+#include "zm_util_sys.h"
 
 #include <event2/bufferevent.h>
 #include <event2/buffer.h>
@@ -28,9 +29,35 @@ HttpJsonRpcManager::~HttpJsonRpcManager()
     ShutdownPairPool();  // 兜底：若 NetDock 未通过 CloseHub 回调提前销毁
 }
 
-bool HttpJsonRpcManager::Open(const char* certFile,
-                              const char* keyFile)
+bool HttpJsonRpcManager::Open()
 {
+    if (m_httpServerJRPC)
+        return true;
+
+    /*
+    * @param certFile  证书 PEM 文件路径，非空时启用 HTTPS；nullptr = HTTP
+    * @param keyFile   私钥 PEM 文件路径，非空时启用 HTTPS；nullptr = HTTP
+    */
+    
+    // 从 exe 路径推导项目根目录（exe 在 $(SolutionDir)$(Configuration)\ 下，需上翻一层）
+    // 同时推导证书目录（certs/ 在项目根目录下）
+    char exePath[MAX_PATH];
+    ZmSystem::GetModuleDir(exePath, MAX_PATH);
+    std::string projRoot = std::string(exePath) + "\\..";
+    std::string certDir = projRoot + "\\certs";
+
+    // 构建证书路径（启用 HTTPS），证书不存在时退化为 HTTP
+    std::string certFile = certDir + "\\server.crt";
+    std::string keyFile = certDir + "\\server.key";
+    bool useHttps = (GetFileAttributesA(certFile.c_str()) != INVALID_FILE_ATTRIBUTES &&
+        GetFileAttributesA(keyFile.c_str()) != INVALID_FILE_ATTRIBUTES);
+    if (!useHttps)
+    {
+        DEFAULT_LOG_INFO("未发现 SSL 证书（{}），HttpJsonRpc服务器将使用 HTTP 模式", certDir);
+    }
+    const char* pCert = useHttps ? certFile.c_str() : nullptr;
+    const char* pKey = useHttps ? keyFile.c_str() : nullptr;
+
     if (!m_evLoopPairPool)
     {
         m_evLoopPairPool = new ZmEvBaseRunLoop("JRPCPairPoolLoop");
@@ -66,7 +93,7 @@ bool HttpJsonRpcManager::Open(const char* certFile,
     if (m_httpServerJRPC == nullptr)
     {
         m_httpServerJRPC = new ZmJsonRpcServer(m_evLoopHttpServerJRPC->GetEventBase(),
-            ZM_HTTP_JRPC_SERVER_ROOT_URI, ZM_JSONRPC_SERVER_PORT, certFile, keyFile,
+            ZM_HTTP_JRPC_SERVER_ROOT_URI, ZM_JSONRPC_SERVER_PORT, pCert, pKey,
             4096, "JRPC");
         if (!m_httpServerJRPC->Init())
         {

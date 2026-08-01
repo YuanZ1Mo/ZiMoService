@@ -37,12 +37,9 @@ public:
 
     /**
      * @brief 初始化 HTTP/HTTPS RESTful 服务器、pair 池、delegate
-     * @param certFile  证书 PEM 文件路径，非空时启用 HTTPS；nullptr = HTTP
-     * @param keyFile   私钥 PEM 文件路径，非空时启用 HTTPS；nullptr = HTTP
      * @return true 初始化成功
      */
-    bool Open(const char* certFile = nullptr,
-              const char* keyFile = nullptr);
+    bool Open();
 
     /** @brief 关闭 HTTP 服务器和自有事件循环（软关闭） */
     void Close();

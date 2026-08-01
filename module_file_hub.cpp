@@ -1,9 +1,10 @@
-#include "http_module_file_hub.h"
+#include "module_file_hub.h"
 
 #include "zm_net_http.h"
 #include "service_define.h"
 #include "zm_logger.h"
 #include "zm_util_str.h"
+#include "zm_util_sys.h"
 
 #include <windows.h>
 #include <openssl/hmac.h>
@@ -23,14 +24,19 @@
 // 构造 / 析构
 // ============================================================================
 
-HttpModuleFileHub::HttpModuleFileHub(const std::string& wwwRoot)
-	: m_wwwRoot(wwwRoot)
+FileHubModule::FileHubModule()
 {
+	// 自行推导 www 根目录(exe 在 $(SolutionDir)$(Configuration)\ 下,上翻一层 + \www)
+	char exePath[MAX_PATH];
+	ZmSystem::GetModuleDir(exePath, MAX_PATH);
+	std::string projRoot = std::string(exePath) + "\\..";
+	m_wwwRoot = projRoot + "\\www";
+
 	std::wstring hubRoot = ZmString::UTF8_To_Unicode(GetHubRoot());
 	CreateDirectoryW(hubRoot.c_str(), nullptr);
 }
 
-HttpModuleFileHub::~HttpModuleFileHub()
+FileHubModule::~FileHubModule()
 {
 }
 
@@ -38,7 +44,7 @@ HttpModuleFileHub::~HttpModuleFileHub()
 // 路径工具
 // ============================================================================
 
-std::string HttpModuleFileHub::GetHubRoot() const
+std::string FileHubModule::GetHubRoot() const
 {
 	std::string root = m_wwwRoot;
 	if (!root.empty() && root.back() != '\\')
@@ -47,7 +53,7 @@ std::string HttpModuleFileHub::GetHubRoot() const
 	return root;
 }
 
-bool HttpModuleFileHub::NormalizeHubPath(const std::string& relativePath, std::string& absPath)
+bool FileHubModule::NormalizeHubPath(const std::string& relativePath, std::string& absPath)
 {
 	std::wstring hubRoot = ZmString::UTF8_To_Unicode(GetHubRoot());
 
@@ -85,7 +91,7 @@ bool HttpModuleFileHub::NormalizeHubPath(const std::string& relativePath, std::s
 // 用户配置读写
 // ============================================================================
 
-bool HttpModuleFileHub::ReadUserConfig(const std::string& dirAbsPath, ZMJSON& config)
+bool FileHubModule::ReadUserConfig(const std::string& dirAbsPath, ZMJSON& config)
 {
 	std::string configPath = dirAbsPath + "\\.userConfig";
 	std::wstring wpath = ZmString::UTF8_To_Unicode(configPath);
@@ -103,7 +109,7 @@ bool HttpModuleFileHub::ReadUserConfig(const std::string& dirAbsPath, ZMJSON& co
 	}
 }
 
-bool HttpModuleFileHub::WriteUserConfig(const std::string& dirAbsPath,
+bool FileHubModule::WriteUserConfig(const std::string& dirAbsPath,
 	const ZMJSON& config)
 {
 	std::string configPath = dirAbsPath + "\\.userConfig";
@@ -119,7 +125,7 @@ bool HttpModuleFileHub::WriteUserConfig(const std::string& dirAbsPath,
 // 密码管理
 // ============================================================================
 
-std::string HttpModuleFileHub::HashPassword(const std::string& password)
+std::string FileHubModule::HashPassword(const std::string& password)
 {
 	unsigned char result[EVP_MAX_MD_SIZE];
 	unsigned int resultLen = 0;
@@ -136,7 +142,7 @@ std::string HttpModuleFileHub::HashPassword(const std::string& password)
 	return hex.str();
 }
 
-bool HttpModuleFileHub::VerifyPassword(const ZMJSON& config,
+bool FileHubModule::VerifyPassword(const ZMJSON& config,
 	const std::string& password)
 {
 	if (!config.contains("user_info"))
@@ -155,7 +161,7 @@ bool HttpModuleFileHub::VerifyPassword(const ZMJSON& config,
 // JRPC 方法
 // ============================================================================
 
-ZMJSON HttpModuleFileHub::ListFiles(const std::string& relativePath)
+ZMJSON FileHubModule::ListFiles(const std::string& relativePath)
 {
 	ZMJSON result;
 	result["ok"] = true;
@@ -244,7 +250,7 @@ ZMJSON HttpModuleFileHub::ListFiles(const std::string& relativePath)
 	return result;
 }
 
-ZMJSON HttpModuleFileHub::SearchFiles(const std::string& keyword)
+ZMJSON FileHubModule::SearchFiles(const std::string& keyword)
 {
 	ZMJSON result;
 	result["ok"] = true;
@@ -263,7 +269,7 @@ ZMJSON HttpModuleFileHub::SearchFiles(const std::string& keyword)
 	return result;
 }
 
-void HttpModuleFileHub::SearchRecursive(const std::string& absDir,
+void FileHubModule::SearchRecursive(const std::string& absDir,
 	const std::string& relativeDir, const std::string& keyword,
 	std::vector<std::string>& results)
 {
@@ -302,7 +308,7 @@ void HttpModuleFileHub::SearchRecursive(const std::string& absDir,
 	FindClose(hFind);
 }
 
-ZMJSON HttpModuleFileHub::CreateDir(const std::string& parentPath,
+ZMJSON FileHubModule::CreateDir(const std::string& parentPath,
 	const std::string& dirName, const std::string& username, const std::string& password)
 {
 	ZMJSON result;
@@ -421,7 +427,7 @@ static bool DeleteDirRecursive(const std::wstring& dirPath)
 	return RemoveDirectoryW(dirPath.c_str()) != 0;
 }
 
-ZMJSON HttpModuleFileHub::DeleteItem(const std::string& relativePath,
+ZMJSON FileHubModule::DeleteItem(const std::string& relativePath,
 	const std::string& username, const std::string& password)
 {
 	ZMJSON result;
@@ -503,7 +509,7 @@ ZMJSON HttpModuleFileHub::DeleteItem(const std::string& relativePath,
 	return result;
 }
 
-ZMJSON HttpModuleFileHub::VerifyDirPassword(const std::string& relativePath,
+ZMJSON FileHubModule::VerifyDirPassword(const std::string& relativePath,
 	const std::string& password)
 {
 	ZMJSON result;
@@ -547,7 +553,7 @@ ZMJSON HttpModuleFileHub::VerifyDirPassword(const std::string& relativePath,
 	return result;
 }
 
-ZMJSON HttpModuleFileHub::ChangeDirPassword(const std::string& relativePath,
+ZMJSON FileHubModule::ChangeDirPassword(const std::string& relativePath,
 	const std::string& username, const std::string& oldPassword,
 	const std::string& newPassword)
 {
@@ -637,7 +643,7 @@ ZMJSON HttpModuleFileHub::ChangeDirPassword(const std::string& relativePath,
 	return result;
 }
 
-ZMJSON HttpModuleFileHub::BatchDelete(const ZMJSON& paths,
+ZMJSON FileHubModule::BatchDelete(const ZMJSON& paths,
 	const std::string& username, const std::string& password)
 {
 	ZMJSON result;
@@ -667,7 +673,7 @@ ZMJSON HttpModuleFileHub::BatchDelete(const ZMJSON& paths,
 // 通用文件下载 / 上传
 // ============================================================================
 
-std::string HttpModuleFileHub::ExtractFilename(const std::string& uri)
+std::string FileHubModule::ExtractFilename(const std::string& uri)
 {
 	std::string path = uri;
 	size_t qpos = path.find('?');
@@ -677,7 +683,7 @@ std::string HttpModuleFileHub::ExtractFilename(const std::string& uri)
 	return path;
 }
 
-int HttpModuleFileHub::ServeFileWithRange(ZmHttpdTask* task, const std::string& path,
+int FileHubModule::ServeFileWithRange(ZmHttpdTask* task, const std::string& path,
 	const std::string& rangeStr, int64_t fileSize)
 {
 	if (rangeStr.size() < 7 || _strnicmp(rangeStr.c_str(), "bytes=", 6) != 0)
@@ -729,7 +735,7 @@ int HttpModuleFileHub::ServeFileWithRange(ZmHttpdTask* task, const std::string& 
 	return ZM_HTTP_STATUS_CODE_PARTIAL_CONTENT;
 }
 
-int HttpModuleFileHub::SendFile(ZmHttpdTask* task, const std::string& physicalPath)
+int FileHubModule::SendFile(ZmHttpdTask* task, const std::string& physicalPath)
 {
 	int fd = -1;
 	if (_wsopen_s(&fd, ZmString::UTF8_To_Unicode(physicalPath).c_str(), _O_RDONLY | _O_BINARY, _SH_DENYNO, 0) != 0 || fd == -1)
@@ -757,7 +763,7 @@ int HttpModuleFileHub::SendFile(ZmHttpdTask* task, const std::string& physicalPa
 	return ZM_HTTP_STATUS_CODE_OK;
 }
 
-int HttpModuleFileHub::ReceiveFile(ZmHttpdTask* task, const std::string& physicalPath,
+int FileHubModule::ReceiveFile(ZmHttpdTask* task, const std::string& physicalPath,
 	const BYTE* data, size_t dlen)
 {
 	if (!data || dlen == 0) return ZM_HTTP_STATUS_CODE_BAD_REQUEST;

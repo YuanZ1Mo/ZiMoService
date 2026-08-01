@@ -88,8 +88,7 @@ void NetDock::CloseHub()
     }
 }
 
-void NetDock::OpenHttpJsonRpcServer(const char* certFile,
-                                     const char* keyFile)
+void NetDock::OpenHttpJsonRpcServer()
 {
     if (!m_hubProxyMgr)
     {
@@ -100,7 +99,7 @@ void NetDock::OpenHttpJsonRpcServer(const char* certFile,
     {
         m_httpJsonRpcMgr = new HttpJsonRpcManager();
         // 从 Hub 获取 event_base，HttpJsonRpcManager 内部自行创建 ZmNetRequestChannel 并绑定 Hub 注入 handler
-        if (!m_httpJsonRpcMgr->Open(certFile, keyFile))
+        if (!m_httpJsonRpcMgr->Open())
         {
             DEFAULT_LOG_ERROR("OpenHttpJsonRpcServer failed: HttpJsonRpcManager::Open() returned false");
             delete m_httpJsonRpcMgr;
@@ -120,8 +119,7 @@ void NetDock::CloseHttpJsonRpcServer()
     }
 }
 
-void NetDock::OpenHttpRESTfulServer(const char* certFile,
-                                     const char* keyFile)
+void NetDock::OpenHttpRESTfulServer()
 {
     if (!m_hubProxyMgr)
     {
@@ -132,7 +130,7 @@ void NetDock::OpenHttpRESTfulServer(const char* certFile,
     if (!m_httpRestfulMgr)
     {
         m_httpRestfulMgr = new HttpRestfulManager();
-        if (!m_httpRestfulMgr->Open(certFile, keyFile))
+        if (!m_httpRestfulMgr->Open())
         {
             DEFAULT_LOG_ERROR("OpenHttpRESTfulServer failed: HttpRestfulManager::Open() returned false");
             delete m_httpRestfulMgr;
@@ -143,6 +141,9 @@ void NetDock::OpenHttpRESTfulServer(const char* certFile,
 
 void NetDock::CloseHttpRESTfulServer()
 {
+    // ★ 仅执行软关闭（停止通道 + HTTP 服务器），不 delete 对象
+    // Pair 池需在 Hub 关闭（所有 TAP 已 Drop）后才安全销毁，
+    // 因此 delete 推迟到 UnInit() 中 CloseHub() 之后执行
     if (m_httpRestfulMgr)
     {
         m_httpRestfulMgr->Close();
@@ -154,14 +155,12 @@ bool NetDock::IsRESTfulHttpOpen() const
     return m_httpRestfulMgr && m_httpRestfulMgr->IsOpen();
 }
 
-void NetDock::OpenHttpServer(const char* wwwRoot,
-                              const char* certFile,
-                              const char* keyFile)
+void NetDock::OpenHttpServer()
 {
     if (!m_httpServerMgr)
     {
         m_httpServerMgr = new HttpServerManager();
-        m_httpServerMgr->Open(wwwRoot, certFile, keyFile);
+        m_httpServerMgr->Open();
     }
 }
 
@@ -229,24 +228,12 @@ void NetDock::SetRESTfulRequestCB(TapDelegateRESTfulRequestCB cb)
     m_restfulRequestCB = cb;
 }
 
-bool NetDock::ReloadAllCertificates(const char* certFile, const char* keyFile)
-{
-    bool ok = true;
-    if (m_httpServerMgr)
-        ok &= m_httpServerMgr->ReloadCertificate(certFile, keyFile);
-    if (m_httpJsonRpcMgr)
-        ok &= m_httpJsonRpcMgr->ReloadCertificate(certFile, keyFile);
-    if (m_httpRestfulMgr)
-        ok &= m_httpRestfulMgr->ReloadCertificate(certFile, keyFile);
-    return ok;
-}
-
-void NetDock::OpenBroadcastServer(uint16_t port)
+void NetDock::OpenBroadcastServer()
 {
     if (!m_broadcastMgr)
     {
         m_broadcastMgr = new BroadcastManager();
-        m_broadcastMgr->Open(port);
+        m_broadcastMgr->Open();
     }
 }
 

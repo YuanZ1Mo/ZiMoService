@@ -5,6 +5,7 @@
 #include "zm_net_runloop.h"
 #include "zm_logger.h"
 #include "zm_net_tap.h"
+#include "zm_util_sys.h"
 
 #include <event2/bufferevent.h>
 #include <event2/buffer.h>
@@ -31,9 +32,35 @@ HttpRestfulManager::~HttpRestfulManager()
 // 初始化
 // ============================================================================
 
-bool HttpRestfulManager::Open(const char* certFile,
-                              const char* keyFile)
+bool HttpRestfulManager::Open()
 {
+    if (m_httpServerRESTful)
+        return true;
+
+    /*
+    * @param certFile  证书 PEM 文件路径，非空时启用 HTTPS；nullptr = HTTP
+    * @param keyFile   私钥 PEM 文件路径，非空时启用 HTTPS；nullptr = HTTP
+    */
+    
+    // 从 exe 路径推导项目根目录（exe 在 $(SolutionDir)$(Configuration)\ 下，需上翻一层）
+    // 同时推导证书目录（certs/ 在项目根目录下）
+    char exePath[MAX_PATH];
+    ZmSystem::GetModuleDir(exePath, MAX_PATH);
+    std::string projRoot = std::string(exePath) + "\\..";
+    std::string certDir = projRoot + "\\certs";
+
+    // 构建证书路径（启用 HTTPS），证书不存在时退化为 HTTP
+    std::string certFile = certDir + "\\server.crt";
+    std::string keyFile = certDir + "\\server.key";
+    bool useHttps = (GetFileAttributesA(certFile.c_str()) != INVALID_FILE_ATTRIBUTES &&
+        GetFileAttributesA(keyFile.c_str()) != INVALID_FILE_ATTRIBUTES);
+    if (!useHttps)
+    {
+        DEFAULT_LOG_INFO("未发现 SSL 证书（{}），HttpRestful服务器将使用 HTTP 模式", certDir);
+    }
+    const char* pCert = useHttps ? certFile.c_str() : nullptr;
+    const char* pKey = useHttps ? keyFile.c_str() : nullptr;
+
     // 1. 创建 pair 池的事件循环
     if (!m_evLoopPairPool)
     {
@@ -71,7 +98,7 @@ bool HttpRestfulManager::Open(const char* certFile,
     if (m_httpServerRESTful == nullptr)
     {
         m_httpServerRESTful = new ZmRESTfulServer(
-            m_evLoopHttpServer->GetEventBase(), ZM_HTTP_RESTFUL_SERVER_ROOT_URI, ZM_RESTFUL_SERVER_PORT, certFile, keyFile,
+            m_evLoopHttpServer->GetEventBase(), ZM_HTTP_RESTFUL_SERVER_ROOT_URI, ZM_RESTFUL_SERVER_PORT, pCert, pKey,
             4096, "REST");
         if (!m_httpServerRESTful->Init())
         {

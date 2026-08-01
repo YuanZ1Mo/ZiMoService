@@ -1,6 +1,7 @@
-#include "audio_stream_manager.h"
+#include "module_server_audio_stream.h"
 
 #include "zm_net_tap.h"
+#include "zm_net_tap_rest.h"
 #include "zm_logger.h"
 
 #include <opus.h>
@@ -111,14 +112,14 @@ void ConvertToStereo16(int mixCh, int mixBits, bool mixFloat,
 // 析构
 // ============================================================================
 
-void AudioStreamManager::SetTasksGone()
+void ServerAudioStreamModule::SetTasksGone()
 {
     // 幂等;须在 NetDock 析构前由 ServiceCenter::OnStop 调用(见类注释)
     std::lock_guard lock(m_mutex);
     m_tasksGone = true;
 }
 
-AudioStreamManager::~AudioStreamManager()
+ServerAudioStreamModule::~ServerAudioStreamModule()
 {
     // 先标记 task/tap 即将失效(OnStop 通常已提前置位,此处兜底):
     // 发送线程清理时将跳过 EndStreamReply/Drop(防止访问已释放对象)
@@ -158,7 +159,7 @@ AudioStreamManager::~AudioStreamManager()
 // 回收已退出发送线程的 Subscriber
 // ============================================================================
 
-void AudioStreamManager::ReapZombies()
+void ServerAudioStreamModule::ReapZombies()
 {
     // 循环回收:发送线程可能在本函数执行期间陆续移交(某轮取空即止);
     // 极少数极端时序下(发送线程恰在最后一轮取空后移交)进程退出时可能遗留
@@ -185,7 +186,7 @@ void AudioStreamManager::ReapZombies()
 // 订阅(触发按需启动采集)
 // ============================================================================
 
-bool AudioStreamManager::Subscribe(ZmHttpdTask* task, ZM_TAP_CTX* tap)
+bool ServerAudioStreamModule::Subscribe(ZmHttpdTask* task, ZM_TAP_CTX* tap)
 {
     ReapZombies();   // 先回收已退出发送线程的 Subscriber(join 不持锁)
 
@@ -210,11 +211,11 @@ bool AudioStreamManager::Subscribe(ZmHttpdTask* task, ZM_TAP_CTX* tap)
     sub->task = task;
     sub->tap  = tap;
     m_subscribers[task] = sub;
-    sub->thread = std::thread(&AudioStreamManager::SenderThreadMain, this, sub);
+    sub->thread = std::thread(&ServerAudioStreamModule::SenderThreadMain, this, sub);
     return true;
 }
 
-bool AudioStreamManager::IsSubscriberAlive(ZmHttpdTask* task) const
+bool ServerAudioStreamModule::IsSubscriberAlive(ZmHttpdTask* task) const
 {
     std::lock_guard lock(m_mutex);
     return m_subscribers.count(task) > 0;
@@ -224,7 +225,7 @@ bool AudioStreamManager::IsSubscriberAlive(ZmHttpdTask* task) const
 // 采集管线启动(要求已持有 m_mutex)
 // ============================================================================
 
-bool AudioStreamManager::TryStartCaptureLocked()
+bool ServerAudioStreamModule::TryStartCaptureLocked()
 {
     // 本线程(委托池线程)初始化 COM 为 MTA;长生命周期线程,不主动 CoUninitialize
     HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
@@ -518,7 +519,7 @@ bool AudioStreamManager::TryStartCaptureLocked()
     m_captureClient = capture.Detach();
     m_captureEvent  = hEvent;
     m_captureExit.store(false);
-    m_captureThread = std::thread(&AudioStreamManager::CaptureThreadMain, this);
+    m_captureThread = std::thread(&ServerAudioStreamModule::CaptureThreadMain, this);
     m_capturing = true;
 
     DEFAULT_LOG_INFO("[audio] 采集启动:{}Hz {}ch {}bit{}",
@@ -530,7 +531,7 @@ bool AudioStreamManager::TryStartCaptureLocked()
 // 采集线程:WASAPI loopback → Opus 编码 → 分发
 // ============================================================================
 
-void AudioStreamManager::CaptureThreadMain()
+void ServerAudioStreamModule::CaptureThreadMain()
 {
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 
@@ -667,7 +668,7 @@ void AudioStreamManager::CaptureThreadMain()
 // 帧分发(内部加锁,分配全局递增 seq)
 // ============================================================================
 
-void AudioStreamManager::DispatchFrame(const unsigned char* data, int len)
+void ServerAudioStreamModule::DispatchFrame(const unsigned char* data, int len)
 {
     std::lock_guard lock(m_mutex);
     if (m_subscribers.empty())
@@ -694,7 +695,7 @@ void AudioStreamManager::DispatchFrame(const unsigned char* data, int len)
 // 订阅者发送线程:队列取帧 → SendReplyChunk;退出时自我清理
 // ============================================================================
 
-void AudioStreamManager::SenderThreadMain(AudioStreamManager* mgr, Subscriber* sub)
+void ServerAudioStreamModule::SenderThreadMain(ServerAudioStreamModule* mgr, Subscriber* sub)
 {
     BYTE hdr[8];
     while (true)
@@ -731,10 +732,10 @@ void AudioStreamManager::SenderThreadMain(AudioStreamManager* mgr, Subscriber* s
         WriteLE32(hdr + 4, frame.first);
         if (sub->task->IsConnClosed())
             break;   // 发送前再查一次,封死发送窗口
-        sub->task->SendReplyChunk(hdr, 8);
+        ZmTapDelegateRESTful::ResponseStreamChunk(sub->tap, hdr, 8);
         if (sub->task->IsConnClosed())
             break;   // 两组 chunk 之间也查一次
-        sub->task->SendReplyChunk(frame.second.data(), frame.second.size());
+        ZmTapDelegateRESTful::ResponseStreamChunk(sub->tap, frame.second.data(), frame.second.size());
     }
 
     // ── 自我清理 ──
@@ -761,8 +762,7 @@ void AudioStreamManager::SenderThreadMain(AudioStreamManager* mgr, Subscriber* s
     // 跳过流收尾;运行期(连接断开/设备失效)则正常收尾
     if (!tasksGone)
     {
-        sub->task->EndStreamReply();
-        sub->tap->Drop();
+        ZmTapDelegateRESTful::ResponseStreamEnd(sub->tap);
     }
     // 不 delete:Subscriber 由管理器 ReapZombies() join 后统一回收
     return;
@@ -772,7 +772,7 @@ void AudioStreamManager::SenderThreadMain(AudioStreamManager* mgr, Subscriber* s
 // 停止采集(析构路径):join 采集线程,资源由采集线程收尾时释放
 // ============================================================================
 
-void AudioStreamManager::StopCapture()
+void ServerAudioStreamModule::StopCapture()
 {
     {
         std::lock_guard lock(m_mutex);

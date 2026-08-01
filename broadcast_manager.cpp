@@ -1,4 +1,5 @@
 #include "broadcast_manager.h"
+#include "service_define.h"
 
 #include "zm_net_runloop.h"
 #include "zm_logger.h"
@@ -15,7 +16,7 @@ BroadcastManager::~BroadcastManager()
     Close();
 }
 
-bool BroadcastManager::Open(uint16_t port)
+bool BroadcastManager::Open()
 {
     if (m_server)
         return true;
@@ -31,7 +32,7 @@ bool BroadcastManager::Open(uint16_t port)
     }
 
     m_config.listenIp = "0.0.0.0";
-    m_config.listenPort = port;
+    m_config.listenPort = ZM_BROADCAST_SERVER_PORT;
     m_config.evbase = m_evLoop->GetEventBase();
     m_config.heartbeatTime = 60;
     m_config.handshakeTimeout = 10;

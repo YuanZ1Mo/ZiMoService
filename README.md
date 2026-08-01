@@ -22,12 +22,12 @@ ZiMo 客户端生态的核心 Windows 服务，基于 libevent 事件循环提�
 service_main.cpp                     # 入口：install | uninstall | debug
   └─ ServiceCenter                   # Windows 服务控制器
        ├─ ServicePortal              # 业务层（JRPC + RESTful 双回调入口）
-       │    └─ AudioStreamManager    # 远程音频（WASAPI 采集 + Opus 编码 + 订阅分发）
+       │    ├─ FileHubModule            # 文件中心（业务逻辑抽离，双协议共享，自建自管）
+       │    └─ ServerAudioStreamModule  # 远程音频（WASAPI 采集 + Opus 编码 + 订阅分发）
        └─ NetDock                    # 网络层编排者
             ├─ HubProxyManager       # TAP Hub 路由层（内部持有 Hub/JRPC/RESTful 三条事件循环）
             ├─ HttpServerManager     # 通用 HTTP 服务器 (端口 80)
-            │     ├─ ZmHttpRouter        # 路由中间件链（Express 风格）
-            │     └─ HttpModuleFileHub    # 文件中心模块（业务逻辑抽离，双协议共享）
+            │     └─ ZmHttpRouter        # 路由中间件链（Express 风格）
             ├─ HttpRestfulManager   # ★ HTTP RESTful 前端 (端口 39441)
             │     └─ ZmRESTfulServer + bufferevent_pair 池 → Hub → ZmTapDelegateRESTful
             ├─ HttpJsonRpcManager    # HTTP JSON-RPC 前端 (端口 39440)
@@ -290,7 +290,7 @@ curl "http://localhost:39441/zimo/api/events"
 - **中文路径** — 全链路 Wide API（`CreateFileW`/`FindFirstFileW`），`ZmString::UTF8_To_Unicode`/`Unicode_To_UTF8` 转换
 - **线程模型** — 六条独立事件循环 + 四个线程池，跨线程通过 `event_active` + SPSC 队列通信
 - **路由中间件** — Express 风格，`(task, next)` 管道 + 前缀树匹配
-- **架构分离** — 通用层（HttpServerManager）与业务层（HttpModuleFileHub）分离，文件中心通过双协议暴露
+- **架构分离** — 通用层（HttpServerManager）与业务层（FileHubModule）分离，文件中心通过双协议暴露
 - **Pair 对象池** — bufferevent_pair 复用减少高并发下的内存分配和系统调用
 - **Doer 池化** — ZmHttpdDoer 对象池化，即时释放减少内存占用
 

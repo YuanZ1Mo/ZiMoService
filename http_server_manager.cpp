@@ -1,5 +1,4 @@
 #include "http_server_manager.h"
-#include "http_module_file_hub.h"
 #include "service_define.h"
 
 #include "zm_net_http.h"
@@ -17,7 +16,6 @@
 HttpServerManager::HttpServerManager()
 	: m_evLoop(nullptr)
 	, m_httpServer(nullptr)
-	, m_fileHub(nullptr)
 {
 }
 
@@ -38,20 +36,43 @@ bool HttpServerManager::ReloadCertificate(const char* certFile, const char* keyF
 	return m_httpServer->ReloadCertificate(certFile, keyFile);
 }
 
-bool HttpServerManager::Open(const char* wwwRoot,
-                              const char* certFile,
-                              const char* keyFile)
+bool HttpServerManager::Open()
 {
 	if (m_httpServer)
 		return true;
 
-	if (wwwRoot && wwwRoot[0])
-		m_wwwRoot = wwwRoot;
+	/*
+	 * @param wwwRoot  静态文件根目录路径（绝对路径），为空不启用静态文件
+	 * @param certFile  证书 PEM 文件路径（如 "certs/server.crt"），非空时启用 HTTPS
+	 * @param keyFile   私钥 PEM 文件路径（如 "certs/server.key"），非空时启用 HTTPS
+	 * @note HTTPS 启用时：主服务器监听端口 443，同时在端口 80 创建 301 重定向服务器
+	 * @note HTTP 模式（certFile 为空）：仅监听端口 80，行为与之前完全一致
+	*/
+
+    // 从 exe 路径推导项目根目录（exe 在 $(SolutionDir)$(Configuration)\ 下，需上翻一层）
+    // 同时推导证书目录（certs/ 在项目根目录下）
+	char exePath[MAX_PATH];
+	ZmSystem::GetModuleDir(exePath, MAX_PATH);
+	std::string projRoot = std::string(exePath) + "\\..";
+	std::string certDir = projRoot + "\\certs";
+	std::string wwwRoot = projRoot + "\\www";
+
+	// 构建证书路径（启用 HTTPS），证书不存在时退化为 HTTP
+	std::string certFile = certDir + "\\server.crt";
+	std::string keyFile = certDir + "\\server.key";
+	bool useHttps = (GetFileAttributesA(certFile.c_str()) != INVALID_FILE_ATTRIBUTES &&
+		GetFileAttributesA(keyFile.c_str()) != INVALID_FILE_ATTRIBUTES);
+	if (!useHttps)
+	{
+		DEFAULT_LOG_INFO("未发现 SSL 证书（{}），HttpServer服务器将使用 HTTP 模式", certDir);
+	}
+	const char* pCert = useHttps ? certFile.c_str() : nullptr;
+	const char* pKey = useHttps ? keyFile.c_str() : nullptr;
+
+	m_wwwRoot = wwwRoot;
 
 	SetupRouter();
 
-	// 判断是否启用 HTTPS（certFile + keyFile 都非空时启用）
-	bool useHttps = (certFile && certFile[0] && keyFile && keyFile[0]);
 	uint16_t httpPort = useHttps ? ZM_HTTPS_SERVER_PORT : ZM_HTTP_SERVER_PORT;
 
 	m_evLoop = new ZmEvBaseRunLoop("HttpServerLoop");
@@ -66,7 +87,7 @@ bool HttpServerManager::Open(const char* wwwRoot,
 	// redirect_from_port: HTTPS 模式下从端口 80 做 301 重定向（SSL_CTX 由 ZmHttpServer 内部管理）
 	uint16_t redirectPort = useHttps ? ZM_HTTP_SERVER_PORT : 0;
 	m_httpServer = new ZmHttpServer(m_evLoop->GetEventBase(), httpPort,
-	                                certFile, keyFile, redirectPort,
+	                                pCert, pKey, redirectPort,
 	                                4096, "HTTP");
 	m_httpServer->SetRequestCallback(
 		std::bind(&HttpServerManager::OnHttpRequest, this,
@@ -88,9 +109,6 @@ bool HttpServerManager::Open(const char* wwwRoot,
 		useHttps ? "HTTPS" : "HTTP", httpPort,
 		m_wwwRoot.empty() ? "(无)" : m_wwwRoot);
 
-	// 创建文件中心模块（功能通过 RESTful API 暴露）
-	m_fileHub = new HttpModuleFileHub(m_wwwRoot);
-
 	return true;
 }
 
@@ -108,12 +126,6 @@ void HttpServerManager::Close()
 		m_evLoop->Stop();
 		delete m_evLoop;
 		m_evLoop = nullptr;
-	}
-
-	if (m_fileHub)
-	{
-		delete m_fileHub;
-		m_fileHub = nullptr;
 	}
 
 	DEFAULT_LOG_INFO("HTTP 服务器已关闭");

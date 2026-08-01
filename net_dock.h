@@ -75,38 +75,27 @@ public:
 
     /**
      * @brief 启动 HTTP JSON-RPC 前端
-     * @param certFile  证书 PEM 文件路径，非空时启用 HTTPS；nullptr = HTTP
-     * @param keyFile   私钥 PEM 文件路径，非空时启用 HTTPS；nullptr = HTTP
      * @note 依赖 Hub 已启动，否则仅输出错误日志而不创建 HTTP 服务器
      *
      * HttpJsonRpcManager 内部自行创建 ZmNetRequestChannel 并将请求
      * 通过 bufferevent_pair 注入 Hub 代理链。
      */
-    void OpenHttpJsonRpcServer(const char* certFile = nullptr,
-                               const char* keyFile = nullptr);
+    void OpenHttpJsonRpcServer();
     /** @brief 停止 HTTP JSON-RPC 前端（内部先关通道再 join Worker） */
     void CloseHttpJsonRpcServer();
 
     /**
      * @brief 启动 HTTP RESTful 前端（端口独立，依赖 Hub 已启动）
-     * @param certFile  证书 PEM 文件路径，非空时启用 HTTPS；nullptr = HTTP
-     * @param keyFile   私钥 PEM 文件路径，非空时启用 HTTPS；nullptr = HTTP
      */
-    void OpenHttpRESTfulServer(const char* certFile = nullptr,
-                               const char* keyFile = nullptr);
+    void OpenHttpRESTfulServer();
     /** @brief 停止 HTTP RESTful 前端 */
     void CloseHttpRESTfulServer();
 
     /**
-     * @brief 启动通用 HTTP 服务器
-     * @param wwwRoot   静态文件根目录路径（绝对路径），为空不启用静态文件
-     * @param certFile  证书 PEM 文件路径，非空时启用 HTTPS；nullptr = HTTP
-     * @param keyFile   私钥 PEM 文件路径，非空时启用 HTTPS；nullptr = HTTP
+     * @brief 启动通用 HTTP 服务器（wwwRoot/证书路径由 HttpServerManager 内部推导）
      * @note HTTPS 时：443 端口 + 80→443 重定向；HTTP 时：仅 80 端口
      */
-    void OpenHttpServer(const char* wwwRoot = nullptr,
-                        const char* certFile = nullptr,
-                        const char* keyFile = nullptr);
+    void OpenHttpServer();
     /** @brief 停止通用 HTTP 服务器 */
     void CloseHttpServer();
 
@@ -121,7 +110,7 @@ public:
      * @brief 启动广播服务端（依赖 Hub 已启动，内部使用 Hub 的事件循环线程）
      * @param port 监听端口，0 = 随机分配
      */
-    void OpenBroadcastServer(uint16_t port);
+    void OpenBroadcastServer();
     /** @brief 停止广播服务端 */
     void CloseBroadcastServer();
     /** @brief 获取广播服务端管理器指针 */
@@ -144,9 +133,6 @@ public:
 
     /** @brief 获取 RESTful HTTP 管理器指针 */
     HttpRestfulManager* GetHttpRestfulManager() { return m_httpRestfulMgr; }
-
-    /** @brief 热加载 SSL 证书（三个 HTTPS 服务器同步更新） */
-    bool ReloadAllCertificates(const char* certFile, const char* keyFile);
 
     // --- 状态查询 ---
 

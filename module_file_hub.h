@@ -1,5 +1,5 @@
-#ifndef HTTP_MODULE_FILE_HUB_H
-#define HTTP_MODULE_FILE_HUB_H
+#ifndef MODULE_FILE_HUB_H
+#define MODULE_FILE_HUB_H
 
 #include "zm_json.h"
 
@@ -10,23 +10,20 @@
 class ZmHttpdTask;
 
 /**
- * @brief 文件中心模块
+ * @brief 文件中心模块（业务层）
  *
  * 管理 www/db/filehub/ 下的文件/文件夹，提供列表、搜索、创建、
  * 删除、密码验证等功能，以及通用文件上传下载能力。
  * 每个文件目录可配置独立的用户名/密码（HMAC 哈希存储）。
  *
+ * 构造时自行推导 www 根目录（exe 上翻一层 + \www），不依赖外部注入。
  * 所有功能由 业务层 调用。
  */
-class HttpModuleFileHub
+class FileHubModule
 {
 public:
-	/**
-	 * @brief 构造文件中心模块
-	 * @param wwwRoot www 根目录绝对路径
-	 */
-	explicit HttpModuleFileHub(const std::string& wwwRoot);
-	~HttpModuleFileHub();
+	FileHubModule();
+	~FileHubModule();
 
 	// ========================================================================
 	// 通用文件下载 / 上传
@@ -106,10 +103,10 @@ public:
 	ZMJSON BatchDelete(const ZMJSON& paths,
 		const std::string& username = "", const std::string& password = "");
 
-private:
-	/** @brief 获取文件中心根目录的绝对路径 */
+	/** @brief 获取文件中心根目录的绝对路径（业务层构造上传/下载路径用） */
 	std::string GetHubRoot() const;
 
+private:
 	/**
 	 * @brief 将相对路径转为规范化绝对路径，并校验路径穿越
 	 * @param relativePath 相对路径
@@ -146,4 +143,4 @@ private:
 	std::string m_wwwRoot;  ///< www 根目录绝对路径
 };
 
-#endif // HTTP_MODULE_FILE_HUB_H
+#endif // MODULE_FILE_HUB_H

@@ -1,5 +1,5 @@
-#ifndef AUDIO_STREAM_MANAGER_H
-#define AUDIO_STREAM_MANAGER_H
+#ifndef MODULE_SERVER_AUDIO_STREAM_H
+#define MODULE_SERVER_AUDIO_STREAM_H
 
 #include <atomic>
 #include <condition_variable>
@@ -24,7 +24,7 @@ constexpr uint32_t kAudioFrameMaxLen  = 1500;    // Opus 最大帧 1275B + 余�
 constexpr uint32_t kAudioSubQueueMax  = 600;     // 每订阅者队列上限(600 帧 ≈ 12s)
 
 /**
- * @brief 远程音频输出管理模块(业务层)
+ * @brief 服务器音频流模块(业务层)
  *
  * 按需采集服务器系统声音(WASAPI loopback)→ Opus 编码 →
  * 向订阅的 HTTP 流式连接推送二进制帧。无订阅者时停止采集、释放音频设备。
@@ -36,14 +36,14 @@ constexpr uint32_t kAudioSubQueueMax  = 600;     // 每订阅者队列上限(600
  *     连接断开或服务停止时退出并自我清理
  *   - 订阅表与状态机由 m_mutex 保护;队列由 Subscriber::mtx 保护
  */
-class AudioStreamManager
+class ServerAudioStreamModule
 {
 public:
-    AudioStreamManager() = default;
-    ~AudioStreamManager();
+    ServerAudioStreamModule() = default;
+    ~ServerAudioStreamModule();
 
-    AudioStreamManager(const AudioStreamManager&) = delete;
-    AudioStreamManager& operator=(const AudioStreamManager&) = delete;
+    ServerAudioStreamModule(const ServerAudioStreamModule&) = delete;
+    ServerAudioStreamModule& operator=(const ServerAudioStreamModule&) = delete;
 
     /**
      * @brief 订阅一个 HTTP 流式连接(必要时启动采集管线)
@@ -97,7 +97,7 @@ private:
     /** @brief 采集线程主体 */
     void CaptureThreadMain();
     /** @brief 订阅者发送线程主体 */
-    static void SenderThreadMain(AudioStreamManager* mgr, Subscriber* sub);
+    static void SenderThreadMain(ServerAudioStreamModule* mgr, Subscriber* sub);
     /** @brief 分发一帧 Opus 数据到所有订阅者队列(内部加锁,分配全局 seq) */
     void DispatchFrame(const unsigned char* data, int len);
 
@@ -120,4 +120,4 @@ private:
     bool  m_mixFloat      = false;
 };
 
-#endif // AUDIO_STREAM_MANAGER_H
+#endif // MODULE_SERVER_AUDIO_STREAM_H

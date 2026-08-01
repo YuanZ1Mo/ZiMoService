@@ -33,46 +33,15 @@ void ServiceCenter::OnStart(DWORD /*argc*/, TCHAR** /*argv[]*/)
     m_netDock->SetRESTfulRequestCB(std::bind(&ServicePortal::RestfulRequestCB, m_servicePortal,
         std::placeholders::_1, std::placeholders::_2,
         std::placeholders::_3));
-    // 从 exe 路径推导项目根目录（exe 在 $(SolutionDir)$(Configuration)\ 下，需上翻一层）
-    // 同时推导证书目录（certs/ 在项目根目录下）
-    std::string projRoot;
-    std::string wwwRoot;
-    std::string certDir;
-    {
-        char exePath[MAX_PATH];
-        GetModuleFileNameA(NULL, exePath, MAX_PATH);
-        projRoot = exePath;
-        size_t pos = projRoot.find_last_of("\\/");
-        if (pos != std::string::npos)
-            projRoot = projRoot.substr(0, pos);
-        projRoot += "\\..";  // Release\.. → 项目根目录
-        wwwRoot = projRoot + "\\www";
-        certDir = projRoot + "\\certs";
-    }
-
-    // 构建证书路径（启用 HTTPS），证书不存在时退化为 HTTP
-    std::string certFile   = certDir + "\\server.crt";
-    std::string keyFile    = certDir + "\\server.key";
-    bool certAvailable = (GetFileAttributesA(certFile.c_str()) != INVALID_FILE_ATTRIBUTES &&
-                          GetFileAttributesA(keyFile.c_str()) != INVALID_FILE_ATTRIBUTES);
-    if (!certAvailable)
-    {
-        DEFAULT_LOG_INFO("未发现 SSL 证书（{}），所有服务器将使用 HTTP 模式", certDir);
-    }
-
-    const char* pCert   = certAvailable ? certFile.c_str()   : nullptr;
-    const char* pKey    = certAvailable ? keyFile.c_str()    : nullptr;
 
     m_netDock->OpenHub();
-    m_netDock->OpenHttpJsonRpcServer(pCert, pKey);
-    m_netDock->OpenHttpRESTfulServer(pCert, pKey);
-    m_netDock->OpenHttpServer(wwwRoot.c_str(), pCert, pKey);
-
-    m_netDock->OpenBroadcastServer(ZM_BROADCAST_SERVER_PORT);
+    m_netDock->OpenHttpJsonRpcServer();
+    m_netDock->OpenHttpRESTfulServer();
+    m_netDock->OpenHttpServer();
+    m_netDock->OpenBroadcastServer();
 
     // 注册 HTTP 80 端口路由（/control → 控制中心 SPA）
     m_servicePortal->RegisterHttpRoutes(m_netDock->GetHttpServerManager());
-
 }
 
 void ServiceCenter::OnStop()

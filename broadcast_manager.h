@@ -22,7 +22,7 @@ public:
      * @param port    监听端口（0 = 随机）
      * @return true 成功，false 失败
      */
-    bool Open(uint16_t port);
+    bool Open();
 
     /** @brief 停止广播服务端 */
     void Close();
