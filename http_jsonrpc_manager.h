@@ -67,6 +67,15 @@ public:
     /** @brief 热加载 SSL 证书 */
     bool ReloadCertificate(const char* certFile, const char* keyFile);
 
+    /** @brief 查询是否已启用 HTTPS */
+    bool IsHttps() const { return m_httpServerJRPC && m_httpServerJRPC->IsHttps(); }
+
+    /** @brief 设置 TLS session ticket 密钥(转发给内部 ZmJsonRpcServer) */
+    void SetTicketKeys(const unsigned char* keys, size_t len);
+
+    /** @brief 投递 ticket 密钥到服务器事件循环线程(轮换场景) */
+    void PostSetTicketKeys(const unsigned char* keys, size_t len);
+
 private:
     // ========================================================================
     // 异步 JRPC 回调（ZmJsonRpcServer 的 OnJsonRpcRequestCBAsync）

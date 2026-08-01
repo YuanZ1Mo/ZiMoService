@@ -558,7 +558,7 @@ void ServicePortal::RestfulRequestCB(ZM_TAP_CTX* tap,
 		ZmTapDelegateRESTful::ResponseSSEStart(tap);
 		std::thread([tap] {
 			for (int i = 0; i < 50; i++) {
-				if (!tap->httpd_task->IsStreaming()) break;
+				if (!tap->httpd_task->IsStreaming() || tap->httpd_task->IsConnClosed()) break;
 				ZmTapDelegateRESTful::ResponseSSEEvent(tap, {{"id", i}, {"data", "event " + std::to_string(i)}});
 				Sleep(2000);
 			}

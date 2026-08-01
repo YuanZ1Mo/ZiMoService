@@ -30,6 +30,15 @@ public:
 
 	/** @brief 热加载 SSL 证书（无需重启服务），HTTP 模式调用无效果 */
 	bool ReloadCertificate(const char* certFile, const char* keyFile);
+
+	/** @brief 查询是否已启用 HTTPS（ZmHttpServer 在本头文件仅前向声明，实现在 cpp） */
+	bool IsHttps() const;
+
+	/** @brief 设置 TLS session ticket 密钥(转发给内部 ZmHttpServer) */
+	void SetTicketKeys(const unsigned char* keys, size_t len);
+
+	/** @brief 投递 ticket 密钥到服务器事件循环线程(轮换场景) */
+	void PostSetTicketKeys(const unsigned char* keys, size_t len);
 	const std::string& GetWwwRoot() const { return m_wwwRoot; }
 
 	/**

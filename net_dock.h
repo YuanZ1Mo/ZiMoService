@@ -15,6 +15,7 @@ class ZmTapDelegateRESTful;
 class HttpServerManager;
 class BroadcastManager;
 class ZmHttpRouter;
+class ZmTicketKeyRotator;
 struct ZM_TAP_CTX;
 
 // TapDelegateJrpcRequestReadCB using 别名
@@ -99,6 +100,17 @@ public:
     /** @brief 停止通用 HTTP 服务器 */
     void CloseHttpServer();
 
+    // --- TLS 基础设施 ---
+
+    /**
+     * @brief 确保 TLS session ticket 轮换器已创建并启动(幂等,懒创建)
+     * @note 仅 HTTPS 模式调用;纯 HTTP 模式不创建,零开销
+     * @note 仅在主线程启动路径调用,无并发保护
+     */
+    ZmTicketKeyRotator* EnsureTicketRotator();
+    /** @brief ticket 密钥轮换完成回调:投递到各 HTTPS 服务器事件循环 */
+    void OnTicketRotated();
+
     /** @brief 预留 SOCKS5 入口（依赖 Hub 已启动） */
     void OpenSocks5Server();
     /** @brief 预留 停止 SOCKS5 */
@@ -164,6 +176,7 @@ private:
     HttpRestfulManager*    m_httpRestfulMgr;      ///< HTTP RESTful 前端（含内部 pair 池 + delegate）
     HttpServerManager*     m_httpServerMgr;       ///< 通用 HTTP 前端（端口 80）
     BroadcastManager*      m_broadcastMgr;        ///< 广播服务端管理器
+    ZmTicketKeyRotator*    m_ticketRotator;       ///< TLS ticket 密钥轮换器(懒创建,UnInit 释放)
     TapDelegateJrpcRequestReadCB m_jrpcRequestReadCB;   ///< JRPC 回调
     TapDelegateRESTfulRequestCB  m_restfulRequestCB;    ///< RESTful 回调
     bool                   m_unInited;            ///< 防止 UnInit 重复执行

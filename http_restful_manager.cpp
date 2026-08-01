@@ -128,18 +128,23 @@ bool HttpRestfulManager::Open()
 
 void HttpRestfulManager::Close()
 {
+    // 停 HTTP 服务器(join 线程池，释放 evhttp;loop 仍在跑，在飞请求可 drain)
     if (m_httpServerRESTful != nullptr)
-    {
         m_httpServerRESTful->Close();
-        delete m_httpServerRESTful;
-        m_httpServerRESTful = nullptr;
-    }
 
+    // 停自有事件循环(join:残留 once 事件被丢弃)
     if (m_evLoopHttpServer != nullptr)
     {
         m_evLoopHttpServer->Stop();
         delete m_evLoopHttpServer;
         m_evLoopHttpServer = nullptr;
+    }
+
+    // 最后销毁服务器(loop 已死，不会再有任何回调访问它)
+    if (m_httpServerRESTful != nullptr)
+    {
+        delete m_httpServerRESTful;
+        m_httpServerRESTful = nullptr;
     }
 }
 
@@ -148,6 +153,18 @@ bool HttpRestfulManager::ReloadCertificate(const char* certFile, const char* key
     if (!m_httpServerRESTful || !m_httpServerRESTful->IsHttps())
         return false;
     return m_httpServerRESTful->ReloadCertificate(certFile, keyFile);
+}
+
+void HttpRestfulManager::SetTicketKeys(const unsigned char* keys, size_t len)
+{
+    if (m_httpServerRESTful)
+        m_httpServerRESTful->SetTicketKeys(keys, len);
+}
+
+void HttpRestfulManager::PostSetTicketKeys(const unsigned char* keys, size_t len)
+{
+    if (m_httpServerRESTful)
+        m_httpServerRESTful->PostSetTicketKeys(keys, len);
 }
 
 void HttpRestfulManager::ShutdownPairPool()

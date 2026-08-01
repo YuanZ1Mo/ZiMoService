@@ -36,6 +36,23 @@ bool HttpServerManager::ReloadCertificate(const char* certFile, const char* keyF
 	return m_httpServer->ReloadCertificate(certFile, keyFile);
 }
 
+bool HttpServerManager::IsHttps() const
+{
+	return m_httpServer != nullptr && m_httpServer->IsHttps();
+}
+
+void HttpServerManager::SetTicketKeys(const unsigned char* keys, size_t len)
+{
+	if (m_httpServer)
+		m_httpServer->SetTicketKeys(keys, len);
+}
+
+void HttpServerManager::PostSetTicketKeys(const unsigned char* keys, size_t len)
+{
+	if (m_httpServer)
+		m_httpServer->PostSetTicketKeys(keys, len);
+}
+
 bool HttpServerManager::Open()
 {
 	if (m_httpServer)
@@ -115,17 +132,19 @@ bool HttpServerManager::Open()
 void HttpServerManager::Close()
 {
 	if (m_httpServer)
-	{
-		m_httpServer->Close();
-		delete m_httpServer;
-		m_httpServer = nullptr;
-	}
+		m_httpServer->Close();          // 停线程池/evhttp_free/释放 ctx(loop 仍在跑,在飞请求可 drain)
 
 	if (m_evLoop)
 	{
-		m_evLoop->Stop();
+		m_evLoop->Stop();               // join:loop 线程退出,残留 once 事件被丢弃
 		delete m_evLoop;
 		m_evLoop = nullptr;
+	}
+
+	if (m_httpServer)
+	{
+		delete m_httpServer;            // loop 已死,不会再有任何回调访问它
+		m_httpServer = nullptr;
 	}
 
 	DEFAULT_LOG_INFO("HTTP 服务器已关闭");

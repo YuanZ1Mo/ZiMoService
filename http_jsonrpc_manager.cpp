@@ -113,25 +113,40 @@ bool HttpJsonRpcManager::Open()
     return (m_httpServerJRPC != nullptr);
 }
 
+void HttpJsonRpcManager::SetTicketKeys(const unsigned char* keys, size_t len)
+{
+    if (m_httpServerJRPC)
+        m_httpServerJRPC->SetTicketKeys(keys, len);
+}
+
+void HttpJsonRpcManager::PostSetTicketKeys(const unsigned char* keys, size_t len)
+{
+    if (m_httpServerJRPC)
+        m_httpServerJRPC->PostSetTicketKeys(keys, len);
+}
+
 void HttpJsonRpcManager::Close()
 {
     // ★ 仅软关闭 HTTP 前端，不碰 pair 池
     // Pair 池由 ShutdownPairPool() 单独销毁，在 Hub 清完 TAP 之后调用
 
-    // 停 HTTP 服务器（join 线程池，释放 evhttp）
+    // 停 HTTP 服务器(join 线程池，释放 evhttp;loop 仍在跑，在飞请求可 drain)
     if (m_httpServerJRPC != nullptr)
-    {
         m_httpServerJRPC->Close();
-        delete m_httpServerJRPC;
-        m_httpServerJRPC = nullptr;
-    }
 
-    // 停自有事件循环（evhttp 已释放，evbase 安全释放）
+    // 停自有事件循环(join:残留 once 事件被丢弃)
     if (m_evLoopHttpServerJRPC != nullptr)
     {
         m_evLoopHttpServerJRPC->Stop();
         delete m_evLoopHttpServerJRPC;
         m_evLoopHttpServerJRPC = nullptr;
+    }
+
+    // 最后销毁服务器(loop 已死，不会再有任何回调访问它)
+    if (m_httpServerJRPC != nullptr)
+    {
+        delete m_httpServerJRPC;
+        m_httpServerJRPC = nullptr;
     }
 }
 
