@@ -11,7 +11,7 @@ ZiMo 客户端生态的核心 Windows 服务，基于 libevent 事件循环提�
 - **消息广播** — 端口 39640，TCP 一对多推送，基于 ZmBroadcastServer/ZmBroadcastClient
 - **SSE 推送** — `GET /zimo/api/events`，服务端实时事件流推送
 - **远程音频** — WASAPI loopback 采集系统声音 + Opus 编码,RESTful 流式推送,手机网页实时收听
-- **TAP 代理链** — 多协议前端共享 Hub 路由层（JRPC + RESTful 双协议委托）
+- **请求调度** — 每台 HTTP 服务器独立持有 ZmReqLoopPool，per-request 事件循环线程（ZmReqLoop）承载业务，deadline 超时兜底
 - **异步 DNS** — 基于 libevent `evdns_getaddrinfo`，事件驱动
 - **系统监控** — CPU/内存/GPU 实时负载采集
 - **Windows 服务生命周期** — 安装/卸载/调试，会话和电源事件感知
@@ -21,56 +21,49 @@ ZiMo 客户端生态的核心 Windows 服务，基于 libevent 事件循环提�
 ```
 service_main.cpp                     # 入口：install | uninstall | debug
   └─ ServiceCenter                   # Windows 服务控制器
-       ├─ ServicePortal              # 业务层（JRPC + RESTful 双回调入口）
+       ├─ ServicePortal              # 业务层（JRPC + RESTful 双回调入口，ZmReqLoop 线程执行）
        │    ├─ FileHubModule            # 文件中心（业务逻辑抽离，双协议共享，自建自管）
        │    └─ ServerAudioStreamModule  # 远程音频（WASAPI 采集 + Opus 编码 + 订阅分发）
        └─ NetDock                    # 网络层编排者
-            ├─ HubProxyManager       # TAP Hub 路由层（内部持有 Hub/JRPC/RESTful 三条事件循环）
             ├─ HttpServerManager     # 通用 HTTP 服务器 (端口 80)
             │     └─ ZmHttpRouter        # 路由中间件链（Express 风格）
             ├─ HttpRestfulManager   # ★ HTTP RESTful 前端 (端口 39441)
-            │     └─ ZmRESTfulServer + bufferevent_pair 池 → Hub → ZmTapDelegateRESTful
+            │     └─ ZmRESTfulServer → ZmReqLoopPool → ZmReqLoop 业务线程
             ├─ HttpJsonRpcManager    # HTTP JSON-RPC 前端 (端口 39440)
-            │     └─ ZmJsonRpcServer + bufferevent_pair 池 → Hub → ZmTapDelegateJRPC
+            │     └─ ZmJsonRpcServer → ZmReqLoopPool → ZmReqLoopJrpc 业务线程
             └─ BroadcastManager      # 消息广播服务端 (端口 39640)
 ```
 
 **RESTful 请求路由（★ 新架构）**：
 ```
 HTTP RESTful 请求 → ZmRESTfulServer (Worker 线程)
-  → HttpRestfulManager::OnRESTfulCBAsync → 打包 "REST" 帧
-  → bufferevent_pair[1] → Hub 协议探测
-  → ZmTapDelegateRESTful 解帧 → 线程池分发
-  → ServicePortal::RestfulRequestCB (业务处理)
-  → tap->httpd_task->TriggerReply() → HTTP 响应（★ 直通模式，不绕 pair）
+  → HttpRestfulManager::OnRESTfulCBAsync → ZmReqLoopPool::Acquire(排队上限 = 剩余预算)
+  → task->BindLoop(loop) → PostToLoop(REQ_LOOP_SIG_START)
+  → ServicePortal::RestfulRequestCB (ZmReqLoop 线程执行，事件驱动)
+  → ZmReqLoopRest::Response* (TryReply 门 + task 直通) → HTTP 响应
 ```
 
-**JRPC 请求路由（原架构，保留兼容）**：
+**JRPC 请求路由（★ 新架构）**：
 ```
 HTTP JRPC 请求 → ZmJsonRpcServer (Worker 线程)
-  → InjectJrpcRequest → bufferevent_pair[1] → Hub 协议探测
-  → ZmTapDelegateJRPC 解帧 → 线程池分发
-  → ServicePortal::JrpcRequestReadCB (业务处理)
-  → ZmTapContext::Response() → pair[1] 回写
-  → pair[0] 回调 → reply() → HTTP 响应
+  → HttpJsonRpcManager::OnJsonRpcCBAsync → ZmReqLoopPool::Acquire(排队上限 = 剩余预算)
+  → task->BindLoop(loop) → PostToLoop(REQ_LOOP_SIG_START)
+  → ServicePortal::JrpcRequestReadCB (ZmReqLoopJrpc 线程执行)
+  → ZmReqLoopJrpc::Response() → replyCB → HTTP 响应
 ```
 
 ## 线程模型
 
-系统包含 **六条独立的事件循环线程** 和 **四个线程池**：
+系统包含 **三条 HTTP 事件循环线程**，每台 HTTP 服务器另有 **独立 HTTP 线程池** 与 **ZmReqLoopPool 请求池**：
 
 | 线程/池 | 所属组件 | 说明 |
 |---------|---------|------|
-| **Hub 事件循环** | `HubProxyManager` → `m_evLoopHub` | 处理 TAP 代理链共享路由 |
-| **JRPC 事件循环** | `HubProxyManager` → `m_evLoopJRPC` | JRPC delegate 专用事件循环 |
-| **RESTful 事件循环** | `HubProxyManager` → `m_evLoopRESTful` | RESTful delegate 专用事件循环 |
 | **HTTP 80 事件循环** | `HttpServerManager` → `ZmEvBaseRunLoop` | 仅处理 HTTP 80 请求接收与响应发送 |
 | **HTTP 39440 事件循环** | `HttpJsonRpcManager` → `ZmEvBaseRunLoop` | 仅处理 JRPC HTTP 请求接收与响应发送 |
 | **HTTP 39441 事件循环** | `HttpRestfulManager` → `m_evLoopHttpServer` | 仅处理 RESTful HTTP 请求接收与响应发送 |
-| **HTTP 线程池** | `ZmHttpServer::m_pool` | 每个 HTTP 服务器独立的线程池，执行请求处理 |
-| **JRPC delegate 线程池** | `ZmTapDelegateJRPC::m_threadPool` | 执行业务回调 |
-| **RESTful delegate 线程池** | `ZmTapDelegateRESTful::m_threadPool` | 执行业务回调 |
-| **Pair 池事件循环** | `HttpJsonRpcManager/HttpRestfulManager::m_evLoopPairPool` | bufferevent_pair 池专用事件循环 |
+| **HTTP 线程池** | `ZmHttpServer::m_pool` | 每个 HTTP 服务器独立的线程池，执行请求处理（doer） |
+| **ZmReqLoopPool（RESTful）** | `HttpRestfulManager` → `ZmReqLoopPool` | per-request 事件循环线程池（预创建 hardware_concurrency，上限 4×，业务预算 5000ms），执行业务回调 |
+| **ZmReqLoopPool（JRPC）** | `HttpJsonRpcManager` → `ZmReqLoopPool` | 同上，工厂产出 `ZmReqLoopJrpc` 承载 per-request 回复函数 |
 
 ## 网络端口
 
@@ -136,7 +129,7 @@ HttpServerManager 暴露通用能力：
 |------|------|------|
 | GET | `/ping` | 心跳检测，返回 `{"pong": true}` |
 | GET | `/time` | 服务器当前时间与时间戳 |
-| GET | `/status` | 综合状态（HTTP/JRPC/RESTful/Hub/Broadcast/系统负载） |
+| GET | `/status` | 综合状态（HTTP/JRPC/RESTful/Broadcast/系统负载） |
 | POST | `/echo` | 通用接口测试，回显 Query 参数 |
 
 ### 广播
@@ -210,7 +203,7 @@ curl "http://localhost:39441/zimo/api/events"
 |------|------|
 | `ping` | 心跳检测，返回 pong |
 | `getTime` | 服务器当前时间 |
-| `getStatus` | 综合状态（HTTP/JRPC/Hub/Broadcast/系统负载） |
+| `getStatus` | 综合状态（HTTP/JRPC/RESTful/Broadcast/系统负载） |
 | `echo` | 通用接口测试，回显传入数据 |
 
 ### 广播
@@ -257,30 +250,30 @@ curl "http://localhost:39441/zimo/api/events"
 [HTTP 80 事件循环] OnEvent_Control → SendReply → evhttp_send_reply
 ```
 
-## RESTful 请求处理（★ 新）
+## RESTful 请求处理（★ 新架构）
 
-端口 39441 为异步模式，请求注入 Hub 代理链后业务层直通响应：
+端口 39441 为异步模式，请求经 ZmReqLoopPool 投递到 per-request 业务线程，回复 task 直通：
 
 ```
 [RESTful 事件循环] evhttp → OnRESTfulCBAsync
-  └─ 打包帧: "REST" + body_len + raw_body
-  └─ bufferevent_pair[1] 注入 Hub → 协议探测
+  └─ ZmReqLoopPool::Acquire(排队上限 = 剩余预算; 客户端已断则提前放弃)
+  └─ task->BindLoop(loop) → PostToLoop(REQ_LOOP_SIG_START)
      ↓
-[ZmTapDelegateRESTful] OnTapRequesterRead
-  └─ 解帧 → m_threadPool 分发
-     ↓
-[RESTful delegate 线程池] ServicePortal::RestfulRequestCB
-  ├── 路由匹配: verb + path
-  ├── 业务处理（文件中心/广播/系统等）
-  └── tap->httpd_task->TriggerReply() → ★ 直通 HTTP 响应
+[ZmReqLoop 线程] ProcessStart: Bind + deadline 定时器 + onStart
+  └─ ServicePortal::RestfulRequestCB
+     ├── 路由匹配: verb + path
+     ├── 业务处理（文件中心/广播/系统等）
+     └── ZmReqLoopRest::Response* → TryReply 门 + task 直通 → HTTP 响应
+  └─ 超时兜底: deadline 到期 → ProcessDeadline → 缺省 504
 ```
 
-与 JRPC 的关键区别：RESTful 响应不通过 pair 回传，业务层直接操作 `tap->httpd_task` 写响应，避免了 pair 往返，路径更短。
+业务超时（默认 5000ms 预算）由 per-request deadline 定时器兜底；流式响应（ResponseSSEStart/ResponseStreamStart）自动取消 deadline，长任务不被误杀。
 
 ## 关键设计
 
-- **双协议共存** — RESTful (端口 39441) 与 JRPC (端口 39440) 各自独立前端 + delegate，共享文件中心业务模块
-- **响应直通** — RESTful 业务层直写 HTTP 响应，无 pair 回传；JRPC 通过 pair 回写兼容旧流程
+- **双协议共存** — RESTful (端口 39441) 与 JRPC (端口 39440) 各自独立前端 + 独立 ZmReqLoopPool，共享文件中心业务模块
+- **事件驱动** — 业务回调与 close/超时/外部返回全部以事件（PostToLoop）送达同一 ZmReqLoop 线程，per-request 状态无跨线程竞争
+- **回复直通** — 回复 helper（ZmReqLoopRest::Response* / ZmReqLoopJrpc::Response）经 TryReply 原子门 + task 直通写 HTTP 响应，无 pair 回传
 - **零拷贝传输** — 下载使用 `evbuffer_file_segment`（mmap），上传使用 `CreateFileMapping + MapViewOfFile`
 - **断点续传** — 下载支持 HTTP Range 请求（206 Partial Content）
 - **SSE 推送** — 支持 `text/event-stream` 流式响应，业务层可自定义事件源
@@ -288,10 +281,10 @@ curl "http://localhost:39441/zimo/api/events"
 - **请求头传递** — 公共库支持将 HTTP 请求头投入业务侧，业务侧可回复自定义响应头
 - **密码安全** — HMAC-SHA256 哈希存储，前端 `lang="en"` + `ime-mode:disabled` 防止中文输入
 - **中文路径** — 全链路 Wide API（`CreateFileW`/`FindFirstFileW`），`ZmString::UTF8_To_Unicode`/`Unicode_To_UTF8` 转换
-- **线程模型** — 六条独立事件循环 + 四个线程池，跨线程通过 `event_active` + SPSC 队列通信
+- **线程模型** — 三条 HTTP 事件循环 + 每服务器独立 HTTP 线程池与 ZmReqLoopPool，跨线程通过 `event_active` + PostToLoop 队列通信
 - **路由中间件** — Express 风格，`(task, next)` 管道 + 前缀树匹配
 - **架构分离** — 通用层（HttpServerManager）与业务层（FileHubModule）分离，文件中心通过双协议暴露
-- **Pair 对象池** — bufferevent_pair 复用减少高并发下的内存分配和系统调用
+- **请求池调度** — ZmReqLoopPool 预创建 + 扩容 + 排队（不阻塞 HTTP 事件循环），deadline 超时兜底
 - **Doer 池化** — ZmHttpdDoer 对象池化，即时释放减少内存占用
 
 ## 构建
@@ -316,7 +309,7 @@ ZiMoService.exe debug       # 前台调试运行
 
 | 模块 | 说明 |
 |------|------|
-| `net/` | TCP、HTTP、RESTful 服务器、DNS、TAP 代理（JRPC + RESTful 双协议委托）、路由中间件 |
+| `net/` | TCP、HTTP、RESTful 服务器、DNS、请求调度（zm_net_req_loop*）、路由中间件 |
 | `service/` | ZmServiceBase |
 | `ssl/` | SSL 上下文管理 |
 | `libopus/` | Opus 编码器（静态库 /MT，远程音频编码） |

@@ -6,43 +6,36 @@
 
 #include "zm_json.h"
 #include "zm_util_str.h"
+#include "zm_net_req_loop.h"
 
 // 前向声明（头文件中仅通过指针/引用使用）
-class HubProxyManager;
 class HttpJsonRpcManager;
 class HttpRestfulManager;
-class ZmTapDelegateRESTful;
 class HttpServerManager;
 class BroadcastManager;
 class ZmHttpRouter;
 class ZmTicketKeyRotator;
-struct ZM_TAP_CTX;
-
-// TapDelegateJrpcRequestReadCB using 别名
-// （原始定义位于 zm_net_tap_jrpc.h，此处复制以避免拉入完整 zm_net_tap.h 链）
-using TapDelegateJrpcRequestReadCB = std::function<void(struct ZM_TAP_CTX*, const char*)>;
-using TapDelegateRESTfulRequestCB = std::function<void(struct ZM_TAP_CTX*, const BYTE*, size_t)>;
 
 /**
  * @brief 网络层生命周期编排者
  *
  * 创建并持有各个网络服务器管理器，负责：
- *   1. HubProxyManager — TAP Hub 路由层（内部持有 ZmEvBaseRunLoop 事件循环线程）
- *   2. HttpJsonRpcManager — HTTP JSON-RPC 前端（含内部 JRPC 请求通道）
+ *   1. HttpJsonRpcManager — HTTP JSON-RPC 前端（含私有 A 池，端口 39440）
+ *   2. HttpRestfulManager — HTTP RESTful 前端（含私有 A 池，端口 39441）
  *   3. HttpServerManager — 通用 HTTP 前端（端口 80）
  *   4. BroadcastManager — 广播服务端（端口 39640，消息推送）
  *
- * 跨线程 TAP 操作（Response/SetDropTimer/Drop）
- * 已迁移到 ZmTapContext（静态方法），业务层直接通过 ZmTapContext:: 调用。
+ * 请求链：HTTP → doer → 各 manager 私有 A 池（Acquire 排队）→ 业务回调（A 线程）
+ * → ZmReqLoopJrpc/ZmReqLoopRest::Response 直通 task 发送（不绕 Hub/pair）。
  *
  * 启动顺序约束：
- *   Init → OpenHub → OpenHttpJsonRpcServer（内部自行创建 ZmNetRequestChannel）
+ *   Init → 注入业务回调（SetJrpcRequestReadCB/SetRESTfulRequestCB，须在 Open 前）
+ *   → OpenHttpJsonRpcServer / OpenHttpRESTfulServer / OpenHttpServer / OpenBroadcastServer
  *
  * 关闭顺序约束：
- *   ① HTTP 前端软关闭 — Close() 停 HTTP Server + 线程池（Pair 池保留给在飞请求）
- *   ② Hub 停 — StopThreadPool → 清所有 TAP（pair1 EOF → pair 归还池）
- *              → beforeLoopStop 回调销毁 pair 池 → 停 event loop
- *   ③ HttpJsonRpcManager delete — 析构兜底（pair 池已在步骤②中销毁，跳过）
+ *   ① HTTP 前端软关闭 — Close() 停 HTTP Server + 排空 worker + 停 A 池
+ *      （在飞请求由各自 deadline 收尾）
+ *   ② HttpJsonRpcManager / HttpRestfulManager delete — 析构兜底（幂等）
  */
 class NetDock
 {
@@ -62,31 +55,19 @@ public:
      */
     void UnInit();
 
-    // --- Hub 路由层 ---
-
-    /**
-     * @brief 启动 TAP Hub 路由层（多协议前端共享）
-     * @note 需在 OpenHttpJsonRpcServer / OpenSocks5Server 之前调用
-     */
-    void OpenHub();
-    /** @brief 停止 TAP Hub 路由层 */
-    void CloseHub();
-
     // --- HTTP 前端 ---
 
     /**
      * @brief 启动 HTTP JSON-RPC 前端
-     * @note 依赖 Hub 已启动，否则仅输出错误日志而不创建 HTTP 服务器
      *
-     * HttpJsonRpcManager 内部自行创建 ZmNetRequestChannel 并将请求
-     * 通过 bufferevent_pair 注入 Hub 代理链。
+     * 内部创建 HttpJsonRpcManager（含私有 A 池）；业务回调在 Open 前注入。
      */
     void OpenHttpJsonRpcServer();
-    /** @brief 停止 HTTP JSON-RPC 前端（内部先关通道再 join Worker） */
+    /** @brief 停止 HTTP JSON-RPC 前端（软关闭：停 HTTP Server + 排空 worker + 停 A 池） */
     void CloseHttpJsonRpcServer();
 
     /**
-     * @brief 启动 HTTP RESTful 前端（端口独立，依赖 Hub 已启动）
+     * @brief 启动 HTTP RESTful 前端（端口独立）
      */
     void OpenHttpRESTfulServer();
     /** @brief 停止 HTTP RESTful 前端 */
@@ -111,7 +92,7 @@ public:
     /** @brief ticket 密钥轮换完成回调:投递到各 HTTPS 服务器事件循环 */
     void OnTicketRotated();
 
-    /** @brief 预留 SOCKS5 入口（依赖 Hub 已启动） */
+    /** @brief 预留 SOCKS5 入口 */
     void OpenSocks5Server();
     /** @brief 预留 停止 SOCKS5 */
     void CloseSocks5Server();
@@ -119,7 +100,7 @@ public:
     // --- 广播服务端 ---
 
     /**
-     * @brief 启动广播服务端（依赖 Hub 已启动，内部使用 Hub 的事件循环线程）
+     * @brief 启动广播服务端
      * @param port 监听端口，0 = 随机分配
      */
     void OpenBroadcastServer();
@@ -154,31 +135,26 @@ public:
     bool IsJrpcHttpOpen() const;
     /** @brief RESTful HTTP 服务器是否运行中 */
     bool IsRESTfulHttpOpen() const;
-    /** @brief Hub 路由层是否运行中 */
-    bool IsHubOpen() const;
-    /** @brief JRPC Proxy delegate 是否运行中 */
-    bool IsJrpcProxyOpen() const;
 
     // --- 回调设置 ---
 
     /**
      * @brief 设置 JRPC 请求的外部回调
-     * @param cb 回调函数，参数为 TAP 上下文和请求数据
-     * @note 需在 OpenHub 之前调用
+     * @param cb 回调函数，参数为 A 实例(ZmReqLoop*)和请求数据
+     * @note 需在 OpenHttpJsonRpcServer 之前调用
      */
-    void SetJrpcRequestReadCB(TapDelegateJrpcRequestReadCB cb);
-    void SetRESTfulRequestCB(TapDelegateRESTfulRequestCB cb);
+    void SetJrpcRequestReadCB(ZmReqLoopJrpcRequestCB cb);
+    void SetRESTfulRequestCB(ZmReqLoopRestfulRequestCB cb);
 
 private:
     // --- 成员变量 ---
-    HubProxyManager*       m_hubProxyMgr;         ///< TAP Hub 路由层（多协议前端共享，内部持有 ZmEvBaseRunLoop）
-    HttpJsonRpcManager*    m_httpJsonRpcMgr;      ///< HTTP JSON-RPC 前端（含内部请求通道）
-    HttpRestfulManager*    m_httpRestfulMgr;      ///< HTTP RESTful 前端（含内部 pair 池 + delegate）
+    HttpJsonRpcManager*    m_httpJsonRpcMgr;      ///< HTTP JSON-RPC 前端（含私有 A 池）
+    HttpRestfulManager*    m_httpRestfulMgr;      ///< HTTP RESTful 前端（含私有 A 池）
     HttpServerManager*     m_httpServerMgr;       ///< 通用 HTTP 前端（端口 80）
     BroadcastManager*      m_broadcastMgr;        ///< 广播服务端管理器
     ZmTicketKeyRotator*    m_ticketRotator;       ///< TLS ticket 密钥轮换器(懒创建,UnInit 释放)
-    TapDelegateJrpcRequestReadCB m_jrpcRequestReadCB;   ///< JRPC 回调
-    TapDelegateRESTfulRequestCB  m_restfulRequestCB;    ///< RESTful 回调
+    ZmReqLoopJrpcRequestCB m_jrpcRequestReadCB;   ///< JRPC 业务回调(Open 前注入)
+    ZmReqLoopRestfulRequestCB m_restfulRequestCB; ///< RESTful 业务回调(Open 前注入)
     bool                   m_unInited;            ///< 防止 UnInit 重复执行
 };
 

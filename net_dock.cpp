@@ -1,6 +1,5 @@
 #include "net_dock.h"
 
-#include "hub_proxy_manager.h"
 #include "http_jsonrpc_manager.h"
 #include "http_restful_manager.h"
 #include "http_server_manager.h"
@@ -8,14 +7,12 @@
 
 #include "zm_logger.h"
 #include "zm_json.h"
-#include "zm_net_tap.h"
 #include "zm_net_socket.h"
 #include "zm_ssl_ctx.h"
 #include "zm_util_sys.h"
 
 NetDock::NetDock()
-    : m_hubProxyMgr(nullptr)
-    , m_httpJsonRpcMgr(nullptr)
+    : m_httpJsonRpcMgr(nullptr)
     , m_httpRestfulMgr(nullptr)
     , m_httpServerMgr(nullptr)
     , m_broadcastMgr(nullptr)
@@ -52,15 +49,11 @@ void NetDock::UnInit()
     CloseBroadcastServer();
     CloseHttpServer();
 
-    // ② HTTP JRPC 软关闭（停 HTTP Server + 线程池，pair 池保留给在飞请求）
+    // ② HTTP 前端软关闭（停 HTTP Server + 排空 worker + 停 A 池）
     CloseHttpJsonRpcServer();
     CloseHttpRESTfulServer();
 
-    // ③ Hub 关闭：StopThreadPool → 清所有 TAP（pair1 全部 EOF → pair 归还池）
-    //    → beforeLoopStop 回调销毁 pair 池 → 停 event loop
-    CloseHub();
-
-    // ④ 最后 delete（pair 池已在步骤③中销毁，析构中 ShutdownPairPool 是 nullptr 跳过）
+    // ③ 最后 delete（析构兜底，幂等）
     if (m_httpJsonRpcMgr)
     {
         delete m_httpJsonRpcMgr;
@@ -74,42 +67,13 @@ void NetDock::UnInit()
     }
 }
 
-void NetDock::OpenHub()
-{
-    if (!m_hubProxyMgr)
-    {
-        m_hubProxyMgr = new HubProxyManager();
-        m_hubProxyMgr->Open(m_jrpcRequestReadCB, m_restfulRequestCB);
-    }
-}
-
-void NetDock::CloseHub()
-{
-    if (m_hubProxyMgr)
-    {
-        // ★ 在 Hub 清完所有 TAP 后、事件循环停止前，销毁 pair 池
-        m_hubProxyMgr->Close([this]() {
-            if (m_httpJsonRpcMgr)
-                m_httpJsonRpcMgr->ShutdownPairPool();
-            if (m_httpRestfulMgr)
-                m_httpRestfulMgr->ShutdownPairPool();
-        });
-        delete m_hubProxyMgr;
-        m_hubProxyMgr = nullptr;
-    }
-}
-
 void NetDock::OpenHttpJsonRpcServer()
 {
-    if (!m_hubProxyMgr)
-    {
-        DEFAULT_LOG_ERROR("OpenHttpJsonRpcServer failed: Hub not started, call OpenHub() first");
-    }
-
     if (!m_httpJsonRpcMgr)
     {
         m_httpJsonRpcMgr = new HttpJsonRpcManager();
-        // 从 Hub 获取 event_base，HttpJsonRpcManager 内部自行创建 ZmNetRequestChannel 并绑定 Hub 注入 handler
+        // 业务回调须在 Open() 前注入（Open 内部经 A 池投递后才会被调用）
+        m_httpJsonRpcMgr->SetJrpcRequestReadCB(m_jrpcRequestReadCB);
         if (!m_httpJsonRpcMgr->Open())
         {
             DEFAULT_LOG_ERROR("OpenHttpJsonRpcServer failed: HttpJsonRpcManager::Open() returned false");
@@ -133,9 +97,8 @@ void NetDock::OpenHttpJsonRpcServer()
 
 void NetDock::CloseHttpJsonRpcServer()
 {
-    // ★ 仅执行软关闭（停止通道 + HTTP 服务器），不 delete 对象
-    // Pair 池需在 Hub 关闭（所有 TAP 已 Drop）后才安全销毁，
-    // 因此 delete 推迟到 UnInit() 中 CloseHub() 之后执行
+    // ★ 仅执行软关闭（停 HTTP Server + 排空 worker + 停 A 池），不 delete 对象
+    // delete 推迟到 UnInit() 统一执行
     if (m_httpJsonRpcMgr)
     {
         m_httpJsonRpcMgr->Close();
@@ -144,15 +107,11 @@ void NetDock::CloseHttpJsonRpcServer()
 
 void NetDock::OpenHttpRESTfulServer()
 {
-    if (!m_hubProxyMgr)
-    {
-        DEFAULT_LOG_ERROR("OpenHttpRESTfulServer failed: Hub not started");
-        return;
-    }
-
     if (!m_httpRestfulMgr)
     {
         m_httpRestfulMgr = new HttpRestfulManager();
+        // 业务回调须在 Open() 前注入（Open 内部经 A 池投递后才会被调用）
+        m_httpRestfulMgr->SetRESTfulRequestCB(m_restfulRequestCB);
         if (!m_httpRestfulMgr->Open())
         {
             DEFAULT_LOG_ERROR("OpenHttpRESTfulServer failed: HttpRestfulManager::Open() returned false");
@@ -176,9 +135,8 @@ void NetDock::OpenHttpRESTfulServer()
 
 void NetDock::CloseHttpRESTfulServer()
 {
-    // ★ 仅执行软关闭（停止通道 + HTTP 服务器），不 delete 对象
-    // Pair 池需在 Hub 关闭（所有 TAP 已 Drop）后才安全销毁，
-    // 因此 delete 推迟到 UnInit() 中 CloseHub() 之后执行
+    // ★ 仅执行软关闭（停 HTTP Server + 排空 worker + 停 A 池），不 delete 对象
+    // delete 推迟到 UnInit() 统一执行
     if (m_httpRestfulMgr)
     {
         m_httpRestfulMgr->Close();
@@ -285,22 +243,8 @@ bool NetDock::IsJrpcHttpOpen() const
     return m_httpJsonRpcMgr && m_httpJsonRpcMgr->IsOpen();
 }
 
-bool NetDock::IsHubOpen() const
-{
-    return m_hubProxyMgr && m_hubProxyMgr->IsHubOpen();
-}
-
-bool NetDock::IsJrpcProxyOpen() const
-{
-    return m_hubProxyMgr && m_hubProxyMgr->IsJrpcDelegateOpen();
-}
-
 void NetDock::OpenSocks5Server()
 {
-    if (!m_hubProxyMgr)
-    {
-        DEFAULT_LOG_ERROR("OpenSocks5Server failed: Hub not started, call OpenHub() first");
-    }
     // TODO: 后续实现 SOCKS5 前端
 }
 
@@ -309,12 +253,12 @@ void NetDock::CloseSocks5Server()
     // TODO: 后续实现
 }
 
-void NetDock::SetJrpcRequestReadCB(TapDelegateJrpcRequestReadCB cb)
+void NetDock::SetJrpcRequestReadCB(ZmReqLoopJrpcRequestCB cb)
 {
     m_jrpcRequestReadCB = cb;
 }
 
-void NetDock::SetRESTfulRequestCB(TapDelegateRESTfulRequestCB cb)
+void NetDock::SetRESTfulRequestCB(ZmReqLoopRestfulRequestCB cb)
 {
     m_restfulRequestCB = cb;
 }

@@ -4,11 +4,11 @@
 
 #include "zm_net_runloop.h"
 #include "zm_logger.h"
-#include "zm_net_tap.h"
+#include "zm_net_req_loop.h"
 #include "zm_util_sys.h"
 
-#include <event2/bufferevent.h>
-#include <event2/buffer.h>
+#include <thread>
+#include <windows.h>
 
 // ============================================================================
 // HttpRestfulManager 构造 / 析构
@@ -17,15 +17,14 @@
 HttpRestfulManager::HttpRestfulManager()
     : m_evLoopHttpServer(nullptr)
     , m_httpServerRESTful(nullptr)
-    , m_evLoopPairPool(nullptr)
-    , m_pairPool(nullptr)
+    , m_reqLoopPool(nullptr)
+    , m_restfulRequestCB({})
 {
 }
 
 HttpRestfulManager::~HttpRestfulManager()
 {
     Close();
-    ShutdownPairPool();
 }
 
 // ============================================================================
@@ -61,27 +60,22 @@ bool HttpRestfulManager::Open()
     const char* pCert = useHttps ? certFile.c_str() : nullptr;
     const char* pKey = useHttps ? keyFile.c_str() : nullptr;
 
-    // 1. 创建 pair 池的事件循环
-    if (!m_evLoopPairPool)
+    // 1. 创建私有 A 池(预创建/上限/业务预算;低并发可调小预创建数)
+    if (!m_reqLoopPool)
     {
-        m_evLoopPairPool = new ZmEvBaseRunLoop("RESTfulPairPoolLoop");
-        if (!m_evLoopPairPool->Loop())
+        m_reqLoopPool = new ZmReqLoopPool();
+        unsigned hw = std::thread::hardware_concurrency();
+        if (hw == 0) hw = 1;
+        if (!m_reqLoopPool->Init((int)hw, (int)hw * 4, 5000))
         {
-            DEFAULT_LOG_ERROR("[RESTful] Pair 池事件循环启动失败");
-            delete m_evLoopPairPool;
-            m_evLoopPairPool = nullptr;
+            DEFAULT_LOG_ERROR("[RESTful] A 池初始化失败");
+            delete m_reqLoopPool;
+            m_reqLoopPool = nullptr;
             return false;
         }
     }
 
-    // 2. 创建 bufferevent_pair 对象池
-    if (m_pairPool == nullptr)
-    {
-        m_pairPool = new ZmBuffereventPairPool();
-        m_pairPool->Init(m_evLoopPairPool->GetEventBase(), 128);
-    }
-
-    // 3. 创建 HTTP 服务器事件循环
+    // 2. 创建 HTTP 服务器事件循环
     if (m_evLoopHttpServer == nullptr)
     {
         m_evLoopHttpServer = new ZmEvBaseRunLoop("RESTfulHttpServerLoop");
@@ -94,7 +88,7 @@ bool HttpRestfulManager::Open()
         }
     }
 
-    // 4. 创建 ZmRESTfulServer
+    // 3. 创建 ZmRESTfulServer
     if (m_httpServerRESTful == nullptr)
     {
         m_httpServerRESTful = new ZmRESTfulServer(
@@ -111,7 +105,7 @@ bool HttpRestfulManager::Open()
             return false;
         }
 
-        // 注册异步回调（将请求打包成帧 → pair → Hub）
+        // 注册异步回调（请求投递到 A 池处理）
         m_httpServerRESTful->SetRESTfulCBAsync(
             std::bind(&HttpRestfulManager::OnRESTfulCBAsync, this,
                 std::placeholders::_1, std::placeholders::_2,
@@ -128,11 +122,29 @@ bool HttpRestfulManager::Open()
 
 void HttpRestfulManager::Close()
 {
-    // 停 HTTP 服务器(join 线程池，释放 evhttp;loop 仍在跑，在飞请求可 drain)
+    // ★ ① 武装 close 通知器门:此后 closecb/登记/摘除不再触碰 map 与 A 池
+    //    (A 池即将销毁,防 closecb 投 CLOSE 到已删除的 loop)
+    if (m_httpServerRESTful)
+        m_httpServerRESTful->BeginClose();
+
+    // ② 排空 HTTP worker:join 后不再有 doer 进入 Acquire/START 投递
+    //    (池饱和时 Acquire 等待最长剩余预算(~5s),关闭路径可接受)
+    if (m_httpServerRESTful)
+        m_httpServerRESTful->DrainWorkers();
+
+    // ③ 停 A 池:join 全部 A 线程(在飞业务完成,其回复仍可投到存活的循环/doer池/evhttp)
+    if (m_reqLoopPool)
+    {
+        m_reqLoopPool->Shutdown();
+        delete m_reqLoopPool;
+        m_reqLoopPool = nullptr;
+    }
+
+    // ④ 停 HTTP 服务器(释放 evhttp;此时无在飞 A 业务)
     if (m_httpServerRESTful != nullptr)
         m_httpServerRESTful->Close();
 
-    // 停自有事件循环(join:残留 once 事件被丢弃)
+    // ⑤ 停自有事件循环(join)
     if (m_evLoopHttpServer != nullptr)
     {
         m_evLoopHttpServer->Stop();
@@ -140,7 +152,7 @@ void HttpRestfulManager::Close()
         m_evLoopHttpServer = nullptr;
     }
 
-    // 最后销毁服务器(loop 已死，不会再有任何回调访问它)
+    // ⑥ 最后销毁服务器(loop 已死,不会再有任何回调访问它)
     if (m_httpServerRESTful != nullptr)
     {
         delete m_httpServerRESTful;
@@ -167,141 +179,43 @@ void HttpRestfulManager::PostSetTicketKeys(const unsigned char* keys, size_t len
         m_httpServerRESTful->PostSetTicketKeys(keys, len);
 }
 
-void HttpRestfulManager::ShutdownPairPool()
-{
-    if (m_pairPool != nullptr)
-    {
-        m_pairPool->Shutdown();
-        delete m_pairPool;
-        m_pairPool = nullptr;
-    }
-
-    if (m_evLoopPairPool != nullptr)
-    {
-        m_evLoopPairPool->Stop();
-        delete m_evLoopPairPool;
-        m_evLoopPairPool = nullptr;
-    }
-
-}
-
 // ============================================================================
-// RESTful 异步回调：打包帧 → 写 pair → 注入 Hub
+// RESTful 异步回调：Acquire A → 绑定 → 投递 START
 // ============================================================================
 
 void HttpRestfulManager::OnRESTfulCBAsync(ZmHttpdTask* task,
     const BYTE* body, size_t body_len)
 {
-    // ① 从池获取 bufferevent_pair
-    ZmBuffereventPairHandle* handle = m_pairPool ? m_pairPool->Acquire() : nullptr;
-    if (handle == nullptr)
+    if (!m_restfulRequestCB)
     {
-        DEFAULT_LOG_ERROR("[RESTful] Acquire pair 失败");
+        task->SetReply(ZM_HTTP_STATUS_CODE_INTERNAL_ERROR);
+        task->TriggerReply();
+        return;
+    }
+
+    // ① A 池获取(排队上限 = 剩余预算;客户端已断则提前放弃)
+    int64_t remainMs = task->ArriveMs() + (int64_t)m_reqLoopPool->BudgetMs() - (int64_t)::GetTickCount64();
+    if (remainMs <= 0) remainMs = 1;
+    ZmReqLoop* loop = m_reqLoopPool->Acquire((int)remainMs, &task->ConnClosedFlag());
+    if (!loop)
+    {
+        // ★ 无论是否断连都回复:TriggerReply 驱动 doer 回收路径
+        // (断连时回复被 evhttp 丢弃,doer 仍正常回收,防泄漏)
         task->SetReply(ZM_HTTP_STATUS_CODE_SERVICE_UNAVAILABLE, "Service Unavailable");
         task->TriggerReply();
         return;
     }
 
-    // ② 写请求帧到 pair[0]: "REST" + body_len + body
-    struct evbuffer* output = bufferevent_get_output(handle->bev0);
-
-    // 帧头 "REST"
-    if (evbuffer_add(output, "REST", 4) < 0)
+    // ② 绑定 + 投递 START(doer 线程立即返回;START 处理在 A 线程完成 Bind + 业务)
+    task->BindLoop(loop);
+    auto* ctx = new ZmReqLoop::StartCtx();
+    ctx->task = task;
+    ctx->deadlineMs = task->ArriveMs() + (int64_t)m_reqLoopPool->BudgetMs();
+    ctx->handlers.onStart = [this, body, body_len](ZmReqLoop* l)
     {
-        DEFAULT_LOG_ERROR("[RESTful] 写帧头失败");
-        handle->ReleasePair();
-        task->SetReply(ZM_HTTP_STATUS_CODE_INTERNAL_ERROR);
-        task->TriggerReply();
-        return;
-    }
-
-    // body_len（大端）
-    uint32_t bodyLen = htonl((uint32_t)body_len);
-    if (evbuffer_add(output, &bodyLen, 4) < 0)
-    {
-        DEFAULT_LOG_ERROR("[RESTful] 写 body_len 失败");
-        handle->ReleasePair();
-        task->SetReply(ZM_HTTP_STATUS_CODE_INTERNAL_ERROR);
-        task->TriggerReply();
-        return;
-    }
-
-    // raw_body（零拷贝引用）
-    if (body && body_len > 0)
-    {
-        char* bodyCopy = new char[body_len];
-        memcpy(bodyCopy, body, body_len);
-
-        if (evbuffer_add_reference(output, bodyCopy, body_len,
-            [](const void*, size_t, void* extra) {
-                delete[] static_cast<char*>(extra);
-            }, bodyCopy) < 0)
-        {
-            DEFAULT_LOG_ERROR("[RESTful] 写 body 失败");
-            delete[] bodyCopy;
-            handle->ReleasePair();
-            task->SetReply(ZM_HTTP_STATUS_CODE_INTERNAL_ERROR);
-            task->TriggerReply();
-            return;
-        }
-    }
-
-    // ④ pair[1] 注入 Hub 代理链（直接把 task 传进去，Hub 创建 TAP 时自动设 tap->httpd_task）
-    struct sockaddr_storage srcAddr = {};
-    std::string ip = task->Ip();
-    if (!ip.empty())
-    {
-        if (ip.find(':') != std::string::npos)
-        {
-            auto* addr6 = (struct sockaddr_in6*)&srcAddr;
-            addr6->sin6_family = AF_INET6;
-            evutil_inet_pton(AF_INET6, ip.c_str(), &addr6->sin6_addr);
-            addr6->sin6_port = htons((uint16_t)task->Port());
-        }
-        else
-        {
-            auto* addr4 = (struct sockaddr_in*)&srcAddr;
-            addr4->sin_family = AF_INET;
-            evutil_inet_pton(AF_INET, ip.c_str(), &addr4->sin_addr);
-            addr4->sin_port = htons((uint16_t)task->Port());
-        }
-    }
-
-    if (!ZmTapContextEventHandler::OnPairAcceptBev("HubProxy", handle->bev1,
-            (struct sockaddr*)&srcAddr, handle, task))
-    {
-        DEFAULT_LOG_ERROR("[RESTful] OnPairAcceptBev 失败");
-        handle->ReleasePair();
-        task->SetReply(ZM_HTTP_STATUS_CODE_INTERNAL_ERROR);
-        task->TriggerReply();
-        return;
-    }
-
-    // ★ 注册 pair[0] 清理回调 — 参考 JRPC 的 OnResponseEvent
-    // RESTful 响应不走 pair 回传，但 pair[0] EOF 时仍需回收 handle 归还池
-    // 业务层调 tap->Drop() → FreeRequesterEnd → Pair0EOF → 触发本回调 → ReleasePair()
-    auto* cleanupCtx = new PairCleanupCtx{ handle };
-    bufferevent_setcb(handle->bev0, nullptr, nullptr,
-        HttpRestfulManager::OnPair0Event, cleanupCtx);
-    bufferevent_enable(handle->bev0, EV_READ | EV_WRITE);
-}
-
-// ============================================================================
-// pair[0] 清理回调（仿 JRPC OnResponseEvent，但无需读数据只管回收）
-// ============================================================================
-
-void HttpRestfulManager::OnPair0Event(struct bufferevent* bev, short events, void* ctx)
-{
-    auto* c = static_cast<PairCleanupCtx*>(ctx);
-    if (events & (BEV_EVENT_EOF | BEV_EVENT_ERROR))
-    {
-        // 正常流程：pair[1] 端 Drop → Pair0EOF → 本回调
-    }
-    else
-    {
-        DEFAULT_LOG_WARN("[RESTful] pair[0] 收到意外事件: events=0x{:x}", (unsigned)events);
-    }
-    // ★ 无论什么事件，都回收 pair 和 ctx（与 JRPC OnResponseEvent 对齐）
-    c->handle->ReleasePair();  // 同时标记 pair0/pair1 完成 → TryReturn → 归还池
-    delete c;
+        // body 指向请求 evbuffer,回复发送或请求释放前有效(零拷贝按设计接受)
+        m_restfulRequestCB(l, body, body_len);
+    };
+    loop->PostToLoop(ZmReqLoop::REQ_LOOP_SIG_START, ctx,
+        [](void* p) { delete static_cast<ZmReqLoop::StartCtx*>(p); });
 }

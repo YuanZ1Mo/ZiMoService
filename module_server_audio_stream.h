@@ -12,7 +12,7 @@
 #include <vector>
 
 class ZmHttpdTask;
-struct ZM_TAP_CTX;
+class ZmReqLoop;   // 本请求的 A 实例(收尾投递用,仅存指针)
 
 // ── 帧协议常量(小端) ─────────────────────────────────────
 // 每帧 = len(4B) + seq(4B) + Opus 帧数据
@@ -48,16 +48,16 @@ public:
     /**
      * @brief 订阅一个 HTTP 流式连接(必要时启动采集管线)
      * @param task 目标 HTTP 任务(调用方已 StartStreamReply)
-     * @param tap  对应 TAP 上下文(连接断开时由发送线程负责 EndStreamReply + Drop)
+     * @param loop 本请求的 A 实例(流收尾时经 PostToLoop(REQ_LOOP_SIG_DONE, task) 回池)
      * @return true 订阅成功;false 服务器无可用音频设备(采集启动失败)
-     * @note 必须在 RESTful delegate 线程池中调用
+     * @note 必须在 RESTful 业务回调(A 线程)中调用
      */
-    bool Subscribe(ZmHttpdTask* task, ZM_TAP_CTX* tap);
+    bool Subscribe(ZmHttpdTask* task, ZmReqLoop* loop);
 
     /**
-     * @brief 标记 task/tap 即将失效(服务停止时须在 NetDock 析构前调用)
+     * @brief 标记 task/loop 即将失效(服务停止时须在 NetDock 析构前调用)
      * @note 断连检测(I1 closecb)使发送线程可能在 NetDock 析构期间提前退出:
-     *       若 m_tasksGone 尚未置位,其 EndStreamReply/tap->Drop 会访问正在
+     *       若 m_tasksGone 尚未置位,其 EndStreamReply/PostToLoop 会访问正在
      *       销毁的网络对象(实测 0xc0000005 崩溃)。幂等,析构中也会再次置位。
      */
     void SetTasksGone();
@@ -74,7 +74,7 @@ private:
     struct Subscriber
     {
         ZmHttpdTask* task = nullptr;
-        ZM_TAP_CTX*  tap  = nullptr;
+        ZmReqLoop*   loop = nullptr;   // 本请求的 A 实例(流收尾 PostToLoop 投递用)
         std::deque<std::pair<uint32_t, std::vector<uint8_t>>> queue;  // <seq, opus帧>
         std::mutex mtx;
         std::condition_variable cv;
@@ -103,7 +103,7 @@ private:
 
     mutable std::mutex m_mutex;
     bool m_capturing = false;                                   // 采集状态(仅锁内访问)
-    bool m_tasksGone = false;                                   // 析构已开始:task/tap 即将失效(仅锁内访问)
+    bool m_tasksGone = false;                                   // 析构已开始:task/loop 即将失效(仅锁内访问)
     std::atomic<bool> m_captureExit {false};
     std::thread m_captureThread;
     std::unordered_map<ZmHttpdTask*, Subscriber*> m_subscribers;  // 活跃订阅者(仅锁内访问)

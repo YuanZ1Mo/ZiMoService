@@ -1,7 +1,7 @@
 #include "module_server_audio_stream.h"
 
-#include "zm_net_tap.h"
-#include "zm_net_tap_rest.h"
+#include "zm_net_http.h"         // ZmHttpdTask(发送线程流式接口,直接 task 访问)
+#include "zm_net_req_loop.h"     // ZmReqLoop + REQ_LOOP_SIG_DONE(流收尾投递)
 #include "zm_logger.h"
 
 #include <opus.h>
@@ -121,13 +121,13 @@ void ServerAudioStreamModule::SetTasksGone()
 
 ServerAudioStreamModule::~ServerAudioStreamModule()
 {
-    // 先标记 task/tap 即将失效(OnStop 通常已提前置位,此处兜底):
-    // 发送线程清理时将跳过 EndStreamReply/Drop(防止访问已释放对象)
+    // 先标记 task/loop 即将失效(OnStop 通常已提前置位,此处兜底):
+    // 发送线程清理时将跳过 EndStreamReply/PostToLoop(防止访问已释放对象)
     SetTasksGone();
 
     StopCapture();
 
-    // 停止并回收所有发送线程(服务停止路径:NetDock 已先销毁,task/tap 已失效,
+    // 停止并回收所有发送线程(服务停止路径:NetDock 已先销毁,task/loop 已失效,
     // m_tasksGone 已置位,发送线程不会访问流对象)。
     // 发送线程退出时会把自身 Subscriber 移交 m_zombies(锁内),因此此处只 join
     // 活跃线程,不 delete——统一由 ReapZombies 回收(发送线程绝不能 delete 自身:
@@ -186,7 +186,7 @@ void ServerAudioStreamModule::ReapZombies()
 // 订阅(触发按需启动采集)
 // ============================================================================
 
-bool ServerAudioStreamModule::Subscribe(ZmHttpdTask* task, ZM_TAP_CTX* tap)
+bool ServerAudioStreamModule::Subscribe(ZmHttpdTask* task, ZmReqLoop* loop)
 {
     ReapZombies();   // 先回收已退出发送线程的 Subscriber(join 不持锁)
 
@@ -209,7 +209,7 @@ bool ServerAudioStreamModule::Subscribe(ZmHttpdTask* task, ZM_TAP_CTX* tap)
 
     auto* sub = new Subscriber();
     sub->task = task;
-    sub->tap  = tap;
+    sub->loop = loop;
     m_subscribers[task] = sub;
     sub->thread = std::thread(&ServerAudioStreamModule::SenderThreadMain, this, sub);
     return true;
@@ -227,10 +227,10 @@ bool ServerAudioStreamModule::IsSubscriberAlive(ZmHttpdTask* task) const
 
 bool ServerAudioStreamModule::TryStartCaptureLocked()
 {
-    // 本线程(委托池线程)初始化 COM 为 MTA;长生命周期线程,不主动 CoUninitialize
+    // 本线程(A 线程)初始化 COM 为 MTA;长生命周期线程,不主动 CoUninitialize
     HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (hr == RPC_E_CHANGED_MODE)
-        DEFAULT_LOG_WARN("[audio] CoInitializeEx 返回 RPC_E_CHANGED_MODE(委托池线程非 MTA,跨单元使用接口)");
+        DEFAULT_LOG_WARN("[audio] CoInitializeEx 返回 RPC_E_CHANGED_MODE(A 线程非 MTA,跨单元使用接口)");
     else if (FAILED(hr))
     {
         DEFAULT_LOG_WARN("[audio] CoInitializeEx 失败 hr=0x{:08x}", (unsigned)hr);
@@ -732,10 +732,10 @@ void ServerAudioStreamModule::SenderThreadMain(ServerAudioStreamModule* mgr, Sub
         WriteLE32(hdr + 4, frame.first);
         if (sub->task->IsConnClosed())
             break;   // 发送前再查一次,封死发送窗口
-        ZmTapDelegateRESTful::ResponseStreamChunk(sub->tap, hdr, 8);
+        sub->task->SendReplyChunk(hdr, 8);
         if (sub->task->IsConnClosed())
             break;   // 两组 chunk 之间也查一次
-        ZmTapDelegateRESTful::ResponseStreamChunk(sub->tap, frame.second.data(), frame.second.size());
+        sub->task->SendReplyChunk(frame.second.data(), frame.second.size());
     }
 
     // ── 自我清理 ──
@@ -758,11 +758,18 @@ void ServerAudioStreamModule::SenderThreadMain(ServerAudioStreamModule* mgr, Sub
         mgr->m_zombies.push_back(sub);
         tasksGone = mgr->m_tasksGone;   // 锁内读取,与析构写侧同步(契约:仅锁内访问)
     }
-    // 服务停止时(NetDock 已先于 ServicePortal 销毁)task/tap 已失效,
+    // 服务停止时(NetDock 已先于 ServicePortal 销毁)task/loop 已失效,
     // 跳过流收尾;运行期(连接断开/设备失效)则正常收尾
     if (!tasksGone)
     {
-        ZmTapDelegateRESTful::ResponseStreamEnd(sub->tap);
+        if (sub->loop)
+            sub->loop->TryReply();   // ★ 先取回复门:与 CLOSE 的 ProcessClose 驱动互斥,防双事件双回收
+        sub->task->EndStreamReply();   // 线程安全:驱动 doer 回收(STREAM_END)
+        // 原 tap->Drop():A 实例回池。经 PostToLoop 投递,由 A 线程 ProcessDone
+        // 执行 TryReply + Release(投递时 epoch 校验,陈旧投递安全丢弃)
+        if (sub->loop)
+            sub->loop->PostToLoop(ZmReqLoop::REQ_LOOP_SIG_DONE, sub->task);
+        // ★ ctx 必须为 task(ProcessDone 身份校验契约,Task 2 审查定)
     }
     // 不 delete:Subscriber 由管理器 ReapZombies() join 后统一回收
     return;

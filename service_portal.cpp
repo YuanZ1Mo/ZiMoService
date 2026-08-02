@@ -6,10 +6,11 @@
 #include "http_server_manager.h"
 #include "module_file_hub.h"
 #include "module_server_audio_stream.h"
+#include "module_deepseek.h"
 
-#include "zm_net_tap_jrpc.h"
-#include "zm_net_tap_rest.h"
-#include "zm_net_tap.h"
+#include "zm_net_req_loop_protocol.h"   // ZmReqLoopJrpc/ZmReqLoopRest(回复 helper 静态调用)+ ZmReqLoopPool
+#include "zm_net_http.h"   // ZmHttpdTask/evhttp_cmd_type/ZmHttpUtil(直通回复与路由用)
+#include "zm_net_socket.h" // ZmWinSockHelper(池预创建客户端前先完成 WSAStartup,防启动竞态)
 #include "zm_logger.h"
 #include "zm_json.h"
 #include "zm_util_sys.h"
@@ -24,6 +25,17 @@ ServicePortal::ServicePortal()
 {
 	m_fileHubModule = new FileHubModule();
 	m_audioModule = new ServerAudioStreamModule();
+
+	// Winsock 先行初始化(幂等):池预创建客户端循环线程时 libevent 需已 WSAStartup,
+	// 否则 event_base_new 失败(实测:池 init 报 client start failed,预创建全部落空)
+	ZmWinSockHelper::Init();
+
+	// 通用外呼请求池(全门户共用;预创建4,上限16)
+	m_httpClientPool = new ZmHttpClientPool();
+	if (!m_httpClientPool->Init(4, 16))
+		DEFAULT_LOG_ERROR("ServicePortal: ZmHttpClientPool init failed");
+	// DeepSeek 模块:池创建后注入(配置/缓存/usage 处理全部在模块内)
+	m_deepseekModule = new DeepSeekModule(m_httpClientPool);
 }
 
 ServicePortal::~ServicePortal()
@@ -32,6 +44,15 @@ ServicePortal::~ServicePortal()
 	m_audioModule = nullptr;
 	delete m_fileHubModule;
 	m_fileHubModule = nullptr;
+
+	if (m_httpClientPool)
+	{
+		delete m_httpClientPool;   // 先停客户端循环线程(join):在飞回调此时仍可安全查模块 gone 标志
+		m_httpClientPool = nullptr;
+	}
+	// 池删后无新回调,模块方可安全释放(Shutdown 已置 gone;池 join 期间回调见 gone → 删 st 不投递)
+	delete m_deepseekModule;
+	m_deepseekModule = nullptr;
 }
 
 // ============================================================================
@@ -40,10 +61,14 @@ ServicePortal::~ServicePortal()
 
 void ServicePortal::Shutdown()
 {
-	// 业务层停止钩子:NetDock 析构前标记音频模块 task/tap 即将失效
-	// (NetDock 析构触发 closecb,发送线程提前退出时须跳过流收尾,防 UAF)
+	// 业务层停止钩子:NetDock 析构前标记音频模块 task/loop 与 SSE 测试线程 loop 即将失效
+	// (NetDock 析构触发 closecb,发送线程提前退出时须跳过流收尾投递,防 UAF)
 	if (m_audioModule)
 		m_audioModule->SetTasksGone();
+	// DeepSeek 模块:回调经 m_gone 跳过续体投递(防 loop 已销毁)
+	if (m_deepseekModule)
+		m_deepseekModule->Shutdown();
+	m_sseGone.store(true);
 }
 
 
@@ -90,6 +115,10 @@ void ServicePortal::RegisterHttpRoutes(HttpServerManager* httpMgr)
 		return httpMgr->ServeStaticFile(task, "/html/audio.html");
 	});
 
+	router.Get("/deepseek", [httpMgr](ZmHttpdTask* task, const BYTE*, size_t) {
+		return httpMgr->ServeStaticFile(task, "/html/deepseek.html");
+	});
+
 	router.Get("/404", [httpMgr](ZmHttpdTask* task, const BYTE*, size_t) {
 		return httpMgr->ServeStaticFile(task, "/html/404.html");
 	});
@@ -105,7 +134,7 @@ void ServicePortal::RegisterHttpRoutes(HttpServerManager* httpMgr)
 // JRPC 请求回调
 // ============================================================================
 
-void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
+void ServicePortal::JrpcRequestReadCB(ZmReqLoop* loop, const char* reqData)
 {
 	ZMJSON rsp_headers;
 	ZMJSON rsp_result;
@@ -118,7 +147,7 @@ void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 		ZMJSON rsp;
 		rsp["error"]["code"]    = -32700;
 		rsp["error"]["message"] = "Parse error: " + err;
-		ZmTapDelegateJRPC::Response(tap, rsp);
+		ZmReqLoopJrpc::Response(loop, rsp);
 		return;
 	}
 
@@ -132,7 +161,13 @@ void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 	}
 	else if (req_method == "drop")
 	{
-		tap->Drop();
+		// ★ 先驱动 doer 回收(旧 tap->Drop 立即关连接;现在回复空 200 后关闭)
+		if (loop->TryReply())   // ★ 已被他方收尾则跳过驱动(防双事件)
+		{
+			loop->Task()->SetReply(200);
+			loop->Task()->TriggerReply();
+		}
+		loop->PostToLoop(ZmReqLoop::REQ_LOOP_SIG_DONE, loop->Task());
 		return;
 	}
 	else if (req_method == "getTime")
@@ -156,10 +191,6 @@ void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 
 		rsp_result["jrpc_http"]["status"] = (m_netDock && m_netDock->IsJrpcHttpOpen()) ? "running" : "stopped";
 		rsp_result["jrpc_http"]["port"]   = ZM_JSONRPC_SERVER_PORT;
-
-		rsp_result["hub"]["status"] = (m_netDock && m_netDock->IsHubOpen()) ? "running" : "stopped";
-
-		rsp_result["jrpc_proxy"]["status"] = (m_netDock && m_netDock->IsJrpcProxyOpen()) ? "running" : "stopped";
 
 		rsp_result["broadcast"]["status"]      = (m_netDock && m_netDock->IsBroadcastOpen()) ? "running" : "stopped";
 		rsp_result["broadcast"]["port"]        = (m_netDock && m_netDock->GetBroadcastManager()) ? m_netDock->GetBroadcastManager()->GetPort() : 0;
@@ -353,17 +384,17 @@ void ServicePortal::JrpcRequestReadCB(ZM_TAP_CTX* tap, const char* reqData)
 	else
 		rsp["result"] = rsp_result;
 	rsp["headers"] = rsp_headers;
-	ZmTapDelegateJRPC::Response(tap, rsp);
+	ZmReqLoopJrpc::Response(loop, rsp);
 }
 
 // ============================================================================
-// RESTful 请求回调（delegate 工作线程中执行）
+// RESTful 请求回调
 // ============================================================================
 
-void ServicePortal::RestfulRequestCB(ZM_TAP_CTX* tap,
+void ServicePortal::RestfulRequestCB(ZmReqLoop* loop,
 	const BYTE* body, size_t body_len)
 {
-	auto* task = tap->httpd_task;
+	auto* task = loop->Task();
 	evhttp_cmd_type verb = task->Method();
 	std::string path(task->Path() ? task->Path() : "/");
 
@@ -383,14 +414,14 @@ void ServicePortal::RestfulRequestCB(ZM_TAP_CTX* tap,
 	// ── GET /ping ────────────────────────────────────────
 	if (verb == EVHTTP_REQ_GET && path == "/ping")
 	{
-		ZmTapDelegateRESTful::ResponseJson(tap, 200, {{"pong", true}});
+		ZmReqLoopRest::ResponseJson(loop, 200, {{"pong", true}});
 	}
 	// ── GET /time ────────────────────────────────────────
 	else if (verb == EVHTTP_REQ_GET && path == "/time")
 	{
 		time_t now = time(nullptr); char buf[32];
 		ZmSystem::CurrentTimeStr(buf, sizeof(buf));
-		ZmTapDelegateRESTful::ResponseJson(tap, 200, {{"time", buf}, {"timestamp", (long)now}});
+		ZmReqLoopRest::ResponseJson(loop, 200, {{"time", buf}, {"timestamp", (long)now}});
 	}
 	// ── GET /status ──────────────────────────────────────
 	else if (verb == EVHTTP_REQ_GET && path == "/status")
@@ -405,8 +436,6 @@ void ServicePortal::RestfulRequestCB(ZM_TAP_CTX* tap,
 		info["jrpc_http"]["port"] = ZM_JSONRPC_SERVER_PORT;
 		info["restful_http"]["status"] = (m_netDock && m_netDock->IsRESTfulHttpOpen()) ? "running" : "stopped";
 		info["restful_http"]["port"] = ZM_RESTFUL_SERVER_PORT;
-		info["hub"]["status"] = (m_netDock && m_netDock->IsHubOpen()) ? "running" : "stopped";
-		info["jrpc_proxy"]["status"] = (m_netDock && m_netDock->IsJrpcProxyOpen()) ? "running" : "stopped";
 		info["broadcast"]["status"] = (m_netDock && m_netDock->IsBroadcastOpen()) ? "running" : "stopped";
 		info["broadcast"]["port"] = (m_netDock && m_netDock->GetBroadcastManager()) ? m_netDock->GetBroadcastManager()->GetPort() : 0;
 		info["broadcast"]["connections"] = (m_netDock && m_netDock->GetBroadcastManager()) ? m_netDock->GetBroadcastManager()->GetConnectionCount() : 0;
@@ -418,14 +447,22 @@ void ServicePortal::RestfulRequestCB(ZM_TAP_CTX* tap,
 		info["system"]["usedMemMB"] = load.used_memory_mb;
 		info["system"]["gpuAvailable"] = load.has_gpu;
 		info["system"]["gpu"] = (load.has_gpu ? load.gpu_percent : -1.0);
-		ZmTapDelegateRESTful::ResponseJson(tap, 200, info);
+		ZmReqLoopRest::ResponseJson(loop, 200, info);
+	}
+	// ── GET /deepseek/usage ──────────────────────────────
+	else if (verb == EVHTTP_REQ_GET && path == "/deepseek/usage")
+	{
+		if (m_deepseekModule && m_deepseekModule->HandleUsageRequest(loop))
+			return;
+		ZmReqLoopRest::ResponseError(loop, 404, "deepseek module not available");
+		return;
 	}
 	// ── POST /broadcast ──────────────────────────────────
 	else if (verb == EVHTTP_REQ_POST && path == "/broadcast")
 	{
 		std::string topic = qv("topic"), content = qv("content"), tag = qv("tag");
-		if (topic.empty()) ZmTapDelegateRESTful::ResponseError(tap, 400, "topic is required");
-		else ZmTapDelegateRESTful::ResponseJson(tap, 200, {{"success", BroadcastMessage(topic, content, tag)}});
+		if (topic.empty()) ZmReqLoopRest::ResponseError(loop, 400, "topic is required");
+		else ZmReqLoopRest::ResponseJson(loop, 200, {{"success", BroadcastMessage(topic, content, tag)}});
 	}
 	// ── POST /echo ───────────────────────────────────────
 	else if (verb == EVHTTP_REQ_POST && path == "/echo")
@@ -443,7 +480,7 @@ void ServicePortal::RestfulRequestCB(ZM_TAP_CTX* tap,
 				pos = amp + 1;
 			}
 		}
-		ZmTapDelegateRESTful::ResponseJson(tap, 200, {{"echo", echoObj}});
+		ZmReqLoopRest::ResponseJson(loop, 200, {{"echo", echoObj}});
 	}
 	// ── GET /routes ─────────────────────────────────────
 	else if (verb == EVHTTP_REQ_GET && path == "/routes")
@@ -472,7 +509,7 @@ void ServicePortal::RestfulRequestCB(ZM_TAP_CTX* tap,
 		add("GET",  "/files/download","下载文件",          "GET /files/download?path=f.txt", "(二进制, Content-Disposition: attachment)");
 		add("GET",  "/events",        "SSE 事件推送",      "GET /events",            "data: {\"id\":0,\"data\":\"event 0\"}\\n\\n");
 		add("GET",  "/audio/stream", "远程音频流",         "GET /audio/stream", "(二进制帧: len(4B)+seq(4B)+Opus 20ms 帧, 48000Hz 立体声)");
-		ZmTapDelegateRESTful::ResponseJson(tap, 200, {{"routes", arr}, {"total", (int)arr.size()}});
+		ZmReqLoopRest::ResponseJson(loop, 200, {{"routes", arr}, {"total", (int)arr.size()}});
 	}
 	// ── GET /about ──────────────────────────────────────
 	else if (verb == EVHTTP_REQ_GET && path == "/about")
@@ -490,31 +527,31 @@ void ServicePortal::RestfulRequestCB(ZM_TAP_CTX* tap,
 			if (ZmFile::ReadString((root + "\\README.md").c_str(), md)) rsp["backend"] = md;
 			if (ZmFile::ReadString((root + "\\www\\doc\\README.md").c_str(), md)) rsp["frontend"] = md;
 		}
-		ZmTapDelegateRESTful::ResponseJson(tap, 200, rsp);
+		ZmReqLoopRest::ResponseJson(loop, 200, rsp);
 	}
 	// ── FileHub 操作 ─────────────────────────────────────────
 	else if (path == "/files" || path.find("/files/") == 0)
 	{
-		if (!m_fileHubModule) { ZmTapDelegateRESTful::ResponseError(tap, 503, "文件中心未初始化"); return; }
+		if (!m_fileHubModule) { ZmReqLoopRest::ResponseError(loop, 503, "文件中心未初始化"); return; }
 
 		// GET /filespath=... → 列出文件
 		if (verb == EVHTTP_REQ_GET && path == "/files")
-			ZmTapDelegateRESTful::ResponseJson(tap, 200, m_fileHubModule->ListFiles(qv("path")));
+			ZmReqLoopRest::ResponseJson(loop, 200, m_fileHubModule->ListFiles(qv("path")));
 		// GET /files/search?keyword=... → 搜索
 		else if (verb == EVHTTP_REQ_GET && path == "/files/search")
-			ZmTapDelegateRESTful::ResponseJson(tap, 200, m_fileHubModule->SearchFiles(qv("keyword")));
+			ZmReqLoopRest::ResponseJson(loop, 200, m_fileHubModule->SearchFiles(qv("keyword")));
 		// POST /files/dirs → 创建目录
 		else if (verb == EVHTTP_REQ_POST && path == "/files/dirs")
-			ZmTapDelegateRESTful::ResponseJson(tap, 200, m_fileHubModule->CreateDir(qv("path"), qv("dirName"), qv("username"), qv("password")));
+			ZmReqLoopRest::ResponseJson(loop, 200, m_fileHubModule->CreateDir(qv("path"), qv("dirName"), qv("username"), qv("password")));
 		// DELETE /filespath=... → 删除
 		else if (verb == EVHTTP_REQ_DELETE && path == "/files")
-			ZmTapDelegateRESTful::ResponseJson(tap, 200, m_fileHubModule->DeleteItem(qv("path"), qv("username"), qv("password")));
+			ZmReqLoopRest::ResponseJson(loop, 200, m_fileHubModule->DeleteItem(qv("path"), qv("username"), qv("password")));
 		// GET /files/verify-password?path=...&password=...→ 验证密码
 		else if ((verb == EVHTTP_REQ_GET || verb == EVHTTP_REQ_POST) && path == "/files/verify-password")
-			ZmTapDelegateRESTful::ResponseJson(tap, 200, m_fileHubModule->VerifyDirPassword(qv("path"), qv("password")));
+			ZmReqLoopRest::ResponseJson(loop, 200, m_fileHubModule->VerifyDirPassword(qv("path"), qv("password")));
 		// PUT /files/password → 修改密码
 		else if (verb == EVHTTP_REQ_PUT && path == "/files/password")
-			ZmTapDelegateRESTful::ResponseJson(tap, 200, m_fileHubModule->ChangeDirPassword(qv("path"), qv("username"), qv("oldPassword"), qv("newPassword")));
+			ZmReqLoopRest::ResponseJson(loop, 200, m_fileHubModule->ChangeDirPassword(qv("path"), qv("username"), qv("oldPassword"), qv("newPassword")));
 		else if (verb == EVHTTP_REQ_POST && path == "/files/batch-delete")
 		{
 			std::string pathsStr = qv("paths");
@@ -525,44 +562,53 @@ void ServicePortal::RestfulRequestCB(ZM_TAP_CTX* tap,
 					{ pathsArr.push_back(pathsStr.substr(start, end - start)); start = end + 1; }
 				pathsArr.push_back(pathsStr.substr(start));
 			}
-			ZmTapDelegateRESTful::ResponseJson(tap, 200, m_fileHubModule->BatchDelete(pathsArr, qv("username"), qv("password")));
+			ZmReqLoopRest::ResponseJson(loop, 200, m_fileHubModule->BatchDelete(pathsArr, qv("username"), qv("password")));
 		}
 		// POST /files/upload?path=... → 上传（body 是文件内容）
 		else if (verb == EVHTTP_REQ_POST && path == "/files/upload")
 		{
 			std::string filePath = qv("path");
-			if (filePath.empty()) { ZmTapDelegateRESTful::ResponseError(tap, 400, "path is required"); return; }
+			if (filePath.empty()) { ZmReqLoopRest::ResponseError(loop, 400, "path is required"); return; }
 			int code = m_fileHubModule->ReceiveFile(task, m_fileHubModule->GetHubRoot() + "\\" + filePath, body, body_len);
-			ZmTapDelegateRESTful::ResponseJson(tap, code, {{"ok", code < 400}, {"path", filePath}, {"size", body_len}});
+			ZmReqLoopRest::ResponseJson(loop, code, {{"ok", code < 400}, {"path", filePath}, {"size", body_len}});
 		}
 		// GET /files/download?path=... → 下载（支持断点续传）
 		else if (verb == EVHTTP_REQ_GET && path == "/files/download")
 		{
 			std::string filePath = qv("path");
-			if (filePath.empty()) { ZmTapDelegateRESTful::ResponseError(tap, 400, "path is required"); return; }
+			if (filePath.empty()) { ZmReqLoopRest::ResponseError(loop, 400, "path is required"); return; }
 			std::replace(filePath.begin(), filePath.end(), '/', '\\');
 			std::string fullPath = m_fileHubModule->GetHubRoot() + "\\" + filePath;
 			int code = m_fileHubModule->SendFile(task, fullPath);
 			if (code < 400) {
-				task->TriggerReply();
-				tap->Drop();
+				if (loop->TryReply())   // ★ 已被他方收尾则跳过驱动(防双事件)
+					task->TriggerReply();
+				// 原 tap->Drop():回复已投出,以 DONE 收尾(ProcessDone:TryReply+Release 回池)
+				loop->PostToLoop(ZmReqLoop::REQ_LOOP_SIG_DONE, task);
 			} else {
-				ZmTapDelegateRESTful::ResponseError(tap, code, code == 404 ? "文件不存在" : "下载失败");
+				ZmReqLoopRest::ResponseError(loop, code, code == 404 ? "文件不存在" : "下载失败");
 			}
 		}
-		else { ZmTapDelegateRESTful::ResponseError(tap, 404, "Not found: " + std::string(ZmHttpUtil::VerbToString(verb)) + " " + path); }
+		else { ZmReqLoopRest::ResponseError(loop, 404, "Not found: " + std::string(ZmHttpUtil::VerbToString(verb)) + " " + path); }
 	}
 	// ── GET /events (SSE) ──────────────────────────────
 	else if (verb == EVHTTP_REQ_GET && path == "/events")
 	{
-		ZmTapDelegateRESTful::ResponseSSEStart(tap);
-		std::thread([tap] {
-			for (int i = 0; i < 50; i++) {
-				if (!tap->httpd_task->IsStreaming() || tap->httpd_task->IsConnClosed()) break;
-				ZmTapDelegateRESTful::ResponseSSEEvent(tap, {{"id", i}, {"data", "event " + std::to_string(i)}});
+		ZmReqLoopRest::ResponseSSEStart(loop);
+		ZmHttpdTask* sseTask = task;   // 捕获请求上下文;外部线程只碰 task 的线程安全接口
+		std::thread([sseTask, loop, this] {
+			for (int i = 0; i < 50; i++)
+			{
+				if (!sseTask->IsStreaming() || sseTask->IsConnClosed())
+					break;   // 流未开/客户端已断:退出
+				std::string line = "data: " + (ZMJSON{{"id", i}, {"data", "event " + std::to_string(i)}}).dump() + "\n\n";
+				sseTask->SendReplyChunk((const BYTE*)line.c_str(), line.size());   // 线程安全
 				Sleep(2000);
 			}
-			ZmTapDelegateRESTful::ResponseSSEEnd(tap);
+			loop->TryReply();   // ★ 同上:防 CLOSE 竞态双驱动
+			sseTask->EndStreamReply();   // 线程安全:驱动 doer 回收
+			if (!m_sseGone.load())
+				loop->PostToLoop(ZmReqLoop::REQ_LOOP_SIG_DONE, sseTask);   // ★ ctx=task;陈旧投递由 ProcessDone 身份校验丢弃
 		}).detach();
 	}
 	// ── GET /audio/stream (远程音频流) ─────────────────────
@@ -570,17 +616,17 @@ void ServicePortal::RestfulRequestCB(ZM_TAP_CTX* tap,
 	{
 		if (!m_audioModule)
 		{
-			ZmTapDelegateRESTful::ResponseError(tap, 503, "音频服务未初始化");
+			ZmReqLoopRest::ResponseError(loop, 503, "音频服务未初始化");
 			return;
 		}
 		// 先订阅(必要时启动采集):失败可真实返回 503(规格 §7 无设备场景)
-		if (!m_audioModule->Subscribe(task, tap))
+		if (!m_audioModule->Subscribe(task, loop))
 		{
 			DEFAULT_LOG_WARN("[audio] 订阅失败:服务器无可用音频设备");
-			ZmTapDelegateRESTful::ResponseError(tap, 503, "服务器无音频输出设备");
+			ZmReqLoopRest::ResponseError(loop, 503, "服务器无音频输出设备");
 			return;
 		}
-		ZmTapDelegateRESTful::ResponseStreamStart(tap, 200, {
+		ZmReqLoopRest::ResponseStreamStart(loop, 200, {
 			{"Content-Type", "application/octet-stream"},
 			{"Cache-Control", "no-cache"}
 		});
@@ -588,10 +634,13 @@ void ServicePortal::RestfulRequestCB(ZM_TAP_CTX* tap,
 		// 订阅者已被移除——此时无人发流,主动结束避免挂死的空流
 		if (!m_audioModule->IsSubscriberAlive(task))
 		{
-			task->EndStreamReply();
-			tap->Drop();
+			if (loop->TryReply())   // ★ 已被他方收尾则跳过驱动(防双事件)
+				task->EndStreamReply();
+			// 回调与发送线程可能双投 DONE/双 EndStreamReply——DONE 由 epoch/身份校验去重,
+			// EndStreamReply 幂等,有意为之
+			loop->PostToLoop(ZmReqLoop::REQ_LOOP_SIG_DONE, task);
 		}
 		// 订阅成功:发送由订阅者内部线程执行,本回调直接返回
 	}
-	else { ZmTapDelegateRESTful::ResponseError(tap, 404, "Not found: " + std::string(ZmHttpUtil::VerbToString(verb)) + " " + path); }
+	else { ZmReqLoopRest::ResponseError(loop, 404, "Not found: " + std::string(ZmHttpUtil::VerbToString(verb)) + " " + path); }
 }

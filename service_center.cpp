@@ -25,7 +25,7 @@ void ServiceCenter::OnStart(DWORD /*argc*/, TCHAR** /*argv[]*/)
     m_netDock->Init();
 
     // 将 NetDock 注入 ServicePortal，供状态查询等用途
-    // 业务层在 Worker 线程中处理完成后，通过 ZmTapContext::Response 安全回写响应
+    // 业务层在 A 线程处理完成后，通过 ZmReqLoopJrpc/ZmReqLoopRest 回复 helper 安全回写响应
     m_servicePortal->SetNetDock(m_netDock);
 
     m_netDock->SetJrpcRequestReadCB(std::bind(&ServicePortal::JrpcRequestReadCB, m_servicePortal,
@@ -34,7 +34,6 @@ void ServiceCenter::OnStart(DWORD /*argc*/, TCHAR** /*argv[]*/)
         std::placeholders::_1, std::placeholders::_2,
         std::placeholders::_3));
 
-    m_netDock->OpenHub();
     m_netDock->OpenHttpJsonRpcServer();
     m_netDock->OpenHttpRESTfulServer();
     m_netDock->OpenHttpServer();
@@ -49,16 +48,16 @@ void ServiceCenter::OnStop()
     // ★ 关闭顺序:
     //   ① 先清除 ServicePortal 的 NetDock 引用 — 防止 NetDock 析构后
     //      ServicePortal 通过悬空指针访问已释放的 NetDock
-    //   ② NetDock 释放 — 内部按 前端→Hub→ZmEvBaseRunLoop 顺序清理;
-    //      先停 HTTP 前端与线程池,排空在飞请求后 TAP delegate 不再持有回调
+    //   ② NetDock 释放 — 内部先停各 HTTP 前端(停服务器+排空 worker+停 A 池),
+    //      排空在飞请求后业务回调不再被调用
     //   ③ ServicePortal 释放 — 此时无新回调进入;远程音频发送线程通过
-    //      m_tasksGone 标记跳过已失效的 task/tap 访问
+    //      m_tasksGone 标记跳过已失效的 task/loop 访问
     if (m_servicePortal)
         m_servicePortal->SetNetDock(nullptr);
 
-    // 业务层停止钩子(内部处理音频模块 task/tap 失效标记):须在 NetDock 析构前调用。
+    // 业务层停止钩子(内部处理音频模块 task/loop 失效标记):须在 NetDock 析构前调用。
     // NetDock 析构期间连接关闭触发 closecb,发送线程可能提前退出——标志未置位时
-    // EndStreamReply/tap->Drop 会访问正在销毁的 task/tap(实测 0xc0000005)
+    // EndStreamReply/PostToLoop 会访问正在销毁的 task/loop(实测 0xc0000005)
     if (m_servicePortal)
         m_servicePortal->Shutdown();
 
