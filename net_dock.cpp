@@ -49,7 +49,7 @@ void NetDock::UnInit()
     CloseBroadcastServer();
     CloseHttpServer();
 
-    // ② HTTP 前端软关闭（停 HTTP Server + 排空 worker + 停 A 池）
+    // ② HTTP 前端软关闭（停 HTTP Server + 排空 worker + 停 ZmReqLoopPool）
     CloseHttpJsonRpcServer();
     CloseHttpRESTfulServer();
 
@@ -72,7 +72,7 @@ void NetDock::OpenHttpJsonRpcServer()
     if (!m_httpJsonRpcMgr)
     {
         m_httpJsonRpcMgr = new HttpJsonRpcManager();
-        // 业务回调须在 Open() 前注入（Open 内部经 A 池投递后才会被调用）
+        // 业务回调须在 Open() 前注入（Open 内部经 ZmReqLoopPool投递后才会被调用）
         m_httpJsonRpcMgr->SetJrpcRequestReadCB(m_jrpcRequestReadCB);
         if (!m_httpJsonRpcMgr->Open())
         {
@@ -97,7 +97,7 @@ void NetDock::OpenHttpJsonRpcServer()
 
 void NetDock::CloseHttpJsonRpcServer()
 {
-    // ★ 仅执行软关闭（停 HTTP Server + 排空 worker + 停 A 池），不 delete 对象
+    // ★ 仅执行软关闭（停 HTTP Server + 排空 worker + 停 ZmReqLoopPool），不 delete 对象
     // delete 推迟到 UnInit() 统一执行
     if (m_httpJsonRpcMgr)
     {
@@ -110,7 +110,7 @@ void NetDock::OpenHttpRESTfulServer()
     if (!m_httpRestfulMgr)
     {
         m_httpRestfulMgr = new HttpRestfulManager();
-        // 业务回调须在 Open() 前注入（Open 内部经 A 池投递后才会被调用）
+        // 业务回调须在 Open() 前注入（Open 内部经 ZmReqLoopPool投递后才会被调用）
         m_httpRestfulMgr->SetRESTfulRequestCB(m_restfulRequestCB);
         if (!m_httpRestfulMgr->Open())
         {
@@ -135,7 +135,7 @@ void NetDock::OpenHttpRESTfulServer()
 
 void NetDock::CloseHttpRESTfulServer()
 {
-    // ★ 仅执行软关闭（停 HTTP Server + 排空 worker + 停 A 池），不 delete 对象
+    // ★ 仅执行软关闭（停 HTTP Server + 排空 worker + 停 ZmReqLoopPool），不 delete 对象
     // delete 推迟到 UnInit() 统一执行
     if (m_httpRestfulMgr)
     {

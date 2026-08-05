@@ -227,10 +227,10 @@ bool ServerAudioStreamModule::IsSubscriberAlive(ZmHttpdTask* task) const
 
 bool ServerAudioStreamModule::TryStartCaptureLocked()
 {
-    // 本线程(A 线程)初始化 COM 为 MTA;长生命周期线程,不主动 CoUninitialize
+    // 本线程(ZmReqLoop 线程)初始化 COM 为 MTA;长生命周期线程,不主动 CoUninitialize
     HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (hr == RPC_E_CHANGED_MODE)
-        DEFAULT_LOG_WARN("[audio] CoInitializeEx 返回 RPC_E_CHANGED_MODE(A 线程非 MTA,跨单元使用接口)");
+        DEFAULT_LOG_WARN("[audio] CoInitializeEx 返回 RPC_E_CHANGED_MODE(ZmReqLoop 线程非 MTA,跨单元使用接口)");
     else if (FAILED(hr))
     {
         DEFAULT_LOG_WARN("[audio] CoInitializeEx 失败 hr=0x{:08x}", (unsigned)hr);
@@ -765,7 +765,7 @@ void ServerAudioStreamModule::SenderThreadMain(ServerAudioStreamModule* mgr, Sub
         if (sub->loop)
             sub->loop->TryReply();   // ★ 先取回复门:与 CLOSE 的 ProcessClose 驱动互斥,防双事件双回收
         sub->task->EndStreamReply();   // 线程安全:驱动 doer 回收(STREAM_END)
-        // 原 tap->Drop():A 实例回池。经 PostToLoop 投递,由 A 线程 ProcessDone
+        // 原 tap->Drop():A 实例回池。经 PostToLoop 投递,由 ZmReqLoop 线程 ProcessDone
         // 执行 TryReply + Release(投递时 epoch 校验,陈旧投递安全丢弃)
         if (sub->loop)
             sub->loop->PostToLoop(ZmReqLoop::REQ_LOOP_SIG_DONE, sub->task);

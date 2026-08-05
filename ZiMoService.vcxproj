@@ -148,9 +148,9 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>NDEBUG;_CONSOLE;ZIMO_SERVICE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;_CONSOLE;ZIMO_SERVICE;OPENSSL_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>.;$(ProjectDir)..\ZiMoPublic;$(ProjectDir)..\ZiMoPublic\libevent\include;$(ProjectDir)..\ZiMoPublic\openssl\include;$(ProjectDir)..\ZiMoPublic\define;$(ProjectDir)..\ZiMoPublic\dump;$(ProjectDir)..\ZiMoPublic\json;$(ProjectDir)..\ZiMoPublic\net;$(ProjectDir)..\ZiMoPublic\service;$(ProjectDir)..\ZiMoPublic\spdlog;$(ProjectDir)..\ZiMoPublic\ssl;$(ProjectDir)..\ZiMoPublic\util;$(ProjectDir)..\ZiMoPublic\websocket;$(ProjectDir)..\ZiMoPublic\libopus\include;$(ProjectDir)..\zlib-1.3.1;$(ProjectDir)..\zlib-build;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>.;$(ProjectDir)..\ZiMoPublic;$(ProjectDir)..\ZiMoPublic\libevent\include;$(ProjectDir)..\ZiMoPublic\openssl\include;$(ProjectDir)..\ZiMoPublic\define;$(ProjectDir)..\ZiMoPublic\dump;$(ProjectDir)..\ZiMoPublic\json;$(ProjectDir)..\ZiMoPublic\net;$(ProjectDir)..\ZiMoPublic\service;$(ProjectDir)..\ZiMoPublic\spdlog;$(ProjectDir)..\ZiMoPublic\ssl;$(ProjectDir)..\ZiMoPublic\util;$(ProjectDir)..\ZiMoPublic\websocket;$(ProjectDir)..\ZiMoPublic\libopus\include;$(ProjectDir)..\ZiMoPublic\zlib\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <Optimization>Disabled</Optimization>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
@@ -162,8 +162,8 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>$(ProjectDir)..\ZiMoPublic\libevent\lib\VC\x64\MT;$(ProjectDir)..\ZiMoPublic\openssl\lib\VC\x64\MT;$(ProjectDir)..\ZiMoPublic\libopus\lib\VC\x64\MT;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>Iphlpapi.lib;ws2_32.lib;wsock32.lib;bcrypt.lib;event.lib;event_core.lib;event_extra.lib;event_openssl.lib;libcrypto.lib;libssl.lib;opus.lib;$(ProjectDir)..\zlib-build\Release\zlibstatic.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(ProjectDir)..\ZiMoPublic\libevent\lib\VC\x64\MT;$(ProjectDir)..\ZiMoPublic\openssl\lib\VC\x64\MT;$(ProjectDir)..\ZiMoPublic\libopus\lib\VC\x64\MT;$(ProjectDir)..\ZiMoPublic\zlib\lib\VC\x64\MT;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>Iphlpapi.lib;ws2_32.lib;wsock32.lib;bcrypt.lib;crypt32.lib;event.lib;event_core.lib;event_extra.lib;event_openssl.lib;libcrypto_static.lib;libssl_static.lib;opus.lib;zlibstatic.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <UACExecutionLevel>RequireAdministrator</UACExecutionLevel>
     </Link>
     <CustomBuildStep>
@@ -214,6 +214,9 @@
     <ClInclude Include="..\ZiMoPublic\libevent\include\evhttp.h" />
     <ClInclude Include="..\ZiMoPublic\libevent\include\evrpc.h" />
     <ClInclude Include="..\ZiMoPublic\libevent\include\evutil.h" />
+    <ClInclude Include="..\ZiMoPublic\libopus\include\opus.h" />
+    <ClInclude Include="..\ZiMoPublic\libopus\include\opus_defines.h" />
+    <ClInclude Include="..\ZiMoPublic\libopus\include\opus_types.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_dns.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_http.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_http_client.h" />
@@ -221,6 +224,7 @@
     <ClInclude Include="..\ZiMoPublic\net\zm_net_http_client_pool.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_http_router.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_req_loop.h" />
+    <ClInclude Include="..\ZiMoPublic\net\zm_net_req_loop_pool.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_req_loop_protocol.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_ip.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_runloop.h" />
@@ -489,6 +493,8 @@
     <ClInclude Include="..\ZiMoPublic\util\zm_util_sys.h" />
     <ClInclude Include="..\ZiMoPublic\util\zm_util_thread.h" />
     <ClInclude Include="..\ZiMoPublic\util\zm_util_win_os.h" />
+    <ClInclude Include="..\ZiMoPublic\zlib\include\zconf.h" />
+    <ClInclude Include="..\ZiMoPublic\zlib\include\zlib.h" />
     <ClInclude Include="module_server_audio_stream.h" />
     <ClInclude Include="broadcast_manager.h" />
     <ClInclude Include="http_jsonrpc_manager.h" />
@@ -512,6 +518,7 @@
     <ClCompile Include="..\ZiMoPublic\net\zm_net_http_client_pool.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_http_router.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_req_loop.cpp" />
+    <ClCompile Include="..\ZiMoPublic\net\zm_net_req_loop_pool.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_req_loop_protocol.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_ip.cpp" />
     <ClCompile Include="..\ZiMoPublic\net\zm_net_runloop.cpp" />

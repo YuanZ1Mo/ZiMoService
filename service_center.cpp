@@ -25,7 +25,7 @@ void ServiceCenter::OnStart(DWORD /*argc*/, TCHAR** /*argv[]*/)
     m_netDock->Init();
 
     // 将 NetDock 注入 ServicePortal，供状态查询等用途
-    // 业务层在 A 线程处理完成后，通过 ZmReqLoopJrpc/ZmReqLoopRest 回复 helper 安全回写响应
+    // 业务层在 ZmReqLoop 线程处理完成后，通过 ZmReqLoopJrpc::ResponseJson / ZmReqLoopRest 回复 helper 安全回写响应
     m_servicePortal->SetNetDock(m_netDock);
 
     m_netDock->SetJrpcRequestReadCB(std::bind(&ServicePortal::JrpcRequestReadCB, m_servicePortal,
@@ -48,7 +48,7 @@ void ServiceCenter::OnStop()
     // ★ 关闭顺序:
     //   ① 先清除 ServicePortal 的 NetDock 引用 — 防止 NetDock 析构后
     //      ServicePortal 通过悬空指针访问已释放的 NetDock
-    //   ② NetDock 释放 — 内部先停各 HTTP 前端(停服务器+排空 worker+停 A 池),
+    //   ② NetDock 释放 — 内部先停各 HTTP 前端(停服务器+排空 worker+停 ZmReqLoopPool),
     //      排空在飞请求后业务回调不再被调用
     //   ③ ServicePortal 释放 — 此时无新回调进入;远程音频发送线程通过
     //      m_tasksGone 标记跳过已失效的 task/loop 访问

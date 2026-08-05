@@ -1,2 +1,3 @@
 # TLS session ticket 密钥(运行时生成,敏感,不应入库)
 certs/ticket.key
+docs

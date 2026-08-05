@@ -20,20 +20,20 @@ class ZmTicketKeyRotator;
  * @brief 网络层生命周期编排者
  *
  * 创建并持有各个网络服务器管理器，负责：
- *   1. HttpJsonRpcManager — HTTP JSON-RPC 前端（含私有 A 池，端口 39440）
- *   2. HttpRestfulManager — HTTP RESTful 前端（含私有 A 池，端口 39441）
+ *   1. HttpJsonRpcManager — HTTP JSON-RPC 前端（含私有 ZmReqLoopPool，端口 39440）
+ *   2. HttpRestfulManager — HTTP RESTful 前端（含私有 ZmReqLoopPool，端口 39441）
  *   3. HttpServerManager — 通用 HTTP 前端（端口 80）
  *   4. BroadcastManager — 广播服务端（端口 39640，消息推送）
  *
- * 请求链：HTTP → doer → 各 manager 私有 A 池（Acquire 排队）→ 业务回调（A 线程）
- * → ZmReqLoopJrpc/ZmReqLoopRest::Response 直通 task 发送（不绕 Hub/pair）。
+ * 请求链：HTTP → doer → 各 manager 私有 ZmReqLoopPool（Acquire 排队）→ 业务回调（ZmReqLoop 线程）
+ * → ZmReqLoopJrpc::ResponseJson / ZmReqLoopRest::Response 直通 task 发送（不绕 Hub/pair）。
  *
  * 启动顺序约束：
  *   Init → 注入业务回调（SetJrpcRequestReadCB/SetRESTfulRequestCB，须在 Open 前）
  *   → OpenHttpJsonRpcServer / OpenHttpRESTfulServer / OpenHttpServer / OpenBroadcastServer
  *
  * 关闭顺序约束：
- *   ① HTTP 前端软关闭 — Close() 停 HTTP Server + 排空 worker + 停 A 池
+ *   ① HTTP 前端软关闭 — Close() 停 HTTP Server + 排空 worker + 停 ZmReqLoopPool
  *      （在飞请求由各自 deadline 收尾）
  *   ② HttpJsonRpcManager / HttpRestfulManager delete — 析构兜底（幂等）
  */
@@ -60,10 +60,10 @@ public:
     /**
      * @brief 启动 HTTP JSON-RPC 前端
      *
-     * 内部创建 HttpJsonRpcManager（含私有 A 池）；业务回调在 Open 前注入。
+     * 内部创建 HttpJsonRpcManager（含私有 ZmReqLoopPool）；业务回调在 Open 前注入。
      */
     void OpenHttpJsonRpcServer();
-    /** @brief 停止 HTTP JSON-RPC 前端（软关闭：停 HTTP Server + 排空 worker + 停 A 池） */
+    /** @brief 停止 HTTP JSON-RPC 前端（软关闭：停 HTTP Server + 排空 worker + 停 ZmReqLoopPool） */
     void CloseHttpJsonRpcServer();
 
     /**
@@ -148,8 +148,8 @@ public:
 
 private:
     // --- 成员变量 ---
-    HttpJsonRpcManager*    m_httpJsonRpcMgr;      ///< HTTP JSON-RPC 前端（含私有 A 池）
-    HttpRestfulManager*    m_httpRestfulMgr;      ///< HTTP RESTful 前端（含私有 A 池）
+    HttpJsonRpcManager*    m_httpJsonRpcMgr;      ///< HTTP JSON-RPC 前端（含私有 ZmReqLoopPool）
+    HttpRestfulManager*    m_httpRestfulMgr;      ///< HTTP RESTful 前端（含私有 ZmReqLoopPool）
     HttpServerManager*     m_httpServerMgr;       ///< 通用 HTTP 前端（端口 80）
     BroadcastManager*      m_broadcastMgr;        ///< 广播服务端管理器
     ZmTicketKeyRotator*    m_ticketRotator;       ///< TLS ticket 密钥轮换器(懒创建,UnInit 释放)

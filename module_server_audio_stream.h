@@ -50,7 +50,7 @@ public:
      * @param task 目标 HTTP 任务(调用方已 StartStreamReply)
      * @param loop 本请求的 A 实例(流收尾时经 PostToLoop(REQ_LOOP_SIG_DONE, task) 回池)
      * @return true 订阅成功;false 服务器无可用音频设备(采集启动失败)
-     * @note 必须在 RESTful 业务回调(A 线程)中调用
+     * @note 必须在 RESTful 业务回调(ZmReqLoop 线程)中调用
      */
     bool Subscribe(ZmHttpdTask* task, ZmReqLoop* loop);
 

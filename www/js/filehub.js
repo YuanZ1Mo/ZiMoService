@@ -69,6 +69,11 @@ createApp({
       cpHasOldPassword: false,
       cpError: '',
 
+      // 扫码下载
+      showQR: false,
+      qrFileName: '',
+      qrUrl: '',
+
       // 密码可见
       pwdVisible: false,
       cpOldPwdVisible: false,
@@ -293,6 +298,48 @@ createApp({
       checked.forEach((f, i) => {
         setTimeout(() => this.downloadItem(f), i * 200);
       });
+    },
+
+    /** 弹出扫码下载弹窗（二维码内容为完整下载链接） */
+    showQrDialog(item) {
+      const path = this.currentPath ? this.currentPath + '/' + item.name : item.name;
+      const url = location.protocol + '//' + location.hostname +
+        ':39441/zimo/api/files/download?path=' + encodeURIComponent(path);
+      this.qrFileName = item.name;
+      this.qrUrl = url;
+      this.showQR = true;
+      this.$nextTick(() => {
+        this.$refs.qrBox.innerHTML = '';
+        new QRCode(this.$refs.qrBox, {
+          text: url,
+          width: 200,
+          height: 200,
+          colorDark: '#000000',
+          colorLight: '#ffffff',
+          correctLevel: QRCode.CorrectLevel.M,
+        });
+      });
+    },
+
+    /** 复制下载链接到剪贴板 */
+    async copyQrUrl() {
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(this.qrUrl);
+        } else {
+          const ta = document.createElement('textarea');
+          ta.value = this.qrUrl;
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        }
+        this.showTip('链接已复制', 'ok');
+      } catch (e) {
+        this.showTip('复制失败，请手动长按链接', 'err');
+      }
     },
 
     // ================================================================

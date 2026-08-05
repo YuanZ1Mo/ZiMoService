@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ZiMo 文件中心</title>
 <link rel="stylesheet" href="/css/style.css">
+<link rel="icon" type="image/x-icon" href="/resource/favicon.ico">
 </head>
 <body>
 
@@ -99,6 +100,8 @@
           <span class="hub-ops" @click.stop>
             <button v-if="item.type==='file'" class="btn btn-sm"
               @click="downloadItem(item)">⬇ 下载</button>
+            <button v-if="item.type==='file'" class="btn btn-sm btn2"
+              @click="showQrDialog(item)">📱 扫码</button>
             <button v-if="item.type==='file' || !isRoot" class="btn btn-sm btn-del"
               @click="deleteItem(item)">🗑 删除</button>
           </span>
@@ -187,6 +190,22 @@
   </div>
 </div>
 
+<!-- 模态框：扫码下载 -->
+<div class="modal-overlay" v-if="showQR">
+  <div class="modal">
+    <h3>📱 扫码下载</h3>
+    <p class="modal-sub" style="word-break:break-all">{{ qrFileName }}</p>
+    <div ref="qrBox" class="qr-box"></div>
+    <p class="modal-sub qr-url" @click="copyQrUrl" title="点击复制链接">{{ qrUrl }}</p>
+    <p class="modal-sub" style="font-size:12px;color:var(--warn)">
+      ⚠ 请用局域网 IP 访问本页（如 http://192.168.x.x），否则二维码会生成 localhost 链接
+    </p>
+    <div class="modal-btns">
+      <button class="btn btn2" @click="showQR=false">关闭</button>
+    </div>
+  </div>
+</div>
+
 <!-- 上传进度 -->
 <div class="modal-overlay" v-if="uploading">
   <div class="modal">
@@ -200,6 +219,7 @@
 </div>
 
 <script src="/js/vue.global.prod.js"></script>
+<script src="/js/qrcode.min.js"></script>
 <script src="/js/filehub.js"></script>
 </body>
 </html>

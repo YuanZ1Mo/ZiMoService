@@ -14,7 +14,7 @@ class FileHubModule;
 class ServerAudioStreamModule;   // 业务层自有模块:构造时自建,析构时自删
 
 /**
- * @brief JRPC 请求处理门户，接收 A 池分发来的 JRPC 请求并按 method 分发
+ * @brief JRPC 请求处理门户，接收 ZmReqLoopPool 分发来的 JRPC 请求并按 method 分发
  *
  * 业务层自有模块(FileHubModule/ServerAudioStreamModule/DeepSeekModule)由本类自建自管,
  * ServiceCenter 不感知;NetDock 只负责网络层(HTTP/JRPC/RESTful)。
@@ -50,10 +50,10 @@ public:
 	void RegisterHttpRoutes(HttpServerManager* httpMgr);
 
 public:
-	/** @brief A 池入口：JRPC 请求回调（在 A 线程执行） */
+	/** @brief ZmReqLoopPool入口：JRPC 请求回调（在 ZmReqLoop 线程执行） */
 	void JrpcRequestReadCB(ZmReqLoop* loop, const char* reqData);
 
-	/** @brief A 池入口：RESTful 请求回调（在 A 线程执行） */
+	/** @brief ZmReqLoopPool入口：RESTful 请求回调（在 ZmReqLoop 线程执行） */
 	void RestfulRequestCB(ZmReqLoop* loop, const BYTE* body, size_t body_len);
 
 private:

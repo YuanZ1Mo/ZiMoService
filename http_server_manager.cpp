@@ -161,6 +161,10 @@ void HttpServerManager::SetupRouter()
 
 	if (!m_wwwRoot.empty())
 	{
+		m_router.Any("/favicon.ico", [this](ZmHttpdTask* task, const BYTE*, size_t) {
+			std::string uri(task->Uri() ? task->Uri() : "/favicon.ico");
+			return ServeStaticFile(task, uri);
+		});
 		m_router.Any("/html/*", [this](ZmHttpdTask* task, const BYTE*, size_t) {
 			std::string uri(task->Uri() ? task->Uri() : "/");
 			return ServeStaticFile(task, uri);

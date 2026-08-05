@@ -8,8 +8,8 @@
 #include "module_server_audio_stream.h"
 #include "module_deepseek.h"
 
-#include "zm_net_req_loop_protocol.h"   // ZmReqLoopJrpc/ZmReqLoopRest(回复 helper 静态调用)+ ZmReqLoopPool
-#include "zm_net_http.h"   // ZmHttpdTask/evhttp_cmd_type/ZmHttpUtil(直通回复与路由用)
+#include "zm_net_req_loop_protocol.h"   // ZmReqLoopRest(回复 helper 静态调用)+ ZmReqLoopPool
+#include "zm_net_http.h"   // ZmHttpdTask/evhttp_cmd_type/ZmHttpUtil + ZmJsonRpcServer(直通回复与路由用)
 #include "zm_net_socket.h" // ZmWinSockHelper(池预创建客户端前先完成 WSAStartup,防启动竞态)
 #include "zm_logger.h"
 #include "zm_json.h"
@@ -136,7 +136,6 @@ void ServicePortal::RegisterHttpRoutes(HttpServerManager* httpMgr)
 
 void ServicePortal::JrpcRequestReadCB(ZmReqLoop* loop, const char* reqData)
 {
-	ZMJSON rsp_headers;
 	ZMJSON rsp_result;
 	ZMJSON rsp_error;
 	std::string err;
@@ -147,13 +146,12 @@ void ServicePortal::JrpcRequestReadCB(ZmReqLoop* loop, const char* reqData)
 		ZMJSON rsp;
 		rsp["error"]["code"]    = -32700;
 		rsp["error"]["message"] = "Parse error: " + err;
-		ZmReqLoopJrpc::Response(loop, rsp);
+		ZmReqLoopJrpc::ResponseJson(loop, rsp);
 		return;
 	}
 
 	std::string req_method = zm_json_get_str(reqJson, "method");
 	ZMJSON req_params = reqJson["params"];
-	ZMJSON req_headers = reqJson["headers"];
 
 	if (req_method == "ping")
 	{
@@ -383,8 +381,7 @@ void ServicePortal::JrpcRequestReadCB(ZmReqLoop* loop, const char* reqData)
 		rsp["error"] = rsp_error;
 	else
 		rsp["result"] = rsp_result;
-	rsp["headers"] = rsp_headers;
-	ZmReqLoopJrpc::Response(loop, rsp);
+	ZmReqLoopJrpc::ResponseJson(loop, rsp);
 }
 
 // ============================================================================

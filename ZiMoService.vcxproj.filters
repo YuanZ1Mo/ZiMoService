@@ -120,6 +120,9 @@
     <ClCompile Include="..\ZiMoPublic\net\zm_net_req_loop.cpp">
       <Filter>源文件\Public\net</Filter>
     </ClCompile>
+    <ClCompile Include="..\ZiMoPublic\net\zm_net_req_loop_pool.cpp">
+      <Filter>源文件\Public\net</Filter>
+    </ClCompile>
     <ClCompile Include="..\ZiMoPublic\net\zm_net_req_loop_protocol.cpp">
       <Filter>源文件\Public\net</Filter>
     </ClCompile>
@@ -345,6 +348,9 @@
       <Filter>头文件\Public\net</Filter>
     </ClInclude>
     <ClInclude Include="..\ZiMoPublic\net\zm_net_req_loop.h">
+      <Filter>头文件\Public\net</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ZiMoPublic\net\zm_net_req_loop_pool.h">
       <Filter>头文件\Public\net</Filter>
     </ClInclude>
     <ClInclude Include="..\ZiMoPublic\net\zm_net_req_loop_protocol.h">

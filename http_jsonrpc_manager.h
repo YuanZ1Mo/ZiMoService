@@ -2,7 +2,7 @@
 #define HTTP_JSONRPC_MANAGER_H
 
 #include "zm_net_http.h"
-#include "zm_net_req_loop.h"   // ZmReqLoop 基类 + ZmReqLoopPool(池随基类同文件)
+#include "zm_net_req_loop.h"   // ZmReqLoopJrpcRequestCB(业务回调类型)
 
 // 前向声明（头文件中仅通过指针使用）
 class ZmEvBaseRunLoop;
@@ -10,17 +10,18 @@ class ZmEvBaseRunLoop;
 /**
  * @brief HTTP JSON-RPC 前端管理器
  *
- * 负责 ZmJsonRpcServer 和私有 A 池(ZmReqLoopPool)的生命周期管理。
- * 内部持有独立的 ZmEvBaseRunLoop(供 ZmJsonRpcServer 使用)。
- * 请求经 A 池分发给 per-request 事件循环线程(契约 A)执行,
- * 响应经 ZmReqLoopJrpc::Response 直通 task 发送(不绕 pair/Hub)。
+ * 负责 ZmJsonRpcServer 的自有事件循环(ZmEvBaseRunLoop)生命周期管理。
+ * ZmReqLoopPool 已下沉到 ZmJsonRpcServer 内部自治
+ * (EnableLoopPool/AcquireLoop/DispatchLoop,见 zm_net_http.h),
+ * 请求分发(解析 → 信封暂存 → ZmReqLoopPool 分发)全部由服务器类完成,
+ * 本管理器仅保留:evLoop 创建/停止、证书与 ticket 转发、业务回调透传。
  *
- * 异步处理流程(契约 A):
- *   ① HTTP JRPC 请求到达 Worker 线程 → OnJsonRpcCBAsync
- *   ② A 池 Acquire(排队/超时→错误信封,deadline 超时→504)→ task->BindLoop → PostToLoop(START)
- *   ③ A 线程: Bind + JrpcRequestReadCB(loop, reqData)
- *   ④ 业务 ZmReqLoopJrpc::Response 回复(服务器 replyCB 构造信封 + task 直通)
- *   ⑤ TryReply 门 + Release → 回池
+ * 异步处理流程:
+ *   ① HTTP JRPC 请求到达 Worker 线程 → 服务器 OnHttpdRequest 解析
+ *   ② 响应信封存入 ZmReqLoopJrpc → 内部 ZmReqLoopPool Acquire(排队/超时→DROPPED 信封,deadline 超时→504)
+ *   ③ task->BindLoop → PostToLoop(START) → ZmReqLoop 线程:业务回调(loop, reqData)
+ *   ④ 业务 ZmReqLoopJrpc::ResponseJson(loop, rsp) 回复(服务器组装信封 + task 直通)
+ *   ⑤ Response 内 TryReply 门 + DONE 投递 → ZmReqLoop 线程 Release → 回池
  */
 class HttpJsonRpcManager
 {
@@ -29,15 +30,15 @@ public:
     ~HttpJsonRpcManager();
 
     /**
-     * @brief 初始化 HTTP/HTTPS JSON-RPC 服务器、A 池
+     * @brief 初始化 HTTP/HTTPS JSON-RPC 服务器(含内部 ZmReqLoopPool)
      * @return true 初始化成功
      */
     bool Open();
 
-    /** @brief 关闭 HTTP 服务器、A 池和自有事件循环(软关闭) */
+    /** @brief 关闭 HTTP 服务器、ZmReqLoopPool和自有事件循环(软关闭) */
     void Close();
 
-    /** @brief 设置 JRPC 业务回调(NetDock 在 Open 前调用) */
+    /** @brief 设置 JRPC 业务回调(NetDock 在 Open 前调用,Open 时透传到服务器) */
     void SetJrpcRequestReadCB(ZmReqLoopJrpcRequestCB cb) { m_jrpcRequestReadCB = cb; }
 
     /** @brief 查询 JRPC 服务器是否正常运行 */
@@ -56,26 +57,8 @@ public:
     void PostSetTicketKeys(const unsigned char* keys, size_t len);
 
 private:
-    // ========================================================================
-    // 异步 JRPC 回调(ZmJsonRpcServer 的 OnJsonRpcRequestCBAsync)
-    // ========================================================================
-
-    /**
-     * @brief JSON-RPC 异步回调入口(Worker 线程调用,立即返回)
-     *
-     * 获取 A 实例并投递 START 到 A 线程,业务回调在其上执行;
-     * 响应经 ZmReqLoopJrpc::Response 直通 task 发送 HTTP 响应。
-     */
-    void OnJsonRpcCBAsync(ZmHttpdTask* task, const ZMJSON& request,
-        std::function<void(const ZMJSON& response)> replyCB);
-
-    // ========================================================================
-    // 成员变量
-    // ========================================================================
-
     ZmEvBaseRunLoop*          m_evLoopHttpServerJRPC;   ///< 自有事件循环线程(供 ZmJsonRpcServer 使用)
-    ZmJsonRpcServer*          m_httpServerJRPC;         ///< HTTP JSON-RPC 服务器实例
-    ZmReqLoopPool*            m_reqLoopPool;            ///< 私有 A 池(预创建 + 扩容上限)
+    ZmJsonRpcServer*          m_httpServerJRPC;         ///< HTTP JSON-RPC 服务器实例(含内部 ZmReqLoopPool)
     ZmReqLoopJrpcRequestCB    m_jrpcRequestReadCB;      ///< 业务回调(NetDock 注入,Open 前设置)
 };
 

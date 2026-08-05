@@ -12,6 +12,8 @@ ZiMo 客户端生态的核心 Windows 服务，基于 libevent 事件循环提�
 - **SSE 推送** — `GET /zimo/api/events`，服务端实时事件流推送
 - **远程音频** — WASAPI loopback 采集系统声音 + Opus 编码,RESTful 流式推送,手机网页实时收听
 - **请求调度** — 每台 HTTP 服务器独立持有 ZmReqLoopPool，per-request 事件循环线程（ZmReqLoop）承载业务，deadline 超时兜底
+- **DeepSeek 集成** — `GET /zimo/api/deepseek/usage` 余额查询（配置 + TTL 缓存 + 异步外呼，回调桥回 ZmReqLoop 线程）
+- **外呼客户端池** — 全门户通用 HTTP/S 外呼（ZmHttpClientPool 预创建 4/上限 16），带 TLS/gzip/cookie/重试/代理/SSE 的现代客户端
 - **异步 DNS** — 基于 libevent `evdns_getaddrinfo`，事件驱动
 - **系统监控** — CPU/内存/GPU 实时负载采集
 - **Windows 服务生命周期** — 安装/卸载/调试，会话和电源事件感知
@@ -23,7 +25,9 @@ service_main.cpp                     # 入口：install | uninstall | debug
   └─ ServiceCenter                   # Windows 服务控制器
        ├─ ServicePortal              # 业务层（JRPC + RESTful 双回调入口，ZmReqLoop 线程执行）
        │    ├─ FileHubModule            # 文件中心（业务逻辑抽离，双协议共享，自建自管）
-       │    └─ ServerAudioStreamModule  # 远程音频（WASAPI 采集 + Opus 编码 + 订阅分发）
+       │    ├─ ServerAudioStreamModule  # 远程音频（WASAPI 采集 + Opus 编码 + 订阅分发）
+       │    ├─ DeepSeekModule           # DeepSeek 余额查询（TTL 缓存 + 异步外呼）
+       │    └─ ZmHttpClientPool         # 通用外呼请求池（预创建 4 / 上限 16，注入各业务模块）
        └─ NetDock                    # 网络层编排者
             ├─ HttpServerManager     # 通用 HTTP 服务器 (端口 80)
             │     └─ ZmHttpRouter        # 路由中间件链（Express 风格）
@@ -149,6 +153,12 @@ HttpServerManager 暴露通用能力：
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/audio/stream` | 远程音频流(服务器系统声音,二进制帧: len(4B)+seq(4B)+Opus 20ms 帧) |
+
+### DeepSeek
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/deepseek/usage` | DeepSeek API 余额查询（TTL 缓存，`?refresh=1` 强制实时；配置 `config/deepseek.json`） |
 
 ### 文档
 
@@ -293,9 +303,17 @@ curl "http://localhost:39441/zimo/api/events"
 msbuild ZiMoService.sln /p:Configuration=Release /p:Platform=x64
 ```
 
-输出到 `$(SolutionDir)$(Configuration)\`，中间文件到 `temp\`。需要 VS 2022 + Windows SDK + 同级目录 `..\ZiMoPublic\`。
+输出到 `$(SolutionDir)$(Configuration)\`，中间文件到 `temp\`。需要 VS 2022（v143）+ Windows SDK + 同级目录 `..\ZiMoPublic\`。
 
-libevent 使用静态库 + `/MT` 链接方式（`EVENT__LIBRARY_TYPE=STATIC` + `EVENT__MSVC_STATIC_RUNTIME=ON`）。
+第三方依赖全部为**静态链接**，产物单 exe 免 DLL 部署：
+
+| 库 | 链接方式 | 说明 |
+|----|---------|------|
+| libevent | 静态库 + `/MT` | `EVENT__LIBRARY_TYPE=STATIC` + `EVENT__MSVC_STATIC_RUNTIME=ON` 自编译 |
+| OpenSSL | 静态库 | `libcrypto_static.lib` / `libssl_static.lib`；需定义 `OPENSSL_STATIC` 宏 + 链接 `crypt32.lib` |
+| zlib | 静态库 | `zlibstatic.lib`（1.3.1，位于 `ZiMoPublic\zlib\`） |
+| libopus | 静态库 + `/MT` | 远程音频编码 |
+| CRT | 静态 | `/MT`（`MultiThreaded`） |
 
 ## 服务管理
 
@@ -309,7 +327,7 @@ ZiMoService.exe debug       # 前台调试运行
 
 | 模块 | 说明 |
 |------|------|
-| `net/` | TCP、HTTP、RESTful 服务器、DNS、请求调度（zm_net_req_loop*）、路由中间件 |
+| `net/` | TCP、HTTP 服务端与客户端（ZmHttpClient / ZmHttpClientPool）、RESTful、DNS、请求调度（zm_net_req_loop*）、路由中间件 |
 | `service/` | ZmServiceBase |
 | `ssl/` | SSL 上下文管理 |
 | `libopus/` | Opus 编码器（静态库 /MT，远程音频编码） |
@@ -318,7 +336,8 @@ ZiMoService.exe debug       # 前台调试运行
 | `json/` | nlohmann/json 封装 |
 | `spdlog/` | 日志 |
 | `libevent/` | 自编译 libevent（静态库 /MT） |
-| `openssl/` | 预编译 OpenSSL |
+| `openssl/` | 预编译 OpenSSL（静态库，OPENSSL_STATIC + crypt32.lib） |
+| `zlib/` | zlib 1.3.1 静态库（HTTP 客户端 gzip/deflate 自动解压） |
 
 ## 提交规范
 
