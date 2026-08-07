@@ -95,7 +95,7 @@ void DeepSeekModule::LoadConfig()
 {
 	char exePath[MAX_PATH];
 	ZmSystem::GetModuleDir(exePath, MAX_PATH);
-	std::string cfgPath = std::string(exePath) + "\\..\\config\\deepseek.json";
+	std::string cfgPath = std::string(exePath) + "\\config\\deepseek.json";
 
 	// CA bundle:Windows 无 OpenSSL 默认安装时 SSL_CTX_set_default_verify_paths 加载不到任何
 	// CA(端到端实测:api.deepseek.com 握手必然失败,报 connect failed)→ 随服务分发
