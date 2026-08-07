@@ -97,6 +97,18 @@
     <Filter Include="源文件\Public\json">
       <UniqueIdentifier>{7f241e82-931f-4551-96eb-adc75d606a35}</UniqueIdentifier>
     </Filter>
+    <Filter Include="头文件\Public\zlib">
+      <UniqueIdentifier>{b53fca63-f2f8-48d8-8461-45f655afa33d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="头文件\Public\libopus">
+      <UniqueIdentifier>{da081bec-6412-4ddc-a3bf-1aa39661c888}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="头文件\Public\libopus\include">
+      <UniqueIdentifier>{fb8393de-dea2-4035-812d-4f2722ee0665}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="头文件\Public\zlib\include">
+      <UniqueIdentifier>{ac5d96dc-1ae1-4015-ac52-b311c46ebaf4}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="service_main.cpp">
@@ -211,6 +223,9 @@
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="module_deepseek.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="module_server_audio_stream.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>
@@ -1192,6 +1207,24 @@
     </ClInclude>
     <ClInclude Include="module_deepseek.h">
       <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="module_server_audio_stream.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ZiMoPublic\libopus\include\opus.h">
+      <Filter>头文件\Public\libopus\include</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ZiMoPublic\libopus\include\opus_defines.h">
+      <Filter>头文件\Public\libopus\include</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ZiMoPublic\libopus\include\opus_types.h">
+      <Filter>头文件\Public\libopus\include</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ZiMoPublic\zlib\include\zconf.h">
+      <Filter>头文件\Public\zlib\include</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ZiMoPublic\zlib\include\zlib.h">
+      <Filter>头文件\Public\zlib\include</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
