@@ -185,10 +185,10 @@ ZmTicketKeyRotator* NetDock::EnsureTicketRotator()
     if (m_ticketRotator)
         return m_ticketRotator;
 
-    // 从 exe 路径推导项目根目录(与 HttpServerManager::Open 一致)
+    // 从 exe 路径推导证书文件(certs/ 与 exe 同目录,与 HttpServerManager::Open 一致)
     char exePath[MAX_PATH];
     ZmSystem::GetModuleDir(exePath, MAX_PATH);
-    std::string ticketFile = std::string(exePath) + "\\..\\certs\\ticket.key";
+    std::string ticketFile = std::string(exePath) + "\\certs\\ticket.key";
 
     m_ticketRotator = new ZmTicketKeyRotator();
     if (!m_ticketRotator->Init(ticketFile.c_str()))

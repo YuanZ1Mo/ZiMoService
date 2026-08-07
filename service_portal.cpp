@@ -343,12 +343,14 @@ void ServicePortal::JrpcRequestReadCB(ZmReqLoop* loop, const char* reqData)
 		char moduleDir[MAX_PATH];
 		std::string exeDir = ZmSystem::GetModuleDir(moduleDir, MAX_PATH);
 		std::string root;
+		std::string wwwRoot;
 		if (!exeDir.empty())
 		{
 			char normalized[MAX_PATH];
 			std::string upOne = exeDir + "\\..";
 			if (GetFullPathNameA(upOne.c_str(), MAX_PATH, normalized, nullptr))
 				root = normalized;
+			wwwRoot = exeDir + "\\www";
 		}
 		if (root.empty())
 		{
@@ -364,10 +366,10 @@ void ServicePortal::JrpcRequestReadCB(ZmReqLoop* loop, const char* reqData)
 				rsp_result["backend"] = "README.md not found (path: " + root + "\\README.md)";
 
 			std::string frontendMd;
-			if (ZmFile::ReadString((root + "\\www\\doc\\README.md").c_str(), frontendMd))
+			if (ZmFile::ReadString((wwwRoot + "\\doc\\README.md").c_str(), frontendMd))
 				rsp_result["frontend"] = frontendMd;
 			else
-				rsp_result["frontend"] = "www/doc/README.md not found (path: " + root + "\\www\\doc\\README.md)";
+				rsp_result["frontend"] = "www/doc/README.md not found (path: " + wwwRoot + "\\doc\\README.md)";
 		}
 	}
 	else
@@ -512,17 +514,18 @@ void ServicePortal::RestfulRequestCB(ZmReqLoop* loop,
 	else if (verb == EVHTTP_REQ_GET && path == "/about")
 	{
 		char moduleDir[MAX_PATH];
-		std::string exeDir = ZmSystem::GetModuleDir(moduleDir, MAX_PATH), root;
+		std::string exeDir = ZmSystem::GetModuleDir(moduleDir, MAX_PATH), root, wwwRoot;
 		if (!exeDir.empty()) {
 			char normalized[MAX_PATH];
 			std::string upOne = exeDir + "\\..";
 			if (GetFullPathNameA(upOne.c_str(), MAX_PATH, normalized, nullptr)) root = normalized;
+			wwwRoot = exeDir + "\\www";
 		}
 		ZMJSON rsp;
 		if (!root.empty()) {
 			std::string md;
 			if (ZmFile::ReadString((root + "\\README.md").c_str(), md)) rsp["backend"] = md;
-			if (ZmFile::ReadString((root + "\\www\\doc\\README.md").c_str(), md)) rsp["frontend"] = md;
+			if (ZmFile::ReadString((wwwRoot + "\\doc\\README.md").c_str(), md)) rsp["frontend"] = md;
 		}
 		ZmReqLoopRest::ResponseJson(loop, 200, rsp);
 	}

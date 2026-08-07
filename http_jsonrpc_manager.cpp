@@ -34,12 +34,10 @@ bool HttpJsonRpcManager::Open()
     * @param keyFile   私钥 PEM 文件路径，非空时启用 HTTPS；nullptr = HTTP
     */
 
-    // 从 exe 路径推导项目根目录（exe 在 $(SolutionDir)$(Configuration)\ 下，需上翻一层）
-    // 同时推导证书目录（certs/ 在项目根目录下）
+    // 从 exe 路径推导证书目录（exe 在 $(SolutionDir)$(Configuration)\ 下，certs/ 与 exe 同目录）
     char exePath[MAX_PATH];
     ZmSystem::GetModuleDir(exePath, MAX_PATH);
-    std::string projRoot = std::string(exePath) + "\\..";
-    std::string certDir = projRoot + "\\certs";
+    std::string certDir = std::string(exePath) + "\\certs";
 
     // 构建证书路径（启用 HTTPS），证书不存在时退化为 HTTP
     std::string certFile = certDir + "\\server.crt";

@@ -99,8 +99,8 @@ void DeepSeekModule::LoadConfig()
 
 	// CA bundle:Windows 无 OpenSSL 默认安装时 SSL_CTX_set_default_verify_paths 加载不到任何
 	// CA(端到端实测:api.deepseek.com 握手必然失败,报 connect failed)→ 随服务分发
-	// Mozilla CA bundle(certs/cacert.pem,与 certs/ 同款 exe 路径推导)
-	m_caFile = std::string(exePath) + "\\..\\certs\\cacert.pem";
+	// Mozilla CA bundle(certs/cacert.pem,随 exe 分发,certs/ 与 exe 同目录)
+	m_caFile = std::string(exePath) + "\\certs\\cacert.pem";
 	FILE* cf = nullptr;
 	errno_t ce = fopen_s(&cf, m_caFile.c_str(), "rb");
 	if (ce != 0 || !cf)

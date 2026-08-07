@@ -26,11 +26,10 @@
 
 FileHubModule::FileHubModule()
 {
-	// 自行推导 www 根目录(exe 在 $(SolutionDir)$(Configuration)\ 下,上翻一层 + \www)
+	// 自行推导 www 根目录(exe 在 $(SolutionDir)$(Configuration)\ 下,www 与 exe 同目录)
 	char exePath[MAX_PATH];
 	ZmSystem::GetModuleDir(exePath, MAX_PATH);
-	std::string projRoot = std::string(exePath) + "\\..";
-	m_wwwRoot = projRoot + "\\www";
+	m_wwwRoot = std::string(exePath) + "\\www";
 
 	std::wstring hubRoot = ZmString::UTF8_To_Unicode(GetHubRoot());
 	CreateDirectoryW(hubRoot.c_str(), nullptr);

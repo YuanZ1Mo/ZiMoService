@@ -66,13 +66,11 @@ bool HttpServerManager::Open()
 	 * @note HTTP 模式（certFile 为空）：仅监听端口 80，行为与之前完全一致
 	*/
 
-    // 从 exe 路径推导项目根目录（exe 在 $(SolutionDir)$(Configuration)\ 下，需上翻一层）
-    // 同时推导证书目录（certs/ 在项目根目录下）
+    // 从 exe 路径推导证书/静态资源目录（exe 在 $(SolutionDir)$(Configuration)\ 下，均与 exe 同目录）
 	char exePath[MAX_PATH];
 	ZmSystem::GetModuleDir(exePath, MAX_PATH);
-	std::string projRoot = std::string(exePath) + "\\..";
-	std::string certDir = projRoot + "\\certs";
-	std::string wwwRoot = projRoot + "\\www";
+	std::string certDir = std::string(exePath) + "\\certs";
+	std::string wwwRoot = std::string(exePath) + "\\www";
 
 	// 构建证书路径（启用 HTTPS），证书不存在时退化为 HTTP
 	std::string certFile = certDir + "\\server.crt";
