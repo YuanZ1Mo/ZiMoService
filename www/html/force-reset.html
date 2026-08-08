@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>强制重置密码 · ZiMo Service</title>
+<link rel="stylesheet" href="/css/style.css">
+<link rel="icon" type="image/x-icon" href="/resource/favicon.ico">
+<script src="/js/vue.global.prod.js"></script>
+</head>
+<body>
+  <div class="auth-wrap">
+    <div class="auth-card">
+      <div class="auth-brand">
+        <span class="beacon beacon-idle" id="beacon"></span>
+        <h1 class="auth-title">强制重置密码</h1>
+      </div>
+
+      <p class="auth-sub">您的账号已被管理员重置,请强制重置密码与新救援码</p>
+
+      <form id="forceResetForm" novalidate>
+        <div class="field" id="passwordField">
+          <label for="password">新密码</label>
+          <input id="password" name="password" type="password" autocomplete="new-password"
+                 placeholder="8-64 位,不含空格">
+          <div class="strength">
+            <div class="strength-bar">
+              <div class="strength-seg"></div>
+              <div class="strength-seg"></div>
+              <div class="strength-seg"></div>
+            </div>
+            <span class="strength-label" id="strengthLabel">—</span>
+          </div>
+          <div class="field-hint">建议使用 12 位以上,包含多种字符类型的密码</div>
+          <div class="field-err" id="passwordErr"></div>
+        </div>
+
+        <div class="field" id="rescueField">
+          <label for="rescue">新救援码</label>
+          <input id="rescue" name="rescue" autocomplete="off" spellcheck="false"
+                 placeholder="8-16 位数字或字母">
+          <div class="field-hint">救援码是找回密码的唯一凭证,请妥善保存;字母统一按小写识别</div>
+          <div class="field-err" id="rescueErr"></div>
+        </div>
+
+        <div class="form-err" id="formErr" hidden></div>
+
+        <button class="btn-primary" id="submitBtn" type="submit">完成设置</button>
+      </form>
+
+      <div class="auth-links" id="netError" hidden style="justify-content:center">
+        <button class="btn-ghost" id="retryBtn">无法连接服务器 · 重试</button>
+      </div>
+    </div>
+  </div>
+
+<script src="/js/zxcvbn.js"></script>
+<script src="/js/auth.js"></script>
+<script src="/js/force-reset.js"></script>
+</body>
+</html>

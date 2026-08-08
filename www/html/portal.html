@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>门户 · ZiMo Service</title>
+<link rel="stylesheet" href="/css/style.css">
+<link rel="icon" type="image/x-icon" href="/resource/favicon.ico">
+<script src="/js/vue.global.prod.js"></script>
+</head>
+<body>
+  <!-- 顶栏(悬浮) -->
+  <header class="portal-topbar">
+    <div class="topbar-left">
+      <button class="burger" id="sideToggleMobile" title="打开目录">☰</button>
+      <img src="/resource/favicon.ico" alt="ZiMo" class="brand-icon">
+      <span class="brand-name">ZiMo Service</span>
+      <span class="brand-tag">server console</span>
+    </div>
+    <div class="topbar-right">
+      <span class="conn-state" id="connState"><span class="dot"></span><span id="connText">在线</span></span>
+      <div class="user-menu" id="userMenu">
+        <button class="user-menu-trigger" id="userMenuTrigger">— ▾</button>
+        <div class="user-menu-dropdown" id="userDropdown" hidden>
+          <button data-action="profile">个人中心</button>
+          <button data-action="settings">账户设置</button>
+          <div class="menu-divider"></div>
+          <button data-action="logout">退出登录</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- 功能目录(悬浮):左列功能项 + 右列收起把手 -->
+  <aside class="portal-side" id="portalSide">
+    <nav class="side-nav" id="sideNav"></nav>
+    <button class="side-collapse" id="sideToggle" title="展开/收起目录"></button>
+  </aside>
+  <div class="side-mask" id="sideMask" hidden></div>
+
+  <!-- 功能工作区(独立滚动) -->
+  <main class="portal-main" id="portalMain">
+    <div class="portal-center" id="portalLoading">
+      <span class="beacon beacon-pulse"></span>
+    </div>
+    <div class="portal-center" id="portalError" hidden>
+      <p class="err-block">无法连接服务器</p>
+      <button class="btn-primary" style="max-width:220px" id="retryBtn">重试</button>
+    </div>
+    <div class="workspace" id="workspace" hidden></div>
+  </main>
+
+<script src="/js/auth.js"></script>
+<script src="/js/portal.js"></script>
+</body>
+</html>

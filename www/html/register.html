@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>注册 · ZiMo Service</title>
+<link rel="stylesheet" href="/css/style.css">
+<link rel="icon" type="image/x-icon" href="/resource/favicon.ico">
+<script src="/js/vue.global.prod.js"></script>
+</head>
+<body>
+  <div class="auth-wrap">
+    <div class="auth-card">
+      <div class="auth-brand">
+        <span class="beacon beacon-idle" id="beacon"></span>
+        <h1 class="auth-title">注册账号</h1>
+      </div>
+
+      <form id="registerForm" novalidate>
+        <div class="field" id="accountField">
+          <label for="account">账号</label>
+          <input id="account" name="account" autocomplete="username" spellcheck="false"
+                 placeholder="4-30 位字母、数字、下划线或短横线" maxlength="30">
+          <div class="field-hint">字母、数字、下划线或短横线;首尾不能是下划线或短横线;统一小写存储</div>
+          <div class="field-err" id="accountErr"></div>
+        </div>
+
+        <div class="field" id="passwordField">
+          <label for="password">密码</label>
+          <input id="password" name="password" type="password" autocomplete="new-password"
+                 placeholder="8-64 位,不含空格">
+          <div class="strength">
+            <div class="strength-bar">
+              <div class="strength-seg"></div>
+              <div class="strength-seg"></div>
+              <div class="strength-seg"></div>
+            </div>
+            <span class="strength-label" id="strengthLabel">—</span>
+          </div>
+          <div class="field-hint">建议使用 12 位以上,包含多种字符类型的密码</div>
+          <div class="field-err" id="passwordErr"></div>
+        </div>
+
+        <div class="field" id="nicknameField">
+          <label for="nickname">昵称(选填)</label>
+          <input id="nickname" name="nickname" autocomplete="nickname" maxlength="20"
+                 placeholder="不填则默认与账号一致">
+          <div class="field-err" id="nicknameErr"></div>
+        </div>
+
+        <div class="field" id="rescueField">
+          <label for="rescue">救援码</label>
+          <input id="rescue" name="rescue" autocomplete="off" spellcheck="false"
+                 placeholder="8-16 位数字或字母">
+          <div class="field-hint">救援码是找回密码的唯一凭证,请妥善保存;字母统一按小写识别</div>
+          <div class="field-err" id="rescueErr"></div>
+        </div>
+
+        <div class="form-err" id="formErr" hidden></div>
+
+        <button class="btn-primary" id="submitBtn" type="submit">注册</button>
+      </form>
+
+      <div class="auth-links">
+        <a href="/login">返回登录</a>
+      </div>
+    </div>
+  </div>
+
+<script src="/js/zxcvbn.js"></script>
+<script src="/js/auth.js"></script>
+<script src="/js/register.js"></script>
+</body>
+</html>

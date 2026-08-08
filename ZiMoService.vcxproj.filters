@@ -115,6 +115,12 @@
     <Filter Include="源文件\Public\sqllite">
       <UniqueIdentifier>{ff6ae1eb-3da9-48d2-9a44-8508cd5368d7}</UniqueIdentifier>
     </Filter>
+    <Filter Include="头文件\modules">
+      <UniqueIdentifier>{de3413cd-d7ce-4c97-9605-4a90b8cc7822}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="源文件\modules">
+      <UniqueIdentifier>{5179ea88-24d7-47f8-a0fa-d4c634b98c0d}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="service_main.cpp">
@@ -237,8 +243,11 @@
     <ClCompile Include="..\ZiMoPublic\sqllite\sqlite3.c">
       <Filter>源文件\Public\sqllite</Filter>
     </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\sqllite\shell.c">
-      <Filter>源文件\Public\sqllite</Filter>
+    <ClCompile Include="modules\module_portal.cpp">
+      <Filter>源文件\modules</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\module_user.cpp">
+      <Filter>源文件\modules</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -1238,14 +1247,17 @@
     <ClInclude Include="..\ZiMoPublic\zlib\include\zlib.h">
       <Filter>头文件\Public\zlib\include</Filter>
     </ClInclude>
-    <ClInclude Include="..\ZiMoPublic\net\zm_net_tcp_relay_protocol.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
     <ClInclude Include="..\ZiMoPublic\sqllite\sqlite3.h">
       <Filter>头文件\Public\sqllite</Filter>
     </ClInclude>
     <ClInclude Include="..\ZiMoPublic\sqllite\sqlite3ext.h">
       <Filter>头文件\Public\sqllite</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\module_portal.h">
+      <Filter>头文件\modules</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\module_user.h">
+      <Filter>头文件\modules</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

@@ -6,21 +6,64 @@
 <title>ZiMo Service</title>
 <link rel="stylesheet" href="/css/style.css">
 <link rel="icon" type="image/x-icon" href="/resource/favicon.ico">
-<style>
-  .landing { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100vh; text-align:center; padding:24px; }
-  .landing-icon { font-size:64px; margin-bottom:16px; }
-  .landing-title { font-size:28px; font-weight:700; color:var(--ac2); margin-bottom:8px; }
-  .landing-sub { font-size:14px; color:var(--fg3); margin-bottom:40px; }
-  .landing-btn { display:inline-block; padding:14px 48px; background:var(--ac); color:var(--bg0); border:none; border-radius:8px; font-size:16px; font-weight:600; cursor:pointer; text-decoration:none; transition:opacity .15s,transform .15s; }
-  .landing-btn:hover { opacity:.85; transform:translateY(-1px); }
-</style>
+<script src="/js/vue.global.prod.js"></script>
 </head>
 <body>
-<div class="landing">
-  <div class="landing-icon">⚡</div>
-  <h1 class="landing-title">ZiMo Service</h1>
-  <p class="landing-sub">ZiMo 客户端生态核心服务</p>
-  <a href="/control" class="landing-btn">进入控制中心</a>
-</div>
+  <header class="topbar">
+    <div class="brand">
+      <img src="/resource/favicon.ico" alt="ZiMo" class="brand-icon">
+      <span class="brand-name">ZiMo Service</span>
+      <span class="brand-tag">server console</span>
+    </div>
+    <div class="topbar-right">
+      <span class="conn-state" id="connState"><span class="dot"></span><span id="connText">在线</span></span>
+      <button class="btn-ghost" id="logoutBtn">登出</button>
+    </div>
+  </header>
+
+  <main class="main">
+    <div class="main-body" id="mainBody">
+      <!-- 加载中 -->
+      <div class="main-center" id="loadingView">
+        <span class="beacon beacon-pulse"></span>
+      </div>
+      <!-- 墨聚成印 粒子仪式(登录成功后播放) -->
+      <div class="ink-stage" id="inkStage" hidden>
+        <canvas id="inkCanvas"></canvas>
+      </div>
+      <!-- 网络错误 -->
+      <div class="main-center" id="netErrorView" hidden>
+        <p class="err-block">无法连接服务器</p>
+        <button class="btn-primary" style="max-width:220px" id="retryBtn">重试</button>
+      </div>
+    </div>
+
+    <aside class="user-panel" id="userPanel" hidden>
+      <div class="panel-eyebrow">SESSION</div>
+      <div class="panel-user" id="userNickname">—</div>
+      <div class="panel-account" id="userAccount">—</div>
+      <div class="panel-rows">
+        <div class="panel-row">
+          <span class="row-label">最后登录 IP</span>
+          <span class="row-value" id="userIp">—</span>
+        </div>
+        <div class="panel-row">
+          <span class="row-label">最后登录时间</span>
+          <span class="row-value" id="userLoginTime">—</span>
+        </div>
+        <div class="panel-row">
+          <span class="row-label">最后活动时间</span>
+          <span class="row-value" id="userActiveTime">—</span>
+        </div>
+      </div>
+      <div class="panel-actions">
+        <button class="btn-primary" id="portalBtn">进入门户</button>
+      </div>
+    </aside>
+  </main>
+
+<script src="/js/auth.js"></script>
+<script src="/js/ink.js"></script>
+<script src="/js/index.js"></script>
 </body>
 </html>

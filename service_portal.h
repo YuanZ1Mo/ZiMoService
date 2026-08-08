@@ -4,6 +4,8 @@
 #include "zm_net_req_loop.h"
 #include "zm_net_http_client_pool.h"
 #include "module_deepseek.h"
+#include "modules/module_user.h"
+#include "modules/module_portal.h"
 
 #include <atomic>
 #include <string>
@@ -65,6 +67,9 @@ private:
 
 	ZmHttpClientPool* m_httpClientPool = nullptr;   ///< 全门户通用外呼请求池(预创建4/上限16)
 	DeepSeekModule* m_deepseekModule = nullptr;     ///< DeepSeek 余额查询:构造时自建(注入池),析构时自删
+
+	UserModule* m_userModule = nullptr;             ///< 用户系统:构造时自建(双库初始化),析构时自删
+	PortalModule* m_portalModule = nullptr;         ///< 门户模块:构造时自建(注入 UserModule),析构时自删
 };
 
 #endif // SERVICE_PORTAL_H

@@ -510,6 +510,8 @@
     <ClInclude Include="service_define.h" />
     <ClInclude Include="service_global.h" />
     <ClInclude Include="service_portal.h" />
+    <ClInclude Include="modules\module_user.h" />
+    <ClInclude Include="modules\module_portal.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\ZiMoPublic\json\zm_json.cpp" />
@@ -531,7 +533,6 @@
     <ClCompile Include="..\ZiMoPublic\openssl\include\openssl\applink.c" />
     <ClCompile Include="..\ZiMoPublic\service\zm_service_base.cpp" />
     <ClCompile Include="..\ZiMoPublic\spdlog\zm_logger.cpp" />
-    <ClCompile Include="..\ZiMoPublic\sqllite\shell.c" />
     <ClCompile Include="..\ZiMoPublic\sqllite\sqlite3.c" />
     <ClCompile Include="..\ZiMoPublic\ssl\zm_ssl_ctx.cpp" />
     <ClCompile Include="..\ZiMoPublic\ssl\zm_ssl_fingerprint.cpp" />
@@ -553,6 +554,8 @@
     <ClCompile Include="service_center.cpp" />
     <ClCompile Include="service_main.cpp" />
     <ClCompile Include="service_portal.cpp" />
+    <ClCompile Include="modules\module_user.cpp" />
+    <ClCompile Include="modules\module_portal.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="resource.rc" />
