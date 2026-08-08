@@ -150,7 +150,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;ZIMO_SERVICE;OPENSSL_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>.;$(ProjectDir)..\ZiMoPublic;$(ProjectDir)..\ZiMoPublic\libevent\include;$(ProjectDir)..\ZiMoPublic\openssl\include;$(ProjectDir)..\ZiMoPublic\define;$(ProjectDir)..\ZiMoPublic\dump;$(ProjectDir)..\ZiMoPublic\json;$(ProjectDir)..\ZiMoPublic\net;$(ProjectDir)..\ZiMoPublic\service;$(ProjectDir)..\ZiMoPublic\spdlog;$(ProjectDir)..\ZiMoPublic\ssl;$(ProjectDir)..\ZiMoPublic\util;$(ProjectDir)..\ZiMoPublic\websocket;$(ProjectDir)..\ZiMoPublic\libopus\include;$(ProjectDir)..\ZiMoPublic\zlib\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>.;$(ProjectDir)..\ZiMoPublic;$(ProjectDir)..\ZiMoPublic\libevent\include;$(ProjectDir)..\ZiMoPublic\openssl\include;$(ProjectDir)..\ZiMoPublic\define;$(ProjectDir)..\ZiMoPublic\dump;$(ProjectDir)..\ZiMoPublic\json;$(ProjectDir)..\ZiMoPublic\net;$(ProjectDir)..\ZiMoPublic\service;$(ProjectDir)..\ZiMoPublic\spdlog;$(ProjectDir)..\ZiMoPublic\ssl;$(ProjectDir)..\ZiMoPublic\util;$(ProjectDir)..\ZiMoPublic\websocket;$(ProjectDir)..\ZiMoPublic\libopus\include;$(ProjectDir)..\ZiMoPublic\zlib\include;$(ProjectDir)..\ZiMoPublic\sqllite;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <Optimization>Disabled</Optimization>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
@@ -484,6 +484,8 @@
     <ClInclude Include="..\ZiMoPublic\spdlog\tweakme.h" />
     <ClInclude Include="..\ZiMoPublic\spdlog\version.h" />
     <ClInclude Include="..\ZiMoPublic\spdlog\zm_logger.h" />
+    <ClInclude Include="..\ZiMoPublic\sqllite\sqlite3.h" />
+    <ClInclude Include="..\ZiMoPublic\sqllite\sqlite3ext.h" />
     <ClInclude Include="..\ZiMoPublic\ssl\zm_ssl_ctx.h" />
     <ClInclude Include="..\ZiMoPublic\ssl\zm_ssl_fingerprint.h" />
     <ClInclude Include="..\ZiMoPublic\util\zm_util_container.h" />
@@ -529,6 +531,8 @@
     <ClCompile Include="..\ZiMoPublic\openssl\include\openssl\applink.c" />
     <ClCompile Include="..\ZiMoPublic\service\zm_service_base.cpp" />
     <ClCompile Include="..\ZiMoPublic\spdlog\zm_logger.cpp" />
+    <ClCompile Include="..\ZiMoPublic\sqllite\shell.c" />
+    <ClCompile Include="..\ZiMoPublic\sqllite\sqlite3.c" />
     <ClCompile Include="..\ZiMoPublic\ssl\zm_ssl_ctx.cpp" />
     <ClCompile Include="..\ZiMoPublic\ssl\zm_ssl_fingerprint.cpp" />
     <ClCompile Include="..\ZiMoPublic\util\zm_util_container.cpp" />
