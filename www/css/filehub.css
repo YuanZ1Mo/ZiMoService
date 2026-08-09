@@ -1,0 +1,361 @@
+/* ============================================================================
+   文件中心工作区(filehub.js)样式
+   视觉:印章式双空间 / 选中即盖章(朱砂竖线)/ 方形复选 / 墨线进度 / 档案发丝线
+   ============================================================================ */
+
+.fh-wrap { height: 100%; display: flex; flex-direction: column; }
+
+/* 顶栏:印章空间切换 + 工具栏 + 搜索 */
+.fh-topbar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+.fh-seals { display: flex; gap: 8px; }
+.fh-seal {
+  border: 1px solid var(--line-strong); background: var(--bg1); color: var(--fg2);
+  border-radius: 4px; padding: 6px 14px; font-size: 13px; cursor: pointer;
+  transition: all .15s; font-family: var(--font-body); letter-spacing: 1px;
+}
+.fh-seal:hover { border-color: var(--ac); color: var(--fg0); }
+.fh-seal.on { background: var(--ac); border-color: var(--ac); color: #FFF; }
+.fh-tb-group { display: flex; gap: 6px; }
+.fh-filters { display: flex; gap: 6px; align-items: center; }
+.fh-filter {
+  background: var(--bg2); border: 1px solid var(--line-strong); color: var(--fg0);
+  border-radius: var(--radius-sm); padding: 6px 8px; font-size: 13px;
+  font-family: var(--font-body); cursor: pointer;
+}
+.fh-filter:focus { outline: none; border-color: var(--ac); }
+.fh-filter-wrap { position: relative; display: inline-flex; align-items: center; }
+.fh-filter-clear {
+  position: absolute; right: 2px; padding: 0 4px; font-size: 14px; line-height: 1;
+}
+.fh-owner-suggest {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 30;
+  min-width: 160px; max-height: 200px; overflow-y: auto;
+  background: var(--bg1); border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+.fh-suggest-item {
+  display: block; width: 100%; text-align: left; background: none; border: none;
+  color: var(--fg0); font-size: 13px; padding: 6px 12px; cursor: pointer;
+  font-family: var(--font-mono);
+}
+.fh-suggest-item:hover { background: var(--bg2); color: var(--ac); }
+.fh-search { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+.fh-search input {
+  background: var(--bg2); border: 1px solid var(--line-strong); color: var(--fg0);
+  border-radius: var(--radius-sm); padding: 6px 10px; font-size: 13px; width: 200px;
+  font-family: var(--font-body);
+}
+.fh-search input:focus { outline: none; border-color: var(--ac); }
+
+/* 路径栏:返回 + 面包屑 */
+.fh-pathbar {
+  display: flex; align-items: center; gap: 10px; padding: 8px 14px;
+  border-bottom: 1px solid var(--line); min-height: 40px;
+}
+.fh-bread { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
+.fh-sortbar { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+.fh-sort-label { font-size: 11px; color: var(--fg3); font-family: var(--font-mono); letter-spacing: 1px; }
+.fh-sort-chip {
+  font-size: 11px; color: var(--ac); border: 1px solid var(--ac-dim);
+  background: var(--ac-dim); border-radius: 3px; padding: 1px 6px;
+}
+.fh-crumb {
+  background: none; border: none; color: var(--fg2); font-size: 13px; cursor: pointer;
+  padding: 3px 6px; border-radius: 4px; font-family: var(--font-mono);
+}
+.fh-crumb:hover { color: var(--ac); background: var(--bg2); }
+.fh-crumb.cur { color: var(--fg0); cursor: default; }
+.fh-crumb.cur:hover { background: none; }
+.fh-crumb-sep { color: var(--fg3); font-family: var(--font-mono); }
+
+/* 表格:发丝线分隔,档案感 */
+.fh-table-wrap { flex: 1; overflow-y: auto; }
+.fh-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.fh-table thead th {
+  position: sticky; top: 0; background: var(--bg1); color: var(--fg3);
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 1px; text-transform: uppercase;
+  text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line-strong);
+  font-weight: 500; user-select: none;
+}
+.fh-sortable { cursor: pointer; }
+.fh-sortable:hover { color: var(--fg0); }
+.fh-sortable::after { content: ' ⇅'; font-size: 10px; opacity: .5; }
+.fh-sortable.active { color: var(--fg0); }
+.fh-sortable.active::after { content: attr(data-idx) ' ↑'; opacity: 1; color: var(--ac); font-style: normal; }
+.fh-sortable.active[data-dir="desc"]::after { content: attr(data-idx) ' ↓'; }
+.fh-table tbody td { padding: 0 10px; border-bottom: 1px solid var(--line); height: 40px; }
+.fh-table tbody tr { transition: background .12s; }
+.fh-table tbody tr:hover { background: var(--bg2); }
+.fh-table tbody tr.fh-sel { background: var(--ac-dim); }
+.fh-table tbody tr.fh-sel td:first-child { box-shadow: inset 3px 0 0 var(--ac); }
+.fh-chk { width: 44px; }
+.fh-name { font-size: 14px; }
+.fh-icon {
+  display: inline-block; vertical-align: -2px; margin-right: 6px;
+  color: var(--fg2); flex-shrink: 0;
+}
+.fh-pick-row .fh-icon { margin-right: 8px; }
+.fh-name-text { cursor: default; }
+.fh-dir-glyph {
+  display: inline-block; width: 10px; height: 10px; margin-right: 8px;
+  border: 1.5px solid var(--fg2); border-radius: 2px; position: relative; vertical-align: middle;
+}
+.fh-ext {
+  display: inline-block; font-family: var(--font-mono); font-size: 10px;
+  color: var(--fg2); border: 1px solid var(--line-strong); border-radius: 3px;
+  padding: 0 4px; margin-right: 8px; vertical-align: middle; text-transform: uppercase;
+}
+.fh-ext.ext-md { color: var(--ac); }
+.fh-ext.ext-pdf { color: var(--err); }
+.fh-ext.ext-zip { color: var(--warn); }
+.fh-ext.ext-img { color: var(--ok); }
+.fh-ext.ext-audio { color: var(--ac); }
+.fh-ext.ext-video { color: var(--warn); }
+.fh-ext.ext-exe { color: var(--err); }
+.fh-mono { font-family: var(--font-mono); font-size: 12px; color: var(--fg2); }
+.fh-rel { display: block; font-family: var(--font-mono); font-size: 11px; color: var(--fg3); }
+
+/* 方形复选(印章感) */
+.fh-check { display: inline-flex; cursor: pointer; }
+.fh-check input { position: absolute; opacity: 0; width: 0; height: 0; }
+.fh-check span {
+  width: 16px; height: 16px; border: 1px solid var(--line-strong); border-radius: 2px;
+  background: var(--bg2); display: inline-block; position: relative; transition: all .12s;
+}
+.fh-check input:checked + span { background: var(--ac); border-color: var(--ac); }
+.fh-check input:checked + span::after {
+  content: ''; position: absolute; left: 4px; top: 1px; width: 5px; height: 9px;
+  border: solid #FFF; border-width: 0 2px 2px 0; transform: rotate(45deg);
+}
+.fh-check input:indeterminate + span { background: var(--ac-dim); border-color: var(--ac); }
+.fh-check input:indeterminate + span::after {
+  content: ''; position: absolute; left: 3px; top: 6px; right: 3px; height: 2px; background: var(--ac);
+}
+
+/* 行操作(悬停显示;靠左紧凑,不占右侧宽列) */
+.fh-ops { white-space: nowrap; text-align: left; opacity: 0; transition: opacity .12s; }
+tr:hover .fh-ops { opacity: 1; }
+.fh-op {
+  background: none; border: none; color: var(--fg2); font-size: 12px; cursor: pointer;
+  padding: 2px 6px; border-radius: 3px;
+}
+.fh-op:hover { color: var(--ac); background: var(--bg2); }
+.fh-op:disabled { opacity: .35; cursor: not-allowed; }
+
+/* 空状态(邀请行动;标题 + 副提示 + 可选操作) */
+.fh-empty { text-align: center; padding: 56px 0; }
+.fh-empty-title { font-size: 15px; color: var(--fg2); }
+.fh-empty-sub { font-size: 13px; color: var(--fg3); margin-top: 6px; }
+.fh-empty-link {
+  color: var(--ac); cursor: pointer; text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.fh-empty-link:hover { color: var(--ac-hover); }
+
+/* 上传队列:墨线进度(队列窗体 + 上传窗体共用) */
+/* 弹窗固定宽度;表格固定列宽(执行中列宽不变,不抖动);
+   高度自适应视口:标题/tabs 固定,列表区滚动、表头 sticky */
+.fh-qd-modal.modal {
+  width: 960px;
+  max-width: 96vw;
+  max-height: calc(100vh - 32px);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.fh-qd-modal .modal-body {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.fh-qd-tabs { display: flex; gap: 6px; margin-bottom: 10px; flex-shrink: 0; }
+.fh-qd-tab {
+  border: 1px solid var(--line-strong); background: var(--bg1); color: var(--fg2);
+  border-radius: 4px; padding: 5px 14px; font-size: 12px; cursor: pointer;
+  transition: all .15s;
+}
+.fh-qd-tab:hover { border-color: var(--ac); color: var(--fg0); }
+.fh-qd-tab.on { background: var(--ac); border-color: var(--ac); color: #FFF; }
+/* 队列分列:table-layout fixed,固定列宽(执行中不变,内容完整) */
+.fh-qd-modal .modal-body { padding: 14px; }
+.fh-qd-table-wrap {
+  flex: 1; min-height: 0; max-height: 60vh;
+  overflow: auto;   /* 横向 + 纵向滚动:窄窗口横向滚查看完整列 */
+}
+.fh-qd-table thead th { position: sticky; top: 0; background: var(--bg1); z-index: 1; }
+.fh-qd-empty {
+  color: var(--fg3); font-size: 13px; text-align: center; padding: 28px 0;
+}
+.fh-qd-table {
+  width: 100%; min-width: 820px;   /* 列宽总和保底:窗口更窄时表格保持完整,横向滚动查看 */
+  border-collapse: collapse; table-layout: fixed;
+}
+.fh-qd-table th, .fh-qd-table td {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fh-qd-table th {
+  color: var(--fg3); font-size: 11px; text-align: left; font-weight: 500;
+  padding: 5px 10px; border-bottom: 1px solid var(--line-strong);
+  font-family: var(--font-mono); letter-spacing: 1px;
+}
+.fh-qd-table th.fh-qd-th-dot, .fh-qd-table td.fh-qd-td-dot { width: 24px; padding: 0 4px; }
+.fh-qd-table th:nth-child(2), .fh-qd-table td:nth-child(2) { width: 280px; }
+.fh-qd-table th:nth-child(3), .fh-qd-table td:nth-child(3) { width: 100px; }
+.fh-qd-table th:nth-child(4), .fh-qd-table td:nth-child(4) { width: 140px; }
+.fh-qd-table th:nth-child(5), .fh-qd-table td:nth-child(5) { width: 170px; }
+.fh-qd-table th:nth-child(6), .fh-qd-table td:nth-child(6) { width: 110px; }
+.fh-qd-table td { padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.fh-qd-empty { color: var(--fg3); font-size: 13px; text-align: center; padding: 24px 0; }
+.fh-qd-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+/* 状态圆点:成功绿 / 失败红 / 进行中黄 */
+.fh-q-dot {
+  width: 8px; height: 8px; border-radius: 50%; display: inline-block;
+  background: var(--fg3);
+}
+tr.ok .fh-q-dot { background: var(--ok); }
+tr.err .fh-q-dot { background: var(--err); }
+tr.run .fh-q-dot { background: var(--warn); }
+tr.err .fh-q-name { color: var(--err); }
+.fh-q-name-cell { min-width: 0; }
+.fh-q-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fh-q-dir { color: var(--fg3); font-size: 11px; font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fh-q-time { color: var(--fg3); font-size: 11px; white-space: nowrap; }
+.fh-q-bar-cell { min-width: 120px; }
+.fh-q-bar {
+  height: 6px; background: var(--bg2); border-radius: 3px; overflow: hidden;
+}
+.fh-q-fill {
+  height: 100%; background: var(--ac); border-radius: 3px; transition: width .3s;
+  position: relative;
+}
+.fh-q-fill::after {
+  content: ''; position: absolute; right: -3px; top: -2px; width: 6px; height: 10px;
+  border-radius: 50%; background: var(--ac);
+}
+.fh-q-meta { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
+.fh-q-ops { white-space: nowrap; }
+
+/* 上传窗体:拖拽区 */
+.fh-upload-modal.modal { width: 480px; max-width: 92vw; }
+.fh-up-drop {
+  border: 2px dashed var(--line-strong); border-radius: var(--radius-sm);
+  padding: 26px 16px; text-align: center; cursor: pointer; transition: all .15s;
+  color: var(--fg2);
+}
+.fh-up-drop:hover { border-color: var(--ac-dim); }
+.fh-up-drop.over { border-color: var(--ac); color: var(--ac); background: var(--ac-dim); }
+.fh-up-drop-icon { font-size: 26px; margin-bottom: 6px; }
+.fh-up-drop-text { font-size: 14px; }
+.fh-up-drop-sub { font-size: 12px; color: var(--fg3); margin-top: 4px; }
+.fh-up-link { color: var(--ac); text-decoration: underline; }
+.fh-up-queue { margin-top: 12px; max-height: 220px; overflow-y: auto; }
+
+/* 拖拽遮罩 */
+.fh-wrap { position: relative; }
+.fh-drop-overlay {
+  position: absolute; inset: 0; background: rgba(10, 13, 16, 0.85);
+  border: 2px dashed var(--ac); display: none; align-items: center; justify-content: center;
+  color: var(--ac); font-size: 18px; letter-spacing: 2px; z-index: 20;
+}
+.fh-drop-overlay.show { display: flex; }
+
+/* 弹窗输入框(重命名/新建文件夹等):墨色主题 */
+.modal-input {
+  width: 100%; background: var(--bg0); border: 1px solid var(--line-strong);
+  color: var(--fg0); border-radius: var(--radius-sm); padding: 9px 12px;
+  font-size: 14px; font-family: var(--font-body); outline: none;
+  transition: border-color .15s;
+}
+.modal-input:focus { border-color: var(--ac); }
+.modal-input::placeholder { color: var(--fg3); }
+
+/* 复制/移动选择弹窗 */
+.fh-pick-modal.modal { width: 460px; max-width: 92vw; }
+.fh-pick { display: flex; flex-direction: column; gap: 10px; }
+.fh-pick-spaces { display: flex; gap: 8px; }
+.fh-pick-space {
+  border: 1px solid var(--line-strong); background: var(--bg1); color: var(--fg2);
+  border-radius: 4px; padding: 5px 14px; font-size: 12px; cursor: pointer;
+  transition: all .15s;
+}
+.fh-pick-space:hover { border-color: var(--ac); color: var(--fg0); }
+.fh-pick-space.on { background: var(--ac); border-color: var(--ac); color: #FFF; }
+.fh-pick-path {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 2px;
+  font-family: var(--font-mono); font-size: 13px; color: var(--fg2); min-height: 24px;
+}
+.fh-pick-here { color: var(--fg0); }
+.fh-pick-tree {
+  height: 300px; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  padding: 6px; background: var(--bg0);
+}
+.fh-pick-row {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  background: none; border: none; color: var(--fg0); font-size: 13px; padding: 7px 10px;
+  border-radius: 4px; cursor: pointer;
+}
+.fh-pick-row:hover { background: var(--bg2); color: var(--ac); }
+.fh-pick-empty { color: var(--fg3); font-size: 12px; padding: 12px; text-align: center; }
+.fh-pick-actions { text-align: right; }
+.fh-pick-close {
+  float: right; background: none; border: none; color: var(--fg2); cursor: pointer; font-size: 13px;
+}
+.fh-pick-close:hover { color: var(--err); }
+
+/* 更多菜单 */
+.fh-more-list { display: flex; flex-direction: column; gap: 2px; }
+.fh-more-item {
+  background: none; border: none; color: var(--fg0); text-align: left; font-size: 14px;
+  padding: 8px 12px; border-radius: 6px; cursor: pointer;
+}
+.fh-more-item:hover { background: var(--bg2); color: var(--ac); }
+
+/* 文件信息 */
+.fh-info { display: flex; flex-direction: column; gap: 8px; }
+.fh-info-row { display: flex; justify-content: space-between; gap: 20px; font-size: 13px; }
+.fh-info-row span:first-child { color: var(--fg3); }
+
+/* 我的分享管理窗体 */
+.fh-shares-modal.modal { width: 640px; max-width: 94vw; max-height: calc(100vh - 32px); overflow-y: auto; }
+.fh-shares-list { display: flex; flex-direction: column; gap: 2px; }
+.fh-shares-loading { color: var(--fg3); font-size: 13px; text-align: center; padding: 24px 0; }
+.fh-share-row {
+  display: flex; align-items: center; gap: 12px; padding: 10px;
+  border-bottom: 1px solid var(--line); font-size: 13px;
+}
+.fh-share-row.dead { opacity: .55; }
+.fh-share-main { flex: 1; min-width: 0; }
+.fh-share-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fh-share-dead { color: var(--err); font-size: 11px; }
+.fh-share-meta { color: var(--fg3); font-size: 11px; margin-top: 2px; }
+.fh-share-url {
+  color: var(--fg2); font-size: 11px; margin-top: 2px;
+  word-break: break-all;   /* 完整显示长链接,自动换行,不撑破容器 */
+}
+.fh-share-ops { display: flex; gap: 6px; white-space: nowrap; }
+
+/* 分享 */
+.fh-share { display: flex; flex-direction: column; gap: 12px; align-items: center; padding: 6px 0; }
+.fh-share-qr {
+  padding: 10px; background: var(--bg1); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); line-height: 0;
+}
+.fh-share-qr img, .fh-share-qr canvas { border-radius: 4px; }
+.fh-share-url {
+  font-size: 12px; background: var(--bg0); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: 8px 12px; word-break: break-all; text-align: center;
+}
+.fh-share-note { color: var(--fg3); font-size: 12px; }
+
+/* 创建分享弹窗:宽度适中,防长链接溢出滚动 */
+.fh-share-modal.modal { width: 420px; max-width: 94vw; overflow-x: hidden; }
+
+/* 移动端 */
+@media (max-width: 768px) {
+  .fh-search input { width: 120px; }
+  .fh-ops { opacity: 1; }
+  .fh-q-name { width: 120px; }
+}

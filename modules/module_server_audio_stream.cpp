@@ -1,4 +1,5 @@
 #include "module_server_audio_stream.h"
+#include "modules/module_user.h"   // UserModule:鉴权/角色/模块权限查询
 
 #include "zm_net_http.h"         // ZmHttpdTask(发送线程流式接口,直接 task 访问)
 #include "zm_net_req_loop.h"     // ZmReqLoop + REQ_LOOP_SIG_DONE(流收尾投递)
@@ -107,6 +108,173 @@ void ConvertToStereo16(int mixCh, int mixBits, bool mixFloat,
 // ============================================================================
 // Subscriber 析构(释放 WebM 混流器)
 // ============================================================================
+
+// ============================================================================
+// 构造 / REST 分发(仅处理 /portal/audio/*)
+// ============================================================================
+
+ServerAudioStreamModule::ServerAudioStreamModule(UserModule* userModule)
+    : m_userModule(userModule)
+{
+}
+
+bool ServerAudioStreamModule::DispatchRest(ZmReqLoop* loop, evhttp_cmd_type verb,
+                                           const std::string& path, ZmHttpdTask* task,
+                                           const BYTE*, size_t)
+{
+    // 仅处理 /portal/audio/* 前缀,其余放行(portal 模块在其后处理)
+    if (path.size() < 14 || path.compare(0, 14, "/portal/audio/") != 0)
+        return false;
+
+    if (verb == EVHTTP_REQ_GET && path == "/portal/audio/stream")
+    {
+        HandleAudioStream(loop, task);
+        return true;
+    }
+    if (verb == EVHTTP_REQ_GET && path == "/portal/audio/status")
+    {
+        HandleAudioStatus(loop, task);
+        return true;
+    }
+
+    ZmReqLoopRest::ResponseError(loop, 404, "Not found: " + path);
+    return true;
+}
+
+// ============================================================================
+// 音频流端点(鉴权 → 权限 → 流式订阅)
+// ============================================================================
+
+void ServerAudioStreamModule::HandleAudioStream(ZmReqLoop* loop, ZmHttpdTask* task)
+{
+    if (!m_userModule)
+    {
+        ZmReqLoopRest::ResponseError(loop, 503, "门户服务未初始化");
+        return;
+    }
+
+    // ① 会话鉴权
+    UserModule::UserInfo ui;
+    uint64_t uid = m_userModule->AuthAndTouch(task, &ui);
+    if (!uid)
+    {
+        ZmReqLoopRest::ResponseError(loop, 401, "会话已失效");
+        return;
+    }
+
+    // ② 模块权限:可见模块须含 audio
+    std::string role;
+    m_userModule->GetUserRole(uid, role);
+    {
+        std::vector<ZMJSON> mods;
+        if (!m_userModule->GetUserModules(uid, role, mods))
+        {
+            ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误");
+            return;
+        }
+        bool hasAudio = false;
+        for (const auto& m : mods)
+        {
+            if (zm_json_get_str(m, "code") == "audio")
+            {
+                hasAudio = true;
+                break;
+            }
+        }
+        if (!hasAudio)
+        {
+            ZmReqLoopRest::ResponseError(loop, 403, "权限不足");
+            return;
+        }
+    }
+
+    // ③ 先订阅(必要时启动采集):失败可真实返回 503(无设备),响应未开始
+    if (!Subscribe(task, loop))
+    {
+        ZmReqLoopRest::ResponseError(loop, 503, "服务器无可用音频设备");
+        return;
+    }
+    // 再开始流式响应(顺序不可颠倒:先开始流再订阅,订阅失败时流已发出会与
+    // 错误回复冲突 → 事件循环收到 REPLY 回收 doer,后续 CHUNK/END 访问已回收对象崩溃)。
+    // 用 ResponseStreamStart:内部取消 deadline(流式长任务防 504 误杀 —— 直接
+    // task->StartStreamReply 不取消,超时收尾与进行中的流冲突,实测空指针崩溃)
+    ZmReqLoopRest::ResponseStreamStart(loop, 200,
+        {{"Content-Type", "application/octet-stream"}});
+    // M1:Subscribe 与 StartStreamReply 之间采集可能瞬时失败收尾、订阅者已被移除
+    //     —— 此时无人发流,主动结束避免挂死的空流
+    if (!IsSubscriberAlive(task))
+    {
+        task->EndStreamReply();
+    }
+}
+
+// ============================================================================
+// 音频状态端点(鉴权 → 状态快照)
+// ============================================================================
+
+void ServerAudioStreamModule::HandleAudioStatus(ZmReqLoop* loop, ZmHttpdTask* task)
+{
+    if (!m_userModule)
+    {
+        ZmReqLoopRest::ResponseError(loop, 503, "门户服务未初始化");
+        return;
+    }
+
+    UserModule::UserInfo ui;
+    uint64_t uid = m_userModule->AuthAndTouch(task, &ui);
+    if (!uid)
+    {
+        ZmReqLoopRest::ResponseError(loop, 401, "会话已失效");
+        return;
+    }
+
+    // 模块权限:可见模块须含 audio
+    std::string role;
+    m_userModule->GetUserRole(uid, role);
+    {
+        std::vector<ZMJSON> mods;
+        if (!m_userModule->GetUserModules(uid, role, mods))
+        {
+            ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误");
+            return;
+        }
+        bool hasAudio = false;
+        for (const auto& m : mods)
+        {
+            if (zm_json_get_str(m, "code") == "audio")
+            {
+                hasAudio = true;
+                break;
+            }
+        }
+        if (!hasAudio)
+        {
+            ZmReqLoopRest::ResponseError(loop, 403, "权限不足");
+            return;
+        }
+    }
+
+    AudioStatus st;
+    GetStatus(st);
+    ZMJSON rsp;
+    rsp["result"]["capturing"] = st.capturing;
+    rsp["result"]["subscriberCount"] = st.subscriberCount;
+    rsp["result"]["sampleRate"] = st.sampleRate;
+    rsp["result"]["channels"] = st.channels;
+    rsp["result"]["bitrate"] = st.bitrate;
+    ZmReqLoopRest::ResponseJson(loop, 200, rsp);
+}
+
+bool ServerAudioStreamModule::GetStatus(AudioStatus& out) const
+{
+    std::lock_guard lock(m_mutex);
+    out.capturing = m_capturing;
+    out.subscriberCount = (int)m_subscribers.size();
+    out.sampleRate = kAudioSampleRate;
+    out.channels = kAudioChannels;
+    out.bitrate = kAudioBitrate;
+    return true;
+}
 
 // ============================================================================
 // 析构

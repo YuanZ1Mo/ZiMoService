@@ -1,5 +1,5 @@
 /**
- * ZiMo Service — 强制改密页(change-password.html)
+ * ZiMo Service — 强制改密页(force-reset.html)
  * 管理员重置密码后,用户首次登录强制跳转本页设置新密码与新救援码
  */
 (function () {

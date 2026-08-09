@@ -1,6 +1,8 @@
 #ifndef MODULE_SERVER_AUDIO_STREAM_H
 #define MODULE_SERVER_AUDIO_STREAM_H
 
+#include "zm_net_http.h"   // ZmHttpdTask / evhttp_cmd_type / BYTE
+
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -11,8 +13,8 @@
 #include <utility>
 #include <vector>
 
-class ZmHttpdTask;
 class ZmReqLoop;   // 本请求的 A 实例(收尾投递用,仅存指针)
+class UserModule;  // 注入:鉴权(AuthAndTouch)/模块权限(GetUserModules)
 
 // ── 帧协议常量(小端) ─────────────────────────────────────
 // 每帧 = len(4B) + seq(4B) + Opus 帧数据
@@ -39,7 +41,7 @@ constexpr uint32_t kAudioSubQueueMax  = 600;     // 每订阅者队列上限(600
 class ServerAudioStreamModule
 {
 public:
-    ServerAudioStreamModule() = default;
+    explicit ServerAudioStreamModule(UserModule* userModule);
     ~ServerAudioStreamModule();
 
     ServerAudioStreamModule(const ServerAudioStreamModule&) = delete;
@@ -68,6 +70,31 @@ public:
      * @return true 仍在订阅表中(发送线程正常运行);false 已被移除(如采集瞬时失败收尾)
      */
     bool IsSubscriberAlive(ZmHttpdTask* task) const;
+
+    /**
+     * @brief REST 分发入口(service_portal.cpp 的 else 链调用;位置在 user 之后、portal 之前)
+     * @note 仅处理 /portal/audio/*:stream(鉴权后流式订阅)/ status(状态查询)
+     * @return true 本模块已处理(含错误响应);false 未命中,走 portal 原逻辑
+     */
+    bool DispatchRest(ZmReqLoop* loop, evhttp_cmd_type verb, const std::string& path,
+                      ZmHttpdTask* task, const BYTE* body, size_t bodyLen);
+
+    /** 音频状态快照(供 /portal/audio/status) */
+    struct AudioStatus
+    {
+        bool     capturing = false;
+        int      subscriberCount = 0;
+        uint32_t sampleRate = kAudioSampleRate;
+        uint16_t channels = kAudioChannels;
+        uint32_t bitrate = kAudioBitrate;
+    };
+
+    /** @brief 查询状态(锁内读采集标志与订阅数) */
+    bool GetStatus(AudioStatus& out) const;
+
+private:
+    void HandleAudioStream(ZmReqLoop* loop, ZmHttpdTask* task);
+    void HandleAudioStatus(ZmReqLoop* loop, ZmHttpdTask* task);
 
 private:
     /** @brief 订阅者:每连接一个,持有发送线程与帧队列 */
@@ -104,6 +131,7 @@ private:
     mutable std::mutex m_mutex;
     bool m_capturing = false;                                   // 采集状态(仅锁内访问)
     bool m_tasksGone = false;                                   // 析构已开始:task/loop 即将失效(仅锁内访问)
+    UserModule* m_userModule = nullptr;                         ///< 注入:鉴权/模块权限(不拥有)
     std::atomic<bool> m_captureExit {false};
     std::thread m_captureThread;
     std::unordered_map<ZmHttpdTask*, Subscriber*> m_subscribers;  // 活跃订阅者(仅锁内访问)

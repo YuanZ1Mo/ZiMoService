@@ -56,8 +56,8 @@ static constexpr int64_t kUserCookieMaxAge = 90LL * 24 * 3600;
  * @brief 用户账号模块(业务层)
  *
  * 承载用户系统:登录/注册/找回密码 + 会话管理 + 账号+IP 锁定 + 注册/重置限流 + 每日清理。
- * 双 SQLite 库:用户库(www/db/user/user.db:users/sessions/login_locks)+
- * 通用限流库(www/db/rate/rate.db:register_rate_limits/reset_rate_limits,后续模块可复用)。
+ * 双 SQLite 库:用户库(db/user/user.db:users/sessions/login_locks)+
+ * 通用限流库(db/rate/rate.db:register_rate_limits/reset_rate_limits,后续模块可复用)。
  * 代码层建表(CREATE TABLE IF NOT EXISTS,Open 时执行)。
  *
  * 线程模型:请求经 ZmReqLoopPool 分发并发到达,库访问以各自 mutex 串行化;
@@ -106,11 +106,14 @@ public:
     /** @brief 查询用户角色(developer/admin/user),失败返回 false 并输出默认 user */
     bool GetUserRole(uint64_t userId, std::string& role);
 
+    /** @brief 按 id 查询账号(展示用,如文件上传者);不存在返回 false */
+    bool GetUserAccount(uint64_t userId, std::string& account);
+
     /** @brief 角色等级:developer=3 / admin=2 / user=1 / 未知=0(等级校验用) */
     static int GetUserRoleLevel(const std::string& role);
 
     /**
-     * @brief 写入操作日志(通用审计库 www/db/audit/audit.db,后续模块复用)
+     * @brief 写入用户管理操作日志(业务日志库 db/audit/audit.db 的 user_manage_logs 表)
      * @param detail 操作细节 JSON 字符串(如 {role:"admin"}、{modules:[...]})
      */
     void WriteAuditLog(uint64_t operatorId, const std::string& operatorAccount,
@@ -118,7 +121,16 @@ public:
                        const std::string& targetAccount, const std::string& detail);
 
     /**
-     * @brief 查询用户可见模块列表(管理员全量;普通用户 home + 授权项),按 sort 排序
+     * @brief 写入业务操作日志(业务日志库,表名参数化,如 filehub_logs;结构含 target_type 列)
+     * @param table 表名(代码内常量,非用户输入)
+     * @param detail 操作细节 JSON 字符串
+     */
+    bool WriteBusinessLog(const char* table, uint64_t opId, const std::string& opAccount,
+                          const std::string& action, const std::string& targetType,
+                          uint64_t targetId, const std::string& detail);
+
+    /**
+     * @brief 查询用户可见模块列表(developer 全量;admin/user 为 home + 授权项),按 sort 排序
      * @param modules 输出 [{code,name,url}, ...]
      * @return false 查询失败
      */
@@ -311,7 +323,7 @@ private:
 private:
     sqlite3* m_userDb = nullptr;      ///< 用户库(users/sessions/login_locks)
     sqlite3* m_rateDb = nullptr;      ///< 通用限流库(register/reset_rate_limits)
-    sqlite3* m_auditDb = nullptr;     ///< 通用审计库(audit_logs,后续模块复用)
+    sqlite3* m_auditDb = nullptr;     ///< 业务日志库(用户管理 user_manage_logs;文件中心 filehub_logs 复用本库)
     std::mutex m_userDbMutex;
     std::mutex m_rateDbMutex;
     std::mutex m_auditDbMutex;

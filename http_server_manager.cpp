@@ -194,6 +194,10 @@ int HttpServerManager::OnHttpRequest(ZmHttpdTask* task, const BYTE* data, size_t
 int HttpServerManager::ServeStaticFile(ZmHttpdTask* task, const std::string& uri)
 {
 	std::string filePath = (uri == "/" || uri.empty()) ? "/html/index.html" : uri;
+	// 剥离 query 参数(静态资源带版本号 /css/x.css?v=1,浏览器缓存破除)
+	size_t qpos = filePath.find('?');
+	if (qpos != std::string::npos)
+		filePath = filePath.substr(0, qpos);
 	if (!filePath.empty() && filePath[0] == '/')
 		filePath = filePath.substr(1);
 
@@ -225,6 +229,12 @@ int HttpServerManager::ServeStaticFile(ZmHttpdTask* task, const std::string& uri
 		if (fileSize <= 0) { _close(fd); return false; }
 
 		task->PutReplyHeader("Content-type", ZmHttpUtil::GetMimeType(path));
+		// HTML 不缓存(入口页需立即可见更新,浏览器启发式缓存会滞留旧页);
+		// JS/CSS 用 URL 版本号破除缓存(改动递增 ?v=)
+		std::string lower = path;
+		std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+		if (lower.size() > 5 && lower.compare(lower.size() - 5, 5, ".html") == 0)
+			task->PutReplyHeader("Cache-Control", "no-cache");
 
 		if (task->SetReplyFile(fd, 0, fileSize) != 0) { _close(fd); return false; }
 		return true;

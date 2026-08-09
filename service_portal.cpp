@@ -4,11 +4,12 @@
 #include "net_dock.h"
 #include "broadcast_manager.h"
 #include "http_server_manager.h"
-#include "module_file_hub.h"
-#include "module_server_audio_stream.h"
+#include "modules/module_file_hub.h"
+
 #include "module_deepseek.h"
 #include "modules/module_user.h"
 #include "modules/module_portal.h"
+#include "modules/module_server_audio_stream.h"
 
 #include "zm_net_req_loop_protocol.h"   // ZmReqLoopRest(回复 helper 静态调用)+ ZmReqLoopPool
 #include "zm_net_http.h"   // ZmHttpdTask/evhttp_cmd_type/ZmHttpUtil + ZmJsonRpcServer(直通回复与路由用)
@@ -25,23 +26,28 @@
 
 ServicePortal::ServicePortal()
 {
-	m_fileHubModule = new FileHubModule();
-	m_audioModule = new ServerAudioStreamModule();
+	// 用户系统先建(双库初始化/建表):音频/文件中心/门户模块依赖其鉴权与权限查询
+	m_userModule = new UserModule();
+	if (!m_userModule->Open())
+		DEFAULT_LOG_ERROR("ServicePortal: UserModule init failed");
+
+	// 文件中心:注入 UserModule(鉴权/角色/模块权限/业务日志),建 filehub.db
+	m_fileHubModule = new FileHubModule(m_userModule);
+	if (!m_fileHubModule->Open())
+		DEFAULT_LOG_ERROR("ServicePortal: FileHubModule init failed");
+
+	m_audioModule = new ServerAudioStreamModule(m_userModule);
 
 	// Winsock 先行初始化(幂等):池预创建客户端循环线程时 libevent 需已 WSAStartup,
 	// 否则 event_base_new 失败(实测:池 init 报 client start failed,预创建全部落空)
 	ZmWinSockHelper::Init();
 
-	// 通用外呼请求池(全门户共用;预创建4,上限16)
+	// 通用外呼请求池(全门户共用;预创建4,上限80)
 	m_httpClientPool = new ZmHttpClientPool();
-	if (!m_httpClientPool->Init(4, 16))
+	if (!m_httpClientPool->Init(4, 80))
 		DEFAULT_LOG_ERROR("ServicePortal: ZmHttpClientPool init failed");
 	// DeepSeek 模块:池创建后注入(配置/缓存/usage 处理全部在模块内)
 	m_deepseekModule = new DeepSeekModule(m_httpClientPool);
-	// 用户系统:双库初始化(建表);失败仅记日志,服务继续(用户系统不可用)
-	m_userModule = new UserModule();
-	if (!m_userModule->Open())
-		DEFAULT_LOG_ERROR("ServicePortal: UserModule init failed");
 	// 门户模块:注入 UserModule(鉴权/角色/模块权限查询)
 	m_portalModule = new PortalModule(m_userModule);
 }
@@ -133,6 +139,9 @@ void ServicePortal::RegisterHttpRoutes(HttpServerManager* httpMgr)
 	// 用户系统:模块自注册 /login /register /reset 静态页路由
 	if (m_userModule)
 		m_userModule->RegisterHttpRoutes(httpMgr);
+	// 文件中心:自注册 /share/* 分享链接转发(302 → REST 端口)
+	if (m_fileHubModule)
+		m_fileHubModule->RegisterHttpRoutes(httpMgr);
 	// 门户模块:自注册 /portal 与 /portal/* SPA fallback
 	if (m_portalModule)
 		m_portalModule->RegisterHttpRoutes(httpMgr);
@@ -206,6 +215,14 @@ void ServicePortal::RestfulRequestCB(ZmReqLoop* loop,
 
 	// ── 用户系统:auth 分发(命中即返回)────────────────────
 	if (m_userModule && m_userModule->DispatchRest(loop, verb, path, task, body, body_len))
+		return;
+	// ── 文件中心:/portal/filehub/* 与 /share/* 分发(命中即返回;
+	//    先于门户模块,避免被 portal 404 吞掉)────────────────
+	if (m_fileHubModule && m_fileHubModule->DispatchRest(loop, verb, path, task, body, body_len))
+		return;
+	// ── 音频模块:/portal/audio/* 分发(命中即返回;先于门户模块,
+	//    避免 /portal/audio/* 被门户 404 吞掉)────────────────
+	if (m_audioModule && m_audioModule->DispatchRest(loop, verb, path, task, body, body_len))
 		return;
 	// ── 门户模块:/portal/* 分发(命中即返回)──────────────
 	if (m_portalModule && m_portalModule->DispatchRest(loop, verb, path, task, body, body_len))

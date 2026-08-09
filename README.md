@@ -96,8 +96,13 @@ www/
 ├── html/          ← /html/* HTTP 可访问
 ├── css/           ← /css/*  HTTP 可访问
 ├── js/            ← /js/*   HTTP 可访问
-├── doc/           ← 不可通过 HTTP 访问（getAbout 内部读取）
-└── db/filehub/    ← 不可通过 HTTP 直接访问（仅通过 API 路由）
+└── doc/           ← 不可通过 HTTP 访问（getAbout 内部读取）
+
+db/                  ← 数据目录(exe 同级,与 www 分离,同步 www 不清库)
+├── user/user.db    ← 用户库(users/sessions/login_locks/modules/user_modules)
+├── rate/rate.db    ← 通用限流库
+├── audit/audit.db  ← 业务日志库(用户管理/文件中心操作日志,表按业务命名)
+└── filehub/        ← 文件中心根(不可通过 HTTP 直接访问,仅通过 API 路由)
 ```
 
 前端：Vue 3 (CDN) + 纯 CSS，零构建。控制中心和文件中心通过 RESTful API（端口 39441）获取数据，上传/下载走 HTTP 80 端口。

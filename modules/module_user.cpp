@@ -60,8 +60,10 @@ const char* kSqlCreateUsers =
     "  temp_pass_hash BLOB,"
     "  force_change INTEGER NOT NULL DEFAULT 0)";
 
-const char* kSqlCreateAuditLogs =
-    "CREATE TABLE IF NOT EXISTS audit_logs ("
+// 业务日志表按业务命名:user_manage_logs(用户管理操作)/ filehub_logs(文件中心操作),
+// 同库多表,后续业务日志同模式追加
+const char* kSqlCreateUserManageLogs =
+    "CREATE TABLE IF NOT EXISTS user_manage_logs ("
     "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
     "  operator_id INTEGER NOT NULL,"
     "  operator_account TEXT NOT NULL,"
@@ -70,6 +72,23 @@ const char* kSqlCreateAuditLogs =
     "  target_account TEXT NOT NULL,"
     "  detail TEXT NOT NULL DEFAULT '',"
     "  create_time INTEGER NOT NULL)";
+
+const char* kSqlCreateUserManageLogsIdx =
+    "CREATE INDEX IF NOT EXISTS idx_user_manage_logs_create ON user_manage_logs(create_time)";
+
+const char* kSqlCreateFileHubLogs =
+    "CREATE TABLE IF NOT EXISTS filehub_logs ("
+    "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "  operator_id INTEGER NOT NULL,"
+    "  operator_account TEXT NOT NULL,"
+    "  action TEXT NOT NULL,"
+    "  target_type TEXT NOT NULL,"
+    "  target_id INTEGER NOT NULL,"
+    "  detail TEXT NOT NULL DEFAULT '',"
+    "  create_time INTEGER NOT NULL)";
+
+const char* kSqlCreateFileHubLogsIdx =
+    "CREATE INDEX IF NOT EXISTS idx_filehub_logs_create ON filehub_logs(create_time)";
 
 const char* kSqlCreateModules =
     "CREATE TABLE IF NOT EXISTS modules ("
@@ -156,7 +175,8 @@ bool UserModule::Open()
 
     char exePath[MAX_PATH];
     ZmSystem::GetModuleDir(exePath, MAX_PATH);
-    const std::string base = std::string(exePath) + "\\www\\db";
+    // 数据目录在 exe 同级 db/(与静态 www 分离:部署同步 www 不再影响数据)
+    const std::string base = std::string(exePath) + "\\db";
 
     // 目录不存在则创建(EEXIST 忽略)
     _mkdir((base + "\\user").c_str());
@@ -202,6 +222,7 @@ bool UserModule::Open()
         return false;
     }
 
+    // ===== users 表迁移(三组 PRAGMA+ALTER):新增 users 列统一在此追加,勿在别处散落 =====
     // 迁移:旧库 users 表补"最后登录 IP/时间"列(账号维度,与当前会话解耦)
     {
         bool hasLastLoginIp = false;
@@ -252,8 +273,11 @@ bool UserModule::Open()
         return false;
     }
 
-    // 建表(通用审计库)
-    if (!Exec(m_auditDb, kSqlCreateAuditLogs))
+    // 建表(业务日志库:用户管理日志 + 文件中心日志)
+    if (!Exec(m_auditDb, kSqlCreateUserManageLogs) ||
+        !Exec(m_auditDb, kSqlCreateUserManageLogsIdx) ||
+        !Exec(m_auditDb, kSqlCreateFileHubLogs) ||
+        !Exec(m_auditDb, kSqlCreateFileHubLogsIdx))
     {
         DEFAULT_LOG_ERROR("[User] 审计库建表失败,用户系统不可用");
         Shutdown();
@@ -1732,6 +1756,22 @@ bool UserModule::GetUserRole(uint64_t userId, std::string& role)
     return true;
 }
 
+bool UserModule::GetUserAccount(uint64_t userId, std::string& account)
+{
+    account.clear();
+    std::lock_guard<std::mutex> lk(m_userDbMutex);
+    Stmt st(m_userDb, "SELECT account FROM users WHERE id=?");
+    if (!st.p)
+        return false;
+    BindInt(st.p, 1, (int64_t)userId);
+    if (sqlite3_step(st.p) == SQLITE_ROW)
+    {
+        const char* a = reinterpret_cast<const char*>(sqlite3_column_text(st.p, 0));
+        account = a ? a : "";
+    }
+    return true;
+}
+
 int UserModule::GetUserRoleLevel(const std::string& role)
 {
     if (role == "developer") return 3;
@@ -1746,7 +1786,7 @@ void UserModule::WriteAuditLog(uint64_t operatorId, const std::string& operatorA
 {
     std::lock_guard<std::mutex> lk(m_auditDbMutex);
     Stmt st(m_auditDb,
-        "INSERT INTO audit_logs(operator_id,operator_account,action,target_id,target_account,"
+        "INSERT INTO user_manage_logs(operator_id,operator_account,action,target_id,target_account,"
         "detail,create_time) VALUES(?,?,?,?,?,?,?)");
     if (!st.p)
         return;
@@ -1758,6 +1798,29 @@ void UserModule::WriteAuditLog(uint64_t operatorId, const std::string& operatorA
     BindText(st.p, 6, detail);
     BindInt(st.p, 7, (int64_t)time(nullptr));
     sqlite3_step(st.p);
+}
+
+bool UserModule::WriteBusinessLog(const char* table, uint64_t opId,
+                                  const std::string& opAccount, const std::string& action,
+                                  const std::string& targetType, uint64_t targetId,
+                                  const std::string& detail)
+{
+    std::lock_guard<std::mutex> lk(m_auditDbMutex);
+    Stmt st(m_auditDb,
+        ("INSERT INTO " + std::string(table) +
+         "(operator_id,operator_account,action,target_type,target_id,detail,create_time) "
+         "VALUES(?,?,?,?,?,?,?)").c_str());
+    if (!st.p)
+        return false;
+    BindInt(st.p, 1, (int64_t)opId);
+    BindText(st.p, 2, opAccount);
+    BindText(st.p, 3, action);
+    BindText(st.p, 4, targetType);
+    BindInt(st.p, 5, (int64_t)targetId);
+    BindText(st.p, 6, detail);
+    BindInt(st.p, 7, (int64_t)time(nullptr));
+    sqlite3_step(st.p);
+    return true;
 }
 
 bool UserModule::GetUserModules(uint64_t userId, const std::string& role,
@@ -2119,11 +2182,17 @@ void UserModule::DoCleanup()
     // 审计库:90 天前的操作日志
     {
         std::lock_guard<std::mutex> lk(m_auditDbMutex);
-        Stmt st1(m_auditDb, "DELETE FROM audit_logs WHERE create_time<?");
+        Stmt st1(m_auditDb, "DELETE FROM user_manage_logs WHERE create_time<?");
         if (st1.p)
         {
             BindInt(st1.p, 1, (int64_t)(now - kUserAuditRetain));
             sqlite3_step(st1.p);
+        }
+        Stmt st2(m_auditDb, "DELETE FROM filehub_logs WHERE create_time<?");
+        if (st2.p)
+        {
+            BindInt(st2.p, 1, (int64_t)(now - kUserAuditRetain));
+            sqlite3_step(st2.p);
         }
     }
 

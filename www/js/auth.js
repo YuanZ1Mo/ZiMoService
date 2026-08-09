@@ -63,9 +63,170 @@
       restCall('POST', '/auth/complete-change', { password, rescue }),
     userList: (keyword, role, status, page, pageSize) =>
       restCall('GET', `/portal/users?keyword=${encodeURIComponent(keyword)}&role=${encodeURIComponent(role)}&status=${status}&page=${page}&pageSize=${pageSize}`),
+    audioStatus: () => restCall('GET', '/portal/audio/status'),
+    /** 音频流端点(流式,不经 restCall):需 credentials include 携带会话 */
+    audioStreamUrl: () => `//${window.location.hostname}:39441/zimo/api/portal/audio/stream`,
     userDetail: (id) => restCall('GET', `/portal/users/${id}`),
     userAction: (id, action, body = {}) =>
       restCall('POST', `/portal/users/${id}/${action}`, body),
+    // ── 文件中心 ────────────────────────────────────────────────
+    filehubList: (space, dirId = 0, sort = 'name', order = 'asc') =>
+      restCall('GET', `/portal/filehub/list?space=${space}&dir_id=${dirId}&sort=${sort}&order=${order}`),
+    filehubSearch: (space, keyword) =>
+      restCall('GET', `/portal/filehub/search?space=${space}&keyword=${encodeURIComponent(keyword)}`),
+    filehubMkdir: (space, parentId, name) =>
+      restCall('POST', `/portal/filehub/mkdir?space=${space}`, { parent_id: parentId, name }),
+    filehubRename: (space, type, id, newName) =>
+      restCall('POST', `/portal/filehub/rename?space=${space}`, { type, id, new_name: newName }),
+    filehubMove: (space, ids, targetDirId) =>
+      restCall('POST', `/portal/filehub/move?space=${space}`, { ids, target_dir_id: targetDirId }),
+    filehubCopy: (space, ids, targetDirId, targetSpace) =>
+      restCall('POST', `/portal/filehub/copy?space=${space}`, { ids, target_dir_id: targetDirId, target_space: targetSpace }),
+    filehubDelete: (space, ids) =>
+      restCall('POST', `/portal/filehub/delete?space=${space}`, { ids }),
+    filehubShare: (type, id) =>
+      restCall('POST', '/portal/filehub/share', { type, id }),
+    filehubUnshare: (shareId) =>
+      restCall('POST', '/portal/filehub/unshare', { share_id: shareId }),
+    filehubShares: () => restCall('GET', '/portal/filehub/shares'),
+    /** 单文件下载 URL(界面内已登录场景) */
+    filehubDownloadUrl: (space, fileId) =>
+      `//${window.location.hostname}:39441/zimo/api/portal/filehub/download?space=${space}&file_id=${fileId}`,
+    /** 单文件下载(fetch blob → 触发下载;用于队列跟踪,失去浏览器原生下载器接管) */
+    async filehubDownload(space, fileId) {
+      const r = await fetch(REST_URL + `/portal/filehub/download?space=${space}&file_id=${fileId}`, {
+        method: 'GET',
+        credentials: 'include',
+      });
+      if (!r.ok) {
+        let msg = `请求失败(${r.status})`;
+        try {
+          const j = await r.json();
+          if (j.error) msg = j.error.message || msg;
+        } catch (e) { /* 非 JSON */ }
+        const err = new Error(msg);
+        err.code = r.status;
+        throw err;
+      }
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'file';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+    },
+    /** 分享链接(页面端口,免登录可达公共分享) */
+    filehubShareUrl: (token) => `//${window.location.hostname}/share/${token}`,
+    /** zip 打包下载(多选/文件夹):流式 fetch → blob → 触发下载
+     *  @param fallbackName 本地构造的下载名(跨源 fetch 拿不到 Content-Disposition 头,
+     *                     需 CORS Expose-Headers;前端用列表数据构造兜底) */
+    async filehubZip(space, ids, fallbackName) {
+      // 超时保护:打包可能较慢,120s 无响应强制中止,队列标记失败继续下一个
+      const ctrl = new AbortController();
+      const zipTimer = setTimeout(() => ctrl.abort(), 120000);
+      let r;
+      try {
+        r = await fetch(REST_URL + `/portal/filehub/zip?space=${space}`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids }),
+          signal: ctrl.signal,
+        });
+      } catch (e) {
+        clearTimeout(zipTimer);
+        if (e.name === 'AbortError') {
+          const err = new Error('打包超时');
+          err.code = 0;
+          throw err;
+        }
+        throw e;
+      }
+      clearTimeout(zipTimer);
+      if (!r.ok) {
+        let msg = `请求失败(${r.status})`;
+        try {
+          const j = await r.json();
+          if (j.error) msg = j.error.message || msg;
+        } catch (e) { /* 非 JSON */ }
+        const err = new Error(msg);
+        err.code = r.status;
+        throw err;
+      }
+      const blob = await r.blob();
+      const disp = r.headers.get('Content-Disposition') || '';
+      // 优先 RFC 5987 filename*(UTF-8 百分号编码,中文名可靠);
+      // 拿不到头(跨源 fetch 不暴露)时用本地构造的 fallbackName 兜底
+      let name = fallbackName || 'filehub.zip';
+      const star = disp.match(/filename\*=UTF-8''([^;]+)/i);
+      if (star) {
+        try { name = decodeURIComponent(star[1]); } catch (e) { name = star[1]; }
+      } else {
+        const m = disp.match(/filename="?([^";]+)"?/i);
+        if (m) name = m[1];
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+      return { name };
+    },
+    /** 上传单个文件(流式;X-File-Size 声明供服务端完整性校验) */
+    async filehubUpload(space, dirId, name, file, onProgress) {
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        // 超时保护:任何文件挂起(不触发 onload/onerror)时强制中止并报错,
+        // 保证队列链不被单个卡住的文件阻断。
+        // 超时按文件大小缩放:小文件(含 0 字节)10s 内必须收尾——否则立即失败
+        // 可见,队列继续;大文件按带宽估 60s 封顶。
+        const timeoutMs = Math.max(10000, Math.min(60000, Math.ceil(file.size / 2048)));
+        const timer = setTimeout(() => {
+          try { xhr.abort(); } catch (e) { /* 忽略 */ }
+          const err = new Error('上传超时');
+          err.code = 0;
+          reject(err);
+        }, timeoutMs);
+        xhr.open('POST', REST_URL + `/portal/filehub/upload?space=${space}&dir_id=${dirId}&name=${encodeURIComponent(name)}`);
+        xhr.withCredentials = true;
+        xhr.setRequestHeader('X-File-Size', String(file.size));
+        xhr.upload.onprogress = (e) => {
+          if (onProgress && e.lengthComputable) onProgress(e.loaded, e.total);
+        };
+        xhr.onload = () => {
+          clearTimeout(timer);
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try { resolve(JSON.parse(xhr.responseText).result); }
+            catch (e) { reject(new Error('响应解析失败')); }
+          } else {
+            let msg = `请求失败(${xhr.status})`;
+            try {
+              const j = JSON.parse(xhr.responseText);
+              if (j.error) msg = j.error.message || msg;
+            } catch (e) { /* 非 JSON */ }
+            const err = new Error(msg);
+            err.code = xhr.status;
+            reject(err);
+          }
+        };
+        xhr.onerror = () => {
+          clearTimeout(timer);
+          const err = new Error('网络连接失败');
+          err.code = 0;
+          err.network = true;
+          reject(err);
+        };
+        // 0 字节文件:send(file) 时 Chrome 不触发 onload/onerror(空 body 怪癖),
+        // promise 永不 settle → 队列卡死、后续任务中断;改 send 空串
+        xhr.send(file.size ? file : '');
+      });
+    },
   };
 
   /** unix 秒 → 本地 "YYYY-MM-DD HH:mm:ss" */

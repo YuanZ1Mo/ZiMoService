@@ -47,6 +47,35 @@
   [accountEl, passwordEl].forEach((el) =>
     el.addEventListener('input', inputBeacon));
 
+  /* 跳转提示(如个人分享需登录):302 带 hint 参数时显示 */
+  const hint = new URLSearchParams(location.search).get('hint');
+  if (hint) showFormErr(decodeURIComponent(hint));
+
+  /* 回跳处理(分享场景:触发下载后进门户;普通场景:跳 redirect 或主页) */
+  function doRedirect() {
+    const redirect = new URLSearchParams(location.search).get('redirect') || '';
+    if (redirect.startsWith('/share/')) {
+      const a = document.createElement('a');
+      a.href = redirect;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.location.href = '/portal';
+      return;
+    }
+    window.location.href = (redirect.startsWith('/') && !redirect.startsWith('//')) ? redirect : '/';
+  }
+
+  /* 已登录会话:直接跳转(不再显示登录表单;未登录/网络异常则正常显示) */
+  (async function checkAuthed() {
+    try {
+      await A.api.me();
+      doRedirect();
+    } catch (e) {
+      /* 未登录(401)或网络异常:保持登录页 */
+    }
+  })();
+
   /* 登录失败错误映射:401/429 → 顶部;400 → 字段;网络错误 → 顶部兜底 */
   function mapError(e) {
     if (e.code === 401 || e.code === 429) {
@@ -87,9 +116,8 @@
         window.location.href = '/force-reset';
         return;
       }
-      // 回跳:仅允许站内相对路径(防开放重定向)
-      const redirect = new URLSearchParams(location.search).get('redirect') || '';
-      window.location.href = (redirect.startsWith('/') && !redirect.startsWith('//')) ? redirect : '/';
+      // 回跳:仅允许站内相对路径(防开放重定向);分享场景触发下载后进门户
+      doRedirect();
     } catch (e) {
       A.setBeacon(beacon, 'err');
       mapError(e);
