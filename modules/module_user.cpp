@@ -2000,7 +2000,7 @@ bool UserModule::SetUserRole(uint64_t userId, const std::string& role)
     if (role == "admin")
     {
         Stmt grant(m_userDb,
-            "INSERT OR IGNORE INTO user_modules(user_id,module_code) VALUES(?,'users')");
+            "INSERT OR IGNORE INTO user_modules(user_id,module_code) VALUES(?,'userManager')");
         if (grant.p)
         {
             BindInt(grant.p, 1, (int64_t)userId);
@@ -2010,7 +2010,7 @@ bool UserModule::SetUserRole(uint64_t userId, const std::string& role)
     else
     {
         Stmt revoke(m_userDb,
-            "DELETE FROM user_modules WHERE user_id=? AND module_code='users'");
+            "DELETE FROM user_modules WHERE user_id=? AND module_code='userManager'");
         if (revoke.p)
         {
             BindInt(revoke.p, 1, (int64_t)userId);

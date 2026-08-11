@@ -29,7 +29,7 @@ www/
 │   ├── auth.js            ★ 公共 REST 客户端 + 会话管理（所有页面共用）
 │   ├── index.js           着陆页逻辑（三态分流：已登录/会话失效/网络异常）
 │   ├── login.js / register.js / reset.js / force-reset.js
-│   ├── portal.js          门户壳（动态模块导航 + 用户管理模块）
+│   ├── portal.js          门户壳（导航/路由/懒加载 + 主页/文件中心/音频/用户管理模块）
 │   ├── filehub.js         文件中心模块（双空间/分享/zip/上传下载）
 │   ├── ink.js             着陆页 Canvas 粒子背景（"墨聚成印"）
 │   ├── vue.global.prod.js Vue 3 运行时（CDN 缓存副本）
@@ -56,8 +56,8 @@ www/
 - **门户（/portal）** — SPA，顶部模块导航（来自 `/portal/info` 授权模块列表，前端未授权隐藏）：
   - **主页（home）** — 用户信息 + 功能模块概览
   - **文件中心（filehub）** — 公共/个人双空间切换、面包屑导航、文件列表（文件夹优先 + 排序）、搜索、多选/删除/重命名/移动/复制、上传（进度条）、下载（Range 断点续传）、zip 打包下载、分享（生成链接 + 二维码 + 复制 + 取消，分享面板含分享列表）
-  - **服务器音频传输（audio）** — 实时收听服务器系统声音：连接状态机（idle/connecting/listening/reconnecting），WebCodecs 解码播放，音量控制
-  - **用户管理（users）** — 用户列表（关键字/角色/状态筛选 + 分页）、停用/启用/删除/恢复、重置密码（临时密码弹窗）、改昵称/角色/授权模块（授权弹窗，提升 admin 自动授予用户管理）
+  - **服务器音频传输（serverAudioStream）** — 实时收听服务器系统声音：连接状态机（idle/connecting/listening/reconnecting），WebCodecs 解码播放，音量控制
+  - **用户管理（userManager）** — 用户列表（关键字/角色/状态筛选 + 分页）、停用/启用/删除/恢复、重置密码（临时密码弹窗）、改昵称/角色/授权模块（授权弹窗，提升 admin 自动授予用户管理）
 - **404（/404）** — 未匹配路由的兜底展示页
 
 ## 数据获取
@@ -90,9 +90,9 @@ const list = await A.api.filehubList('public', 0, 'name', 'asc');
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/portal/info` | 门户初始化：用户 + 授权模块列表（`[{code,name,url}]`） |
-| GET | `/portal/users` | 用户列表（keyword/role/status + 分页） |
-| GET | `/portal/users/{id}` | 用户详情（含授权模块） |
-| POST | `/portal/users/{id}/{action}` | action: disable/enable/delete/restore/reset-password/nickname/modules/role |
+| GET | `/portal/userManager` | 用户列表（keyword/role/status + 分页） |
+| GET | `/portal/userManager/{id}` | 用户详情（含授权模块） |
+| POST | `/portal/userManager/{id}/{action}` | action: disable/enable/delete/restore/reset-password/nickname/modules/role |
 
 ### 文件中心 API（/portal/filehub/*）
 
@@ -114,7 +114,7 @@ const list = await A.api.filehubList('public', 0, 'name', 'asc');
 
 分享链接：`http://<host>/share/<token>`（HTTP 80 302 → RESTful 端口；公共分享免登录，个人分享需登录）。
 
-### 音频 API（/portal/audio/*）
+### 音频 API（/portal/serverAudioStream/*）
 
 | 方法 | 路径 | 说明 |
 |------|------|------|

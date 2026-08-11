@@ -73,13 +73,13 @@ public:
 
     /**
      * @brief REST 分发入口(service_portal.cpp 的 else 链调用;位置在 user 之后、portal 之前)
-     * @note 仅处理 /portal/audio/*:stream(鉴权后流式订阅)/ status(状态查询)
+     * @note 仅处理 /portal/serverAudioStream/*:stream(鉴权后流式订阅)/ status(状态查询)
      * @return true 本模块已处理(含错误响应);false 未命中,走 portal 原逻辑
      */
     bool DispatchRest(ZmReqLoop* loop, evhttp_cmd_type verb, const std::string& path,
                       ZmHttpdTask* task, const BYTE* body, size_t bodyLen);
 
-    /** 音频状态快照(供 /portal/audio/status) */
+    /** 音频状态快照(供 /portal/serverAudioStream/status) */
     struct AudioStatus
     {
         bool     capturing = false;

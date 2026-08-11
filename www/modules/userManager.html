@@ -1,0 +1,30 @@
+      <div class="um-toolbar">
+        <div class="um-search">
+          <select id="umRole">
+            <option value="">全部角色</option>
+            <option value="developer">开发者</option>
+            <option value="admin">管理员</option>
+            <option value="user">用户</option>
+          </select>
+          <select id="umStatus">
+            <option value="0">全部状态</option>
+            <option value="1">正常</option>
+            <option value="2">已停用</option>
+          </select>
+          <input id="umKeyword" placeholder="搜索账号" spellcheck="false">
+          <button class="um-btn" id="umSearchBtn">搜索</button>
+        </div>
+      </div>
+      <div class="um-table-wrap">
+        <table class="um-table">
+          <thead><tr>
+            <th>账号</th><th>昵称</th><th>角色</th><th>状态</th>
+            <th>注册时间</th><th>最后登录</th><th>操作</th>
+          </tr></thead>
+          <tbody id="umBody"></tbody>
+        </table>
+      </div>
+      <div class="um-pager">
+        <button id="umPrev">上一页</button>
+        <span id="umPageInfo">1/1</span>
+        <button id="umNext">下一页</button>

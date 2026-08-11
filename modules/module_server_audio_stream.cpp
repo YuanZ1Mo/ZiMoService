@@ -110,7 +110,7 @@ void ConvertToStereo16(int mixCh, int mixBits, bool mixFloat,
 // ============================================================================
 
 // ============================================================================
-// 构造 / REST 分发(仅处理 /portal/audio/*)
+// 构造 / REST 分发(仅处理 /portal/serverAudioStream/*)
 // ============================================================================
 
 ServerAudioStreamModule::ServerAudioStreamModule(UserModule* userModule)
@@ -122,16 +122,16 @@ bool ServerAudioStreamModule::DispatchRest(ZmReqLoop* loop, evhttp_cmd_type verb
                                            const std::string& path, ZmHttpdTask* task,
                                            const BYTE*, size_t)
 {
-    // 仅处理 /portal/audio/* 前缀,其余放行(portal 模块在其后处理)
-    if (path.size() < 14 || path.compare(0, 14, "/portal/audio/") != 0)
+    // 仅处理 /portal/serverAudioStream/* 前缀,其余放行(portal 模块在其后处理)
+    if (path.size() < 26 || path.compare(0, 26, "/portal/serverAudioStream/") != 0)
         return false;
 
-    if (verb == EVHTTP_REQ_GET && path == "/portal/audio/stream")
+    if (verb == EVHTTP_REQ_GET && path == "/portal/serverAudioStream/stream")
     {
         HandleAudioStream(loop, task);
         return true;
     }
-    if (verb == EVHTTP_REQ_GET && path == "/portal/audio/status")
+    if (verb == EVHTTP_REQ_GET && path == "/portal/serverAudioStream/status")
     {
         HandleAudioStatus(loop, task);
         return true;
@@ -155,7 +155,7 @@ void ServerAudioStreamModule::HandleAudioStream(ZmReqLoop* loop, ZmHttpdTask* ta
 
     // ① 鉴权 + 模块权限(公共前置,UserModule::RequireModule)
     UserModule::UserInfo ui;
-    auto ar = m_userModule->RequireModule(task, "audio", &ui);
+    auto ar = m_userModule->RequireModule(task, "serverAudioStream", &ui);
     if (ar == UserModule::AuthResult::Unauthed)
     {
         ZmReqLoopRest::ResponseError(loop, 401, "会话已失效");
@@ -206,7 +206,7 @@ void ServerAudioStreamModule::HandleAudioStatus(ZmReqLoop* loop, ZmHttpdTask* ta
 
     // 鉴权 + 模块权限(公共前置,UserModule::RequireModule)
     UserModule::UserInfo ui;
-    auto ar = m_userModule->RequireModule(task, "audio", &ui);
+    auto ar = m_userModule->RequireModule(task, "serverAudioStream", &ui);
     if (ar == UserModule::AuthResult::Unauthed)
     {
         ZmReqLoopRest::ResponseError(loop, 401, "会话已失效");

@@ -1,0 +1,59 @@
+      <div class="fh-wrap">
+        <div class="fh-topbar">
+          <div class="fh-seals">
+            <button class="fh-seal" data-space="public"><span class="fh-seal-name">公共文件夹</span></button>
+            <button class="fh-seal" data-space="personal"><span class="fh-seal-name">个人文件夹</span></button>
+          </div>
+          <div class="fh-tb-group">
+            <button class="btn-primary fh-tb" id="fhUploadBtn" style="width:auto;padding:6px 16px;font-size:13px">上传</button>
+            <button class="btn-ghost fh-tb" id="fhNewDir" style="padding:6px 14px;font-size:13px">新建文件夹</button>
+            <button class="btn-ghost fh-tb" id="fhQueueBtn" style="padding:6px 14px;font-size:13px" title="上传队列">队列</button>
+            <button class="btn-ghost fh-tb" id="fhSharesBtn" style="padding:6px 14px;font-size:13px" title="我的分享">我的分享</button>
+          </div>
+          <div class="fh-tb-group" id="fhSelBar" style="display:none">
+            <button class="btn-ghost fh-tb" id="fhSelDownload" style="padding:6px 14px;font-size:13px">下载</button>
+            <button class="btn-ghost fh-tb" id="fhSelDelete" style="padding:6px 14px;font-size:13px">删除</button>
+            <button class="btn-ghost fh-tb" id="fhSelShare" style="padding:6px 14px;font-size:13px">分享</button>
+            <button class="btn-ghost fh-tb" id="fhSelMore" style="padding:6px 14px;font-size:13px">更多</button>
+          </div>
+          <div class="fh-filters">
+            <select id="fhFilterType" class="fh-filter" title="类型筛选">
+              <option value="all">全部类型</option>
+              <option value="dir">文件夹</option>
+              <option value="file">文件</option>
+            </select>
+            <div class="fh-filter-wrap">
+              <input id="fhFilterOwner" class="fh-filter" placeholder="归属者" title="归属者筛选:输入时智能提示" spellcheck="false" autocomplete="off">
+              <button class="fh-op fh-filter-clear" id="fhFilterOwnerClear" title="清除归属者筛选">×</button>
+              <div class="fh-owner-suggest" id="fhOwnerSuggest" hidden></div>
+            </div>
+          </div>
+          <div class="fh-search">
+            <input id="fhSearchInput" placeholder="搜索当前空间" spellcheck="false">
+            <button class="btn-ghost" id="fhSearchBtn" style="padding:6px 14px;font-size:13px">搜索</button>
+            <button class="fh-op" id="fhSearchClear" title="清除搜索">×</button>
+          </div>
+        </div>
+        <div class="fh-pathbar">
+          <button class="fh-op" id="fhBack" disabled>← 返回上一级</button>
+          <div class="fh-bread" id="fhBread"></div>
+          <div class="fh-sortbar" id="fhSortBar"></div>
+        </div>
+        <div class="fh-table-wrap">
+          <table class="fh-table">
+            <thead id="fhHead">
+              <tr>
+                <th class="fh-chk"><label class="fh-check"><input type="checkbox" id="fhCheckAll"><span></span></label></th>
+                <th class="fh-sortable" data-sort="name" title="点击排序 · Shift+点击组合排序">名称</th>
+                <th class="fh-sortable" data-sort="size" title="点击排序 · Shift+点击组合排序">大小</th>
+                <th class="fh-sortable" data-sort="type" title="点击排序 · Shift+点击组合排序">类型</th>
+                <th class="fh-sortable" data-sort="mtime" title="点击排序 · Shift+点击组合排序">修改时间</th>
+                <th class="fh-sortable" data-sort="owner" title="点击排序 · Shift+点击组合排序">归属者</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="fhBody"></tbody>
+          </table>
+        </div>
+        <input type="file" id="fhFileInput" multiple style="display:none">
+        <input type="file" id="fhDirInput" webkitdirectory style="display:none">

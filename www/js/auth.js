@@ -62,13 +62,13 @@
     completeChange: (password, rescue) =>
       restCall('POST', '/auth/complete-change', { password, rescue }),
     userList: (keyword, role, status, page, pageSize) =>
-      restCall('GET', `/portal/users?keyword=${encodeURIComponent(keyword)}&role=${encodeURIComponent(role)}&status=${status}&page=${page}&pageSize=${pageSize}`),
-    audioStatus: () => restCall('GET', '/portal/audio/status'),
+      restCall('GET', `/portal/userManager?keyword=${encodeURIComponent(keyword)}&role=${encodeURIComponent(role)}&status=${status}&page=${page}&pageSize=${pageSize}`),
+    audioStatus: () => restCall('GET', '/portal/serverAudioStream/status'),
     /** 音频流端点(流式,不经 restCall):需 credentials include 携带会话 */
-    audioStreamUrl: () => `//${window.location.hostname}:39441/zimo/api/portal/audio/stream`,
-    userDetail: (id) => restCall('GET', `/portal/users/${id}`),
+    audioStreamUrl: () => `//${window.location.hostname}:39441/zimo/api/portal/serverAudioStream/stream`,
+    userDetail: (id) => restCall('GET', `/portal/userManager/${id}`),
     userAction: (id, action, body = {}) =>
-      restCall('POST', `/portal/users/${id}/${action}`, body),
+      restCall('POST', `/portal/userManager/${id}/${action}`, body),
     // ── 文件中心 ────────────────────────────────────────────────
     filehubList: (space, dirId = 0, sort = 'name', order = 'asc') =>
       restCall('GET', `/portal/filehub/list?space=${space}&dir_id=${dirId}&sort=${sort}&order=${order}`),
@@ -429,10 +429,55 @@
     elLabel.className = 'strength-label s' + score;
   }
 
+  /** HTML 转义(门户壳与各模块共用) */
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g,
+      (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  /**
+   * 通用弹窗(返回 {action, value, values})
+   * 原 portal.js 内实现;模块拆分后归共享层,users/portal 共用
+   */
+  function showModal({ title, content, buttons }) {
+    return new Promise((resolve) => {
+      const mask = document.createElement('div');
+      mask.className = 'modal-mask';
+      mask.innerHTML = `
+        <div class="modal">
+          <div class="modal-title">${escapeHtml(title)}</div>
+          <div class="modal-body">${content}</div>
+          <div class="modal-actions"></div>
+        </div>`;
+      const actions = mask.querySelector('.modal-actions');
+      buttons.forEach((b) => {
+        const btn = document.createElement('button');
+        btn.className = b.primary ? 'btn-primary' : 'btn-ghost';
+        btn.style.cssText = b.primary
+          ? 'width:auto;padding:7px 18px;font-size:13px' + (b.danger ? ';background:var(--err);' : '')
+          : 'padding:7px 14px;font-size:13px';
+        btn.textContent = b.label;
+        btn.addEventListener('click', () => {
+          const input = mask.querySelector('[data-modal-input]');
+          const checked = Array.from(mask.querySelectorAll('[data-modal-value]:checked'))
+            .map((c) => c.dataset.modalValue);   // checkbox 无 value 属性,取 data-modal-value
+          mask.remove();
+          resolve({ action: b.value, value: input ? input.value : null, values: checked });
+        });
+        actions.appendChild(btn);
+      });
+      // 手动关闭:点击遮罩不关闭(需点按钮/关闭入口)
+      document.body.appendChild(mask);
+      const input = mask.querySelector('[data-modal-input]');
+      if (input) input.focus();
+    });
+  }
+
   window.ZmAuth = {
     api, restCall, formatTime,
     toast, setBeacon, checkSession, startHeartbeat,
     validateAccount, validatePassword, validateNickname, validateRescue,
     passwordStrength, renderStrength,
+    escapeHtml, showModal,
   };
 })();

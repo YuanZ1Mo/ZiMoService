@@ -46,7 +46,7 @@ HTTP RESTful 请求 → ZmRESTfulServer (Worker 线程)
   → ServicePortal::RestfulRequestCB (ZmReqLoop 线程执行，事件驱动)
      ├── 剥掉根 URI 前缀（/zimo/api/xxx → /xxx）
      ├── 模块分发链（命中即返回）：UserModule(/auth/*) → FileHubModule(/portal/filehub/*,/share/*)
-     │     → ServerAudioStreamModule(/portal/audio/*) → PortalModule(/portal/*) → GET /ping
+     │     → ServerAudioStreamModule(/portal/serverAudioStream/*) → PortalModule(/portal/*) → GET /ping
   → ZmReqLoopRest::Response* (TryReply 门 + task 直通) → HTTP 响应
 ```
 
@@ -149,12 +149,12 @@ ServicePortal::RegisterHttpRoutes()        # 页面入口路由
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/portal/info` | 门户初始化：用户信息 + 授权模块列表（[{code,name,url}]，developer 全量） |
-| GET | `/portal/users` | 用户列表（keyword/role/status 筛选 + 分页，上限 100/页） |
-| GET | `/portal/users/{id}` | 用户详情（含当前授权模块，供授权弹窗回显） |
-| POST | `/portal/users/{id}/{action}` | 用户操作，action ∈ `disable`/`enable`/`delete`/`restore`/`reset-password`/`nickname`/`modules`/`role` |
+| GET | `/portal/userManager` | 用户列表（keyword/role/status 筛选 + 分页，上限 100/页） |
+| GET | `/portal/userManager/{id}` | 用户详情（含当前授权模块，供授权弹窗回显） |
+| POST | `/portal/userManager/{id}/{action}` | 用户操作，action ∈ `disable`/`enable`/`delete`/`restore`/`reset-password`/`nickname`/`modules`/`role` |
 
 用户管理约束：
-- 前置：登录 + 可见模块须含 `users`（developer 天然全量；admin 提升时自动授权）
+- 前置：登录 + 可见模块须含 `userManager`（developer 天然全量；admin 提升时自动授权）
 - 等级校验：操作者等级必须高于目标当前等级（developer=3 / admin=2 / user=1）
 - `reset-password`：生成 12 位随机临时密码（仅一次返回明文）→ 写 `force_change=1` → **吊销目标全部会话**
 - `disable`/`delete`：吊销目标全部会话
@@ -183,12 +183,12 @@ ServicePortal::RegisterHttpRoutes()        # 页面入口路由
 
 写操作纪律：鉴权/冲突检查（DB）→ 文件系统 → DB → 审计日志；DB 失败回滚文件系统。公共空间写保护：仅 uploader 本人或 developer/admin；个人空间仅本人。
 
-### 音频（/portal/audio/*）
+### 音频（/portal/serverAudioStream/*）
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/portal/audio/stream` | 远程音频流（二进制帧：len(4B)+seq(4B)+Opus 20ms 帧；48kHz 立体声 64kbps；鉴权+audio 模块权限，无设备返回 503） |
-| GET | `/portal/audio/status` | 采集状态快照 |
+| GET | `/portal/serverAudioStream/stream` | 远程音频流（二进制帧：len(4B)+seq(4B)+Opus 20ms 帧；48kHz 立体声 64kbps；鉴权+serverAudioStream 模块权限，无设备返回 503） |
+| GET | `/portal/serverAudioStream/status` | 采集状态快照 |
 
 ### 系统
 
@@ -222,7 +222,7 @@ curl -b cookies.txt -X POST --data-binary @file.zip \
 curl -b cookies.txt -C - "http://localhost:39441/zimo/api/portal/filehub/download?space=public&file_id=123" -o file.zip
 
 # 用户列表
-curl -b cookies.txt "http://localhost:39441/zimo/api/portal/users?page=1&pageSize=20"
+curl -b cookies.txt "http://localhost:39441/zimo/api/portal/userManager?page=1&pageSize=20"
 ```
 
 ## JRPC 方法（兼容保留）

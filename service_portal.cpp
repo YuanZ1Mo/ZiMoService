@@ -238,8 +238,8 @@ void ServicePortal::RestfulRequestCB(ZmReqLoop* loop,
 	//    先于门户模块,避免被 portal 404 吞掉)────────────────
 	if (m_fileHubModule && m_fileHubModule->DispatchRest(loop, verb, path, task, body, body_len))
 		return;
-	// ── 音频模块:/portal/audio/* 分发(命中即返回;先于门户模块,
-	//    避免 /portal/audio/* 被门户 404 吞掉)────────────────
+	// ── 音频模块:/portal/serverAudioStream/* 分发(命中即返回;先于门户模块,
+	//    避免 /portal/serverAudioStream/* 被门户 404 吞掉)────────────────
 	if (m_audioModule && m_audioModule->DispatchRest(loop, verb, path, task, body, body_len))
 		return;
 	// ── 门户模块:/portal/* 分发(命中即返回)──────────────

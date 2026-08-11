@@ -1093,6 +1093,17 @@ body.portal-collapsed .portal-main { left: 64px; }
   box-shadow: none;
 }
 .au-toggle.connecting .au-hub { animation: au-pulse 1s ease-in-out infinite; }
+/* 错误态(断线重连/无设备):警示色圆点 + 慢脉冲,与 connecting 区分 */
+.au-toggle.err .au-disc { animation: au-spin 1.6s linear infinite; opacity: 1; }
+.au-toggle.err .au-hub {
+  background: var(--err);
+  box-shadow: 0 0 12px rgba(224, 90, 90, .6);
+  animation: au-pulse-err 1.2s ease-in-out infinite;
+}
+@keyframes au-pulse-err {
+  0%, 100% { box-shadow: 0 0 6px rgba(224, 90, 90, .5); }
+  50%      { box-shadow: 0 0 20px rgba(224, 90, 90, .9); }
+}
 
 @keyframes au-spin { to { transform: rotate(360deg); } }
 @keyframes au-pulse {

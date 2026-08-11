@@ -130,7 +130,7 @@ public:
      * @brief 通用鉴权 + 模块权限前置(替代各模块复制粘贴的 ~30 行前置块:
      *        鉴权 → 角色 → 可见模块须含 moduleCode)
      * @param task        请求上下文
-     * @param moduleCode  所需模块 code(如 "audio"/"filehub")
+     * @param moduleCode  所需模块 code(如 "serverAudioStream"/"filehub")
      * @param out         鉴权命中时输出用户信息(可为空)
      * @return Ok 已授权;Unauthed 会话无效;Forbidden 已登录但无该模块权限;Error 系统错误
      */

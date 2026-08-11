@@ -63,9 +63,9 @@ bool PortalModule::DispatchRest(ZmReqLoop* loop, evhttp_cmd_type verb, const std
         return true;
     }
 
-    // 用户管理(/portal/users*):POST 需解析 body;段边界匹配,防 /portal/usersxyz 误配
-    if (path.rfind("/portal/users", 0) == 0 &&
-        (path.size() == 13 || path[13] == '/'))
+    // 用户管理(/portal/userManager*):POST 需解析 body;段边界匹配,防 /portal/userManagerxyz 误配
+    if (path.rfind("/portal/userManager", 0) == 0 &&
+        (path.size() == 19 || path[19] == '/'))
     {
         ZMJSON req;
         if (verb == EVHTTP_REQ_POST)
@@ -124,7 +124,7 @@ void PortalModule::HandleUserManage(ZmReqLoop* loop, evhttp_cmd_type verb,
         bool hasUsers = false;
         for (const auto& m : mods)
         {
-            if (zm_json_get_str(m, "code") == "users")
+            if (zm_json_get_str(m, "code") == "userManager")
             {
                 hasUsers = true;
                 break;
@@ -138,7 +138,7 @@ void PortalModule::HandleUserManage(ZmReqLoop* loop, evhttp_cmd_type verb,
     }
 
     // 列表
-    if (verb == EVHTTP_REQ_GET && path == "/portal/users")
+    if (verb == EVHTTP_REQ_GET && path == "/portal/userManager")
     {
         const char* kw = task->GetQueryValue("keyword", "");
         const char* role = task->GetQueryValue("role", "");
@@ -150,10 +150,10 @@ void PortalModule::HandleUserManage(ZmReqLoop* loop, evhttp_cmd_type verb,
         return;
     }
 
-    // 单用户详情(含当前授权模块,供授权弹窗回显):GET /portal/users/{id}
-    if (verb == EVHTTP_REQ_GET && path.rfind("/portal/users/", 0) == 0)
+    // 单用户详情(含当前授权模块,供授权弹窗回显):GET /portal/userManager/{id}
+    if (verb == EVHTTP_REQ_GET && path.rfind("/portal/userManager/", 0) == 0)
     {
-        const std::string rest = path.substr(14);
+        const std::string rest = path.substr(20);
         char* end = nullptr;
         errno = 0;
         uint64_t userId = strtoull(rest.c_str(), &end, 10);
@@ -186,10 +186,10 @@ void PortalModule::HandleUserManage(ZmReqLoop* loop, evhttp_cmd_type verb,
         return;
     }
 
-    // 操作:/portal/users/{id}/{action}
-    if (verb == EVHTTP_REQ_POST && path.rfind("/portal/users/", 0) == 0)
+    // 操作:/portal/userManager/{id}/{action}
+    if (verb == EVHTTP_REQ_POST && path.rfind("/portal/userManager/", 0) == 0)
     {
-        const std::string rest = path.substr(14);   // "/portal/users/" 长度
+        const std::string rest = path.substr(20);   // "/portal/userManager/" 长度
         const size_t slash = rest.find('/');
         if (slash == std::string::npos)
         {
@@ -371,9 +371,9 @@ void PortalModule::HandleUserAction(ZmReqLoop* loop, const std::string& action, 
         // admin 强制保留「用户管理」授权(角色配套,提升时自动授予,不可取消)
         if (target.role == "admin")
         {
-            bool hasUsers = std::find(codes.begin(), codes.end(), "users") != codes.end();
+            bool hasUsers = std::find(codes.begin(), codes.end(), "userManager") != codes.end();
             if (!hasUsers)
-                codes.push_back("users");
+                codes.push_back("userManager");
         }
         if (!m_userModule->SetUserModules(targetId, codes))
         {
