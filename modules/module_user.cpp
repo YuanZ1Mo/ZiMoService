@@ -543,12 +543,17 @@ bool UserModule::IsLocked(const std::string& account, const std::string& ip, tim
     if (account.empty())
         return false;
 
+    const std::string lip = ToLowerAscii(ip);   // IP 归一化:防 IPv6 大小写变体绕计数/绕锁定
     std::lock_guard<std::mutex> lk(m_userDb.Mutex());
     Stmt st(m_userDb, "SELECT locked_until FROM login_locks WHERE account=? AND ip=?");
     if (!st.p)
-        return false;
+    {
+        // 检查失败 = 无法确认未锁定 → fail-closed(按锁定处理)
+        DEFAULT_LOG_ERROR("[User] IsLocked prepare 失败(按锁定处理): account={}", account);
+        return true;
+    }
     BindText(st.p, 1, account);
-    BindText(st.p, 2, ip);
+    BindText(st.p, 2, lip);
     if (sqlite3_step(st.p) == SQLITE_ROW)
         return sqlite3_column_int64(st.p, 0) > (int64_t)now;
     return false;
@@ -559,6 +564,7 @@ void UserModule::RecordFail(const std::string& account, const std::string& ip, t
     if (account.empty())
         return;
 
+    const std::string lip = ToLowerAscii(ip);   // IP 归一化:与 IsLocked 键一致
     std::lock_guard<std::mutex> lk(m_userDb.Mutex());
 
     // 读取当前计数(锁定期内请求已被 IsLocked 挡掉,不会走到这里;锁期满后计数继续累计)
@@ -566,9 +572,13 @@ void UserModule::RecordFail(const std::string& account, const std::string& ip, t
     {
         Stmt st(m_userDb, "SELECT fail_count FROM login_locks WHERE account=? AND ip=?");
         if (!st.p)
+        {
+            DEFAULT_LOG_ERROR("[User] RecordFail prepare 失败(计数未记录,锁定可能失效): account={}",
+                              account);
             return;
+        }
         BindText(st.p, 1, account);
-        BindText(st.p, 2, ip);
+        BindText(st.p, 2, lip);
         if (sqlite3_step(st.p) == SQLITE_ROW)
             failCount = sqlite3_column_int64(st.p, 0);
     }
@@ -585,13 +595,19 @@ void UserModule::RecordFail(const std::string& account, const std::string& ip, t
         "fail_count=excluded.fail_count, last_fail_at=excluded.last_fail_at, "
         "locked_until=excluded.locked_until");
     if (!st.p)
+    {
+        DEFAULT_LOG_ERROR("[User] RecordFail upsert prepare 失败(计数未记录,锁定可能失效): account={}",
+                          account);
         return;
+    }
     BindText(st.p, 1, account);
-    BindText(st.p, 2, ip);
+    BindText(st.p, 2, lip);
     BindInt(st.p, 3, failCount);
     BindInt(st.p, 4, (int64_t)now);
     BindInt(st.p, 5, lockedUntil);
-    sqlite3_step(st.p);
+    if (sqlite3_step(st.p) != SQLITE_DONE)
+        DEFAULT_LOG_ERROR("[User] RecordFail upsert 失败(计数未记录,锁定可能失效): account={}",
+                          account);
 }
 
 void UserModule::ClearLock(const std::string& account, const std::string& ip)
@@ -599,12 +615,16 @@ void UserModule::ClearLock(const std::string& account, const std::string& ip)
     if (account.empty())
         return;
 
+    const std::string lip = ToLowerAscii(ip);   // IP 归一化:与 IsLocked 键一致
     std::lock_guard<std::mutex> lk(m_userDb.Mutex());
     Stmt st(m_userDb, "DELETE FROM login_locks WHERE account=? AND ip=?");
     if (!st.p)
+    {
+        DEFAULT_LOG_ERROR("[User] ClearLock prepare 失败(残留锁定记录): account={}", account);
         return;
+    }
     BindText(st.p, 1, account);
-    BindText(st.p, 2, ip);
+    BindText(st.p, 2, lip);
     sqlite3_step(st.p);
 }
 
@@ -617,6 +637,7 @@ bool UserModule::CheckRate(const char* table, const std::string& ip, time_t now)
     if (ip.empty())
         return false;   // 拿不到 IP 时保守拒绝
 
+    const std::string lip = ToLowerAscii(ip);   // IP 归一化:IPv6 大小写变体不再绕计数
     std::lock_guard<std::mutex> lk(m_rateDb.Mutex());
 
     int64_t windowStart = 0, count = 0;
@@ -628,7 +649,7 @@ bool UserModule::CheckRate(const char* table, const std::string& ip, time_t now)
             DEFAULT_LOG_ERROR("[User] rate select prepare failed: {}", table);
             return false;
         }
-        BindText(st.p, 1, ip);
+        BindText(st.p, 1, lip);
         if (sqlite3_step(st.p) == SQLITE_ROW)
         {
             haveRow = true;
@@ -648,7 +669,7 @@ bool UserModule::CheckRate(const char* table, const std::string& ip, time_t now)
             DEFAULT_LOG_ERROR("[User] rate upsert prepare failed: {}", table);
             return false;
         }
-        BindText(st.p, 1, ip);
+        BindText(st.p, 1, lip);
         BindInt(st.p, 2, (int64_t)now);
         sqlite3_step(st.p);
         return true;
@@ -660,7 +681,7 @@ bool UserModule::CheckRate(const char* table, const std::string& ip, time_t now)
     Stmt st(m_rateDb, ("UPDATE " + std::string(table) + " SET count=count+1 WHERE ip=?").c_str());
     if (!st.p)
         return false;
-    BindText(st.p, 1, ip);
+    BindText(st.p, 1, lip);
     sqlite3_step(st.p);
     return true;
 }
@@ -676,6 +697,9 @@ bool UserModule::CreateSession(const std::string& token, uint64_t userId, const 
         return false;
 
     std::lock_guard<std::mutex> lk(m_userDb.Mutex());
+    // 事务:计数 + 踢最旧 + 插入原子化,崩溃不留"会话数超限"中间态
+    if (!m_userDb.Begin())
+        return false;
 
     // 活跃会话数(双上限有效)
     int active = 0;
@@ -683,7 +707,10 @@ bool UserModule::CreateSession(const std::string& token, uint64_t userId, const 
         Stmt st(m_userDb,
             "SELECT COUNT(*) FROM sessions WHERE user_id=? AND expire_time>? AND absolute_expire>?");
         if (!st.p)
+        {
+            m_userDb.Rollback();
             return false;
+        }
         BindInt(st.p, 1, (int64_t)userId);
         BindInt(st.p, 2, (int64_t)now);
         BindInt(st.p, 3, (int64_t)now);
@@ -698,12 +725,18 @@ bool UserModule::CreateSession(const std::string& token, uint64_t userId, const 
             "DELETE FROM sessions WHERE id=(SELECT id FROM sessions WHERE user_id=? "
             "AND expire_time>? AND absolute_expire>? ORDER BY last_active ASC LIMIT 1)");
         if (!st.p)
+        {
+            m_userDb.Rollback();
             return false;
+        }
         BindInt(st.p, 1, (int64_t)userId);
         BindInt(st.p, 2, (int64_t)now);
         BindInt(st.p, 3, (int64_t)now);
         if (sqlite3_step(st.p) != SQLITE_DONE)
+        {
+            m_userDb.Rollback();
             return false;
+        }
     }
 
     Stmt st(m_userDb,
@@ -711,7 +744,10 @@ bool UserModule::CreateSession(const std::string& token, uint64_t userId, const 
         "create_time,last_active,expire_time,absolute_expire) "
         "VALUES(?,?,?,?,?,?,?,?)");
     if (!st.p)
+    {
+        m_userDb.Rollback();
         return false;
+    }
     BindText(st.p, 1, tokenHash);
     BindInt(st.p, 2, (int64_t)userId);
     BindText(st.p, 3, ip);
@@ -720,7 +756,17 @@ bool UserModule::CreateSession(const std::string& token, uint64_t userId, const 
     BindInt(st.p, 6, (int64_t)now);
     BindInt(st.p, 7, (int64_t)now + kUserSessionSliding);
     BindInt(st.p, 8, (int64_t)now + kUserSessionAbsolute);
-    return sqlite3_step(st.p) == SQLITE_DONE;
+    if (sqlite3_step(st.p) != SQLITE_DONE)
+    {
+        m_userDb.Rollback();
+        return false;
+    }
+    if (!m_userDb.Commit())
+    {
+        m_userDb.Rollback();
+        return false;
+    }
+    return true;
 }
 
 bool UserModule::FindSession(const std::string& token, time_t now, SessionRow& out)
@@ -1057,6 +1103,20 @@ void UserModule::HandleCompleteChange(ZmReqLoop* loop, const ZMJSON& body, ZmHtt
         ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误");
         return;
     }
+
+    // 当前会话 id(改密后保留;其余会话——含临时密码签发期间建立的全部会话——一律吊销,
+    // 防临时密码泄露场景下旧会话继续有效)
+    uint64_t keepSessionId = 0;
+    {
+        std::string token;
+        if (ExtractCookieToken(task, token))
+        {
+            SessionRow sr;
+            if (FindSession(token, time(nullptr), sr))
+                keepSessionId = sr.id;
+        }
+    }
+
     {
         std::lock_guard<std::mutex> lk(m_userDb.Mutex());
         Stmt st(m_userDb,
@@ -1076,6 +1136,15 @@ void UserModule::HandleCompleteChange(ZmReqLoop* loop, const ZMJSON& body, ZmHtt
         {
             ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误");
             return;
+        }
+        // 吊销其他会话(与改密同锁同语句序列,失败仅记日志不影响改密结果)
+        Stmt stDel(m_userDb, "DELETE FROM sessions WHERE user_id=? AND id!=?");
+        if (stDel.p)
+        {
+            BindInt(stDel.p, 1, (int64_t)uid);
+            BindInt(stDel.p, 2, (int64_t)keepSessionId);
+            if (sqlite3_step(stDel.p) != SQLITE_DONE)
+                DEFAULT_LOG_ERROR("[User] complete-change 吊销其他会话失败: uid={}", uid);
         }
     }
 
@@ -1488,6 +1557,67 @@ bool UserModule::GetUserAccount(uint64_t userId, std::string& account)
     return true;
 }
 
+bool UserModule::BatchGetUserAccounts(const std::vector<uint64_t>& ids,
+                                      std::map<uint64_t, std::string>& out)
+{
+    out.clear();
+    if (ids.empty())
+        return true;
+
+    std::string ph;
+    for (size_t i = 0; i < ids.size(); ++i)
+        ph += i ? ",?" : "?";
+
+    std::lock_guard<std::mutex> lk(m_userDb.Mutex());
+    Stmt st(m_userDb, ("SELECT id, account FROM users WHERE id IN (" + ph + ")").c_str());
+    if (!st.p)
+        return false;
+    for (size_t i = 0; i < ids.size(); ++i)
+        BindInt(st.p, (int)i + 1, (int64_t)ids[i]);
+    while (sqlite3_step(st.p) == SQLITE_ROW)
+    {
+        uint64_t id = (uint64_t)sqlite3_column_int64(st.p, 0);
+        const char* a = reinterpret_cast<const char*>(sqlite3_column_text(st.p, 1));
+        out[id] = a ? a : "";
+    }
+    return true;
+}
+
+UserModule::AuthResult UserModule::RequireModule(ZmHttpdTask* task, const char* moduleCode,
+                                                 UserInfo* out)
+{
+    if (!m_openOk.load())
+        return AuthResult::Error;
+
+    UserInfo ui;
+    uint64_t uid = AuthAndTouch(task, &ui);
+    if (!uid)
+        return AuthResult::Unauthed;
+
+    std::string role;
+    GetUserRole(uid, role);
+
+    // 可见模块须含 moduleCode(developer 全量,GetUserModules 已含)
+    std::vector<ZMJSON> mods;
+    if (!GetUserModules(uid, role, mods))
+        return AuthResult::Error;
+    bool has = false;
+    for (const auto& m : mods)
+    {
+        if (zm_json_get_str(m, "code") == moduleCode)
+        {
+            has = true;
+            break;
+        }
+    }
+    if (!has)
+        return AuthResult::Forbidden;
+
+    if (out)
+        *out = ui;
+    return AuthResult::Ok;
+}
+
 int UserModule::GetUserRoleLevel(const std::string& role)
 {
     if (role == "developer") return 3;
@@ -1496,7 +1626,7 @@ int UserModule::GetUserRoleLevel(const std::string& role)
     return 0;
 }
 
-void UserModule::WriteAuditLog(uint64_t operatorId, const std::string& operatorAccount,
+bool UserModule::WriteAuditLog(uint64_t operatorId, const std::string& operatorAccount,
                                const std::string& action, uint64_t targetId,
                                const std::string& targetAccount, const std::string& detail)
 {
@@ -1505,7 +1635,11 @@ void UserModule::WriteAuditLog(uint64_t operatorId, const std::string& operatorA
         "INSERT INTO user_manage_logs(operator_id,operator_account,action,target_id,target_account,"
         "detail,create_time) VALUES(?,?,?,?,?,?,?)");
     if (!st.p)
-        return;
+    {
+        DEFAULT_LOG_ERROR("[User] 审计日志落库失败(prepare): action={} target={}",
+                          action, targetId);
+        return false;
+    }
     BindInt(st.p, 1, (int64_t)operatorId);
     BindText(st.p, 2, operatorAccount);
     BindText(st.p, 3, action);
@@ -1513,7 +1647,13 @@ void UserModule::WriteAuditLog(uint64_t operatorId, const std::string& operatorA
     BindText(st.p, 5, targetAccount);
     BindText(st.p, 6, detail);
     BindInt(st.p, 7, (int64_t)time(nullptr));
-    sqlite3_step(st.p);
+    if (sqlite3_step(st.p) != SQLITE_DONE)
+    {
+        DEFAULT_LOG_ERROR("[User] 审计日志落库失败(step): action={} target={}",
+                          action, targetId);
+        return false;
+    }
+    return true;
 }
 
 bool UserModule::WriteBusinessLog(const char* table, uint64_t opId,
@@ -1535,7 +1675,12 @@ bool UserModule::WriteBusinessLog(const char* table, uint64_t opId,
     BindInt(st.p, 5, (int64_t)targetId);
     BindText(st.p, 6, detail);
     BindInt(st.p, 7, (int64_t)time(nullptr));
-    sqlite3_step(st.p);
+    if (sqlite3_step(st.p) != SQLITE_DONE)
+    {
+        DEFAULT_LOG_ERROR("[User] 业务日志落库失败: table={} action={} target={}",
+                          table, action, targetId);
+        return false;
+    }
     return true;
 }
 
@@ -1757,23 +1902,35 @@ bool UserModule::SetUserNickname(uint64_t userId, const std::string& nickname,
 bool UserModule::SetUserModules(uint64_t userId, const std::vector<std::string>& codes)
 {
     std::lock_guard<std::mutex> lk(m_userDb.Mutex());
+    // 事务:replace 式写入原子化,崩溃不留"授权已清空但新授权未写入"中间态
+    if (!m_userDb.Begin())
+        return false;
 
     // 校验模块 code 均存在
     for (const auto& code : codes)
     {
         Stmt chk(m_userDb, "SELECT 1 FROM modules WHERE code=? AND enabled=1");
         if (!chk.p)
+        {
+            m_userDb.Rollback();
             return false;
+        }
         BindText(chk.p, 1, code);
         if (sqlite3_step(chk.p) != SQLITE_ROW)
+        {
+            m_userDb.Rollback();
             return false;
+        }
     }
 
     // replace 式写入:清旧 + 批量插入
     {
         Stmt del(m_userDb, "DELETE FROM user_modules WHERE user_id=?");
         if (!del.p)
+        {
+            m_userDb.Rollback();
             return false;
+        }
         BindInt(del.p, 1, (int64_t)userId);
         sqlite3_step(del.p);
     }
@@ -1782,10 +1939,19 @@ bool UserModule::SetUserModules(uint64_t userId, const std::vector<std::string>&
         Stmt ins(m_userDb,
             "INSERT OR IGNORE INTO user_modules(user_id,module_code) VALUES(?,?)");
         if (!ins.p)
+        {
+            m_userDb.Rollback();
             return false;
+        }
         BindInt(ins.p, 1, (int64_t)userId);
         BindText(ins.p, 2, code);
         sqlite3_step(ins.p);
+    }
+
+    if (!m_userDb.Commit())
+    {
+        m_userDb.Rollback();
+        return false;
     }
     return true;
 }
@@ -1863,12 +2029,19 @@ void UserModule::DoCleanup()
     // 用户库:过期会话 + 长期无动静锁定记录
     {
         std::lock_guard<std::mutex> lk(m_userDb.Mutex());
-        Stmt st1(m_userDb, "DELETE FROM sessions WHERE expire_time<=? OR absolute_expire<=?");
+        // 拆两条独立 DELETE(OR 条件无法利用 idx_sessions_expire,全表扫;
+        // 拆分后 expire_time 分支走索引,absolute_expire 分支表小可接受)
+        Stmt st1(m_userDb, "DELETE FROM sessions WHERE expire_time<=?");
         if (st1.p)
         {
             BindInt(st1.p, 1, (int64_t)now);
-            BindInt(st1.p, 2, (int64_t)now);
             sqlite3_step(st1.p);
+        }
+        Stmt st1b(m_userDb, "DELETE FROM sessions WHERE absolute_expire<=?");
+        if (st1b.p)
+        {
+            BindInt(st1b.p, 1, (int64_t)now);
+            sqlite3_step(st1b.p);
         }
         Stmt st2(m_userDb, "DELETE FROM login_locks WHERE last_fail_at<?");
         if (st2.p)

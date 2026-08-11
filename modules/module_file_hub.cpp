@@ -37,6 +37,11 @@ using Stmt = zm::ZmSqliteStmt;
 using zm::BindText;
 using zm::BindInt;
 
+/** 一致性校验/分享下载日志清理:每日执行时刻(时) */
+static constexpr int kVerifyCleanHour = 3;
+/** 分享下载日志保留(秒,90 天,与审计一致) */
+static constexpr int64_t kShareDownloadLogRetain = 90LL * 24 * 3600;
+
 /** @brief 安全读 int64(字段缺失/类型不匹配返回默认值) */
 int64_t JsonInt(const ZMJSON& j, std::string_view key, int64_t def = 0)
 {
@@ -315,23 +320,100 @@ void FileHubModule::CollectSubtreeFiles(int space, uint64_t dirId, std::vector<u
     }
 }
 
-int64_t FileHubModule::DirSize(int space, uint64_t dirId)
+void FileHubModule::CollectDirSizes(int space, const std::vector<uint64_t>& roots,
+                                    std::map<uint64_t, int64_t>& out)
 {
-    std::vector<uint64_t> dirs;
-    CollectSubtreeDirs(space, dirId, dirs);
-    int64_t total = 0;
+    out.clear();
+    if (roots.empty())
+        return;
+
+    std::string ph;
+    for (size_t i = 0; i < roots.size(); ++i)
+        ph += i ? ",?" : "?";
+
+    // 一次递归 CTE:从各根向下走子树,按根分组汇总文件大小(替代逐目录 CollectSubtreeDirs+SUM)
     std::lock_guard<std::mutex> lk(m_db.Mutex());
-    for (uint64_t d : dirs)
+    Stmt st(m_db,
+        ("WITH RECURSIVE t(id, root) AS ("
+         "  SELECT id, id FROM dirs WHERE space=? AND id IN (" + ph + ")"
+         "  UNION ALL"
+         "  SELECT d.id, t.root FROM dirs d JOIN t ON d.parent_id=t.id"
+         ") SELECT t.root, COALESCE(SUM(f.size),0) FROM t"
+         "  LEFT JOIN files f ON f.dir_id=t.id GROUP BY t.root").c_str());
+    if (!st.p)
+        return;
+    BindInt(st.p, 1, (int64_t)space);
+    for (size_t i = 0; i < roots.size(); ++i)
+        BindInt(st.p, (int)i + 2, (int64_t)roots[i]);
+    while (sqlite3_step(st.p) == SQLITE_ROW)
+        out[(uint64_t)sqlite3_column_int64(st.p, 0)] = sqlite3_column_int64(st.p, 1);
+}
+
+void FileHubModule::BatchRelPaths(const std::vector<uint64_t>& dirIds,
+                                  std::map<uint64_t, std::string>& out)
+{
+    out.clear();
+    if (dirIds.empty())
+        return;
+
+    // 一次拉取所有涉及目录行(id→name,parent);父链缺失迭代补查(通常 1-2 轮收敛)
+    std::map<uint64_t, std::pair<std::string, uint64_t>> rows;
+    std::vector<uint64_t> need = dirIds;
+    for (int round = 0; round < 8 && !need.empty(); ++round)
     {
-        Stmt st(m_db, "SELECT COALESCE(SUM(size),0) FROM files WHERE space=? AND dir_id=?");
-        if (!st.p)
-            return 0;
-        BindInt(st.p, 1, (int64_t)space);
-        BindInt(st.p, 2, (int64_t)d);
-        if (sqlite3_step(st.p) == SQLITE_ROW)
-            total += sqlite3_column_int64(st.p, 0);
+        std::string ph;
+        for (size_t i = 0; i < need.size(); ++i)
+            ph += i ? ",?" : "?";
+        std::vector<uint64_t> next;
+        std::set<uint64_t> nextSeen;
+        {
+            std::lock_guard<std::mutex> lk(m_db.Mutex());
+            Stmt st(m_db, ("SELECT id,name,parent_id FROM dirs WHERE id IN (" + ph + ")").c_str());
+            if (!st.p)
+                break;
+            for (size_t i = 0; i < need.size(); ++i)
+                BindInt(st.p, (int)i + 1, (int64_t)need[i]);
+            while (sqlite3_step(st.p) == SQLITE_ROW)
+            {
+                uint64_t id = (uint64_t)sqlite3_column_int64(st.p, 0);
+                const char* nm = reinterpret_cast<const char*>(sqlite3_column_text(st.p, 1));
+                uint64_t parent = (uint64_t)sqlite3_column_int64(st.p, 2);
+                rows[id] = {nm ? nm : "", parent};
+                if (parent != 0 && !rows.count(parent) && !nextSeen.count(parent))
+                {
+                    next.push_back(parent);
+                    nextSeen.insert(parent);
+                }
+            }
+        }
+        need = next;
     }
-    return total;
+
+    // 由底向上拼链,再自根向下输出(与 DirAbsPath 同语义,内存版;最多 64 层防环)
+    for (uint64_t id : dirIds)
+    {
+        std::vector<std::string> chain;
+        uint64_t cur = id;
+        int depth = 0;
+        while (cur != 0 && depth++ < 64)
+        {
+            auto it = rows.find(cur);
+            if (it == rows.end())
+                break;   // 目录已删:输出已收集部分
+            chain.push_back(it->second.first);
+            if (it->second.second == 0)
+                break;
+            cur = it->second.second;
+        }
+        std::string rel;
+        for (auto it = chain.rbegin(); it != chain.rend(); ++it)
+        {
+            if (!rel.empty())
+                rel += "/";
+            rel += *it;
+        }
+        out[id] = rel;
+    }
 }
 
 // ============================================================================
@@ -721,7 +803,7 @@ void FileHubModule::HandleList(ZmReqLoop* loop, ZmHttpdTask* task, int space, ui
             fileOrder += "name " + dir;
     }
 
-    // 目录行(先查后算:DirSize 需另取锁,不能在 m_db.Mutex() 内调用)
+    // 目录行(先查后算:批量大小/账号另取锁,不能在 m_db.Mutex() 内调用)
     std::vector<std::tuple<uint64_t, std::string, uint64_t, int64_t>> dirRows;   // id,name,create_by,create_time
     {
         std::lock_guard<std::mutex> lk(m_db.Mutex());
@@ -740,22 +822,41 @@ void FileHubModule::HandleList(ZmReqLoop* loop, ZmHttpdTask* task, int space, ui
                                  sqlite3_column_int64(st.p, 3));            // create_time
         }
     }
+    // 批量:一次递归 CTE 取全部子目录子树大小 + 一次跨库 IN 查创建者账号(替代 N+1)
+    std::vector<uint64_t> childIds, accountIds;
+    for (const auto& row : dirRows)
+    {
+        childIds.push_back(std::get<0>(row));
+        if (std::get<2>(row) != 0)
+            accountIds.push_back(std::get<2>(row));
+    }
+    std::map<uint64_t, int64_t> dirSizes;
+    CollectDirSizes(space, childIds, dirSizes);
+    std::map<uint64_t, std::string> accounts;
+    m_userModule->BatchGetUserAccounts(accountIds, accounts);
+
     for (const auto& row : dirRows)
     {
         ZMJSON d;
         d["id"] = (int64_t)std::get<0>(row);
         d["name"] = std::get<1>(row);
-        d["dirSize"] = DirSize(space, std::get<0>(row));
+        auto sit = dirSizes.find(std::get<0>(row));
+        d["dirSize"] = sit != dirSizes.end() ? sit->second : 0;
         d["mtime"] = std::get<3>(row);
         d["createBy"] = (int64_t)std::get<2>(row);
         d["createTime"] = std::get<3>(row);
-        std::string creator;
-        if (std::get<2>(row) != 0 && m_userModule->GetUserAccount(std::get<2>(row), creator))
-            d["creator"] = creator;
+        uint64_t cb = std::get<2>(row);
+        auto ait = accounts.find(cb);
+        if (cb != 0 && ait != accounts.end())
+            d["creator"] = ait->second;
         else
             d["creator"] = "—";
         rsp["result"]["dirs"].push_back(d);
     }
+
+    // 文件行:锁内收集(含 uploader_id),锁外批量取上传者账号
+    std::vector<std::tuple<uint64_t, std::string, int64_t, int64_t, uint64_t, int64_t>> fileRows;
+    // id,name,size,mtime,uploader_id,upload_time
     {
         std::lock_guard<std::mutex> lk(m_db.Mutex());
         Stmt st(m_db, (std::string(
@@ -766,31 +867,45 @@ void FileHubModule::HandleList(ZmReqLoop* loop, ZmHttpdTask* task, int space, ui
         BindInt(st.p, 2, (int64_t)dirId);
         while (sqlite3_step(st.p) == SQLITE_ROW)
         {
-            ZMJSON f;
-            f["id"] = sqlite3_column_int64(st.p, 0);
+            uint64_t id = (uint64_t)sqlite3_column_int64(st.p, 0);
             const char* name = reinterpret_cast<const char*>(sqlite3_column_text(st.p, 1));
-            f["name"] = name ? name : "";
-            f["size"] = sqlite3_column_int64(st.p, 2);
-            f["mtime"] = sqlite3_column_int64(st.p, 3);
-            uint64_t uploaderId = (uint64_t)sqlite3_column_int64(st.p, 4);
-            f["uploaderId"] = (int64_t)uploaderId;
-            f["uploadTime"] = sqlite3_column_int64(st.p, 5);
-            std::string uploader;
-            if (uploaderId != 0 && m_userModule->GetUserAccount(uploaderId, uploader))
-                f["uploader"] = uploader;
-            else
-                f["uploader"] = "—";
-            const char* nm = name ? name : "";
-            std::string ext;
-            size_t dot = std::string(nm).rfind('.');
-            if (dot != std::string::npos && dot + 1 < std::string(nm).size())
-            {
-                ext = std::string(nm).substr(dot + 1);
-                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-            }
-            f["type"] = ext;
-            rsp["result"]["files"].push_back(f);
+            uint64_t upId = (uint64_t)sqlite3_column_int64(st.p, 4);
+            fileRows.emplace_back(id, name ? name : "",
+                                  sqlite3_column_int64(st.p, 2), sqlite3_column_int64(st.p, 3),
+                                  upId, sqlite3_column_int64(st.p, 5));
         }
+    }
+    accountIds.clear();
+    for (const auto& row : fileRows)
+        if (std::get<4>(row) != 0)
+            accountIds.push_back(std::get<4>(row));
+    accounts.clear();
+    m_userModule->BatchGetUserAccounts(accountIds, accounts);
+
+    for (const auto& row : fileRows)
+    {
+        ZMJSON f;
+        f["id"] = (int64_t)std::get<0>(row);
+        f["name"] = std::get<1>(row);
+        f["size"] = std::get<2>(row);
+        f["mtime"] = std::get<3>(row);
+        uint64_t uploaderId = std::get<4>(row);
+        f["uploaderId"] = (int64_t)uploaderId;
+        f["uploadTime"] = (int64_t)std::get<5>(row);
+        auto ait = accounts.find(uploaderId);
+        if (uploaderId != 0 && ait != accounts.end())
+            f["uploader"] = ait->second;
+        else
+            f["uploader"] = "—";
+        std::string ext;
+        size_t dot = std::get<1>(row).rfind('.');
+        if (dot != std::string::npos && dot + 1 < std::get<1>(row).size())
+        {
+            ext = std::get<1>(row).substr(dot + 1);
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        }
+        f["type"] = ext;
+        rsp["result"]["files"].push_back(f);
     }
     ZmReqLoopRest::ResponseJson(loop, 200, rsp);
 }
@@ -808,30 +923,7 @@ void FileHubModule::HandleSearch(ZmReqLoop* loop, ZmHttpdTask* task, int space)
     ZMJSON rsp;
     rsp["result"]["space"] = space == 0 ? "public" : "personal";
 
-    // 相对空间根路径(每次调用独立取锁,不可在持锁时调用)
-    auto relPathOf = [this](uint64_t dirId, const std::string& name) -> std::string {
-        std::vector<std::string> chain;
-        uint64_t cur = dirId;
-        while (cur != 0)
-        {
-            std::lock_guard<std::mutex> lk(m_db.Mutex());
-            Stmt st2(m_db, "SELECT name,parent_id FROM dirs WHERE id=?");
-            if (!st2.p) break;
-            BindInt(st2.p, 1, (int64_t)cur);
-            if (sqlite3_step(st2.p) != SQLITE_ROW) break;
-            const char* nm = reinterpret_cast<const char*>(sqlite3_column_text(st2.p, 0));
-            int64_t parent = sqlite3_column_int64(st2.p, 1);
-            chain.push_back(nm ? nm : "");
-            if (parent == 0) break;
-            cur = (uint64_t)parent;
-        }
-        std::string rel;
-        for (auto it = chain.rbegin(); it != chain.rend(); ++it)
-            rel += *it + "/";
-        return rel + name;
-    };
-
-    // 文件名匹配(先查后算:relPathOf 另取锁)
+    // 文件名匹配(先查后算:批量路径/大小/账号另取锁)
     std::vector<std::tuple<uint64_t, std::string, uint64_t, int64_t, int64_t, uint64_t>> fileRows;
     // id,name,dir_id,size,mtime,uploader_id
     {
@@ -851,24 +943,7 @@ void FileHubModule::HandleSearch(ZmReqLoop* loop, ZmHttpdTask* task, int space)
                                   (uint64_t)sqlite3_column_int64(st.p, 5));
         }
     }
-    for (const auto& row : fileRows)
-    {
-        ZMJSON f;
-        f["id"] = (int64_t)std::get<0>(row);
-        f["type"] = "file";
-        f["name"] = std::get<1>(row);
-        f["size"] = std::get<3>(row);
-        f["mtime"] = std::get<4>(row);
-        f["relPath"] = relPathOf(std::get<2>(row), std::get<1>(row));
-        std::string uploader;
-        if (std::get<5>(row) != 0 && m_userModule->GetUserAccount(std::get<5>(row), uploader))
-            f["uploader"] = uploader;
-        else
-            f["uploader"] = "—";
-        rsp["result"]["items"].push_back(f);
-    }
-
-    // 目录名匹配(先查后算:DirSize/relPathOf 另取锁)
+    // 目录名匹配(先查后算:批量大小/路径/账号另取锁)
     std::vector<std::tuple<uint64_t, std::string, uint64_t, uint64_t, int64_t>> dirRows;
     {
         std::lock_guard<std::mutex> lk(m_db.Mutex());
@@ -887,19 +962,68 @@ void FileHubModule::HandleSearch(ZmReqLoop* loop, ZmHttpdTask* task, int space)
                                  sqlite3_column_int64(st.p, 4));
         }
     }
+    // 批量:匹配目录的子树大小(一次 CTE)+ 全部相对路径(一次拉行)+ 账号(一次跨库 IN)
+    std::vector<uint64_t> sizeRoots, relIds, accountIds;
+    for (const auto& row : fileRows)
+    {
+        relIds.push_back(std::get<2>(row));
+        if (std::get<5>(row) != 0)
+            accountIds.push_back(std::get<5>(row));
+    }
+    for (const auto& row : dirRows)
+    {
+        sizeRoots.push_back(std::get<0>(row));
+        relIds.push_back(std::get<2>(row));
+        if (std::get<3>(row) != 0)
+            accountIds.push_back(std::get<3>(row));
+    }
+    std::map<uint64_t, int64_t> dirSizes;
+    CollectDirSizes(space, sizeRoots, dirSizes);
+    std::map<uint64_t, std::string> relPaths;
+    BatchRelPaths(relIds, relPaths);
+    std::map<uint64_t, std::string> accounts;
+    m_userModule->BatchGetUserAccounts(accountIds, accounts);
+
+    // relPath 组装:dirId 链 + "/" + 名称(根目录链为空时直接返回名称)
+    auto relPathOf = [&relPaths](uint64_t dirId, const std::string& name) -> std::string {
+        auto it = relPaths.find(dirId);
+        if (it == relPaths.end() || it->second.empty())
+            return name;
+        return it->second + "/" + name;
+    };
+
+    for (const auto& row : fileRows)
+    {
+        ZMJSON f;
+        f["id"] = (int64_t)std::get<0>(row);
+        f["type"] = "file";
+        f["name"] = std::get<1>(row);
+        f["size"] = std::get<3>(row);
+        f["mtime"] = std::get<4>(row);
+        f["relPath"] = relPathOf(std::get<2>(row), std::get<1>(row));
+        uint64_t upId = std::get<5>(row);
+        auto ait = accounts.find(upId);
+        if (upId != 0 && ait != accounts.end())
+            f["uploader"] = ait->second;
+        else
+            f["uploader"] = "—";
+        rsp["result"]["items"].push_back(f);
+    }
     for (const auto& row : dirRows)
     {
         ZMJSON d;
         d["id"] = (int64_t)std::get<0>(row);
         d["type"] = "dir";
         d["name"] = std::get<1>(row);
-        d["dirSize"] = DirSize(space, std::get<0>(row));
+        auto sit = dirSizes.find(std::get<0>(row));
+        d["dirSize"] = sit != dirSizes.end() ? sit->second : 0;
         d["relPath"] = relPathOf(std::get<2>(row), std::get<1>(row));
         d["createBy"] = (int64_t)std::get<3>(row);
         d["createTime"] = std::get<4>(row);
-        std::string creator;
-        if (std::get<3>(row) != 0 && m_userModule->GetUserAccount(std::get<3>(row), creator))
-            d["creator"] = creator;
+        uint64_t cb = std::get<3>(row);
+        auto ait = accounts.find(cb);
+        if (cb != 0 && ait != accounts.end())
+            d["creator"] = ait->second;
         else
             d["creator"] = "—";
         rsp["result"]["items"].push_back(d);
@@ -1795,13 +1919,22 @@ void FileHubModule::HandleCopy(ZmReqLoop* loop, const ZMJSON& body, uint64_t opU
                 }
                 {
                     std::lock_guard<std::mutex> lk(m_db.Mutex());
+                    // 事务:回滚清理原子化(清理失败仅记日志,物理目录已删,尽力而为)
                     std::string ph;
                     for (size_t i = 0; i < dirtyDirs.size(); ++i)
                         ph += (i ? "," : "") + std::to_string(dirtyDirs[i]);
                     if (!dirtyDirs.empty())
                     {
-                        m_db.Exec(("DELETE FROM files WHERE dir_id IN (" + ph + ")").c_str());
-                        m_db.Exec(("DELETE FROM dirs WHERE id IN (" + ph + ")").c_str());
+                        bool ok = m_db.Begin();
+                        if (ok)
+                            ok = m_db.Exec(("DELETE FROM files WHERE dir_id IN (" + ph + ")").c_str());
+                        if (ok)
+                            ok = m_db.Exec(("DELETE FROM dirs WHERE id IN (" + ph + ")").c_str());
+                        if (!ok || !m_db.Commit())
+                        {
+                            m_db.Rollback();
+                            DEFAULT_LOG_ERROR("[FileHub] 复制回滚清理 DB 失败");
+                        }
                     }
                 }
                 ZmReqLoopRest::ResponseError(loop, 500, "复制失败");
@@ -1919,12 +2052,21 @@ void FileHubModule::HandleDelete(ZmReqLoop* loop, const ZMJSON& body, uint64_t o
             }
             {
                 std::lock_guard<std::mutex> lk(m_db.Mutex());
+                // 事务:两表删除原子化,崩溃不留 files.dir_id 指向已删目录的孤儿行
                 std::string placeholders;
                 for (size_t i = 0; i < dirs.size(); ++i)
                     placeholders += (i ? "," : "") + std::to_string(dirs[i]);
-                if (!dirs.empty())
-                    m_db.Exec(("DELETE FROM files WHERE dir_id IN (" + placeholders + ")").c_str());
-                m_db.Exec(("DELETE FROM dirs WHERE id IN (" + placeholders + ")").c_str());
+                bool ok = m_db.Begin();
+                if (ok && !dirs.empty())
+                    ok = m_db.Exec(("DELETE FROM files WHERE dir_id IN (" + placeholders + ")").c_str());
+                if (ok)
+                    ok = m_db.Exec(("DELETE FROM dirs WHERE id IN (" + placeholders + ")").c_str());
+                if (!ok || !m_db.Commit())
+                {
+                    m_db.Rollback();
+                    ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误");
+                    return;
+                }
             }
             for (uint64_t fid : fileIds)
                 RemoveSharesOf("file", fid);
@@ -2109,28 +2251,47 @@ int FileHubModule::ServeFileWithRange(ZmHttpdTask* task, const std::string& path
     size_t dashPos = rangeVal.find('-');
     if (dashPos == std::string::npos) return -1;
 
+    // stoll 无防护(非法/溢出输入抛异常穿透请求线程):改 strtoll + 严格校验,非法回 416
+    auto parseNum = [](const std::string& s, int64_t* out) -> bool {
+        if (s.empty())
+            return false;
+        const char* p = s.c_str();
+        char* end = nullptr;
+        errno = 0;
+        long long v = strtoll(p, &end, 10);
+        if (errno != 0 || !end || *end != '\0')
+            return false;
+        *out = (int64_t)v;
+        return true;
+    };
+    auto badRange = [&]() -> int {
+        task->SetReply(ZM_HTTP_STATUS_CODE_RANGE_NOT_SATISFIABLE, "Range Not Satisfiable");
+        task->PutReplyHeader("Content-Range", ("bytes */" + std::to_string(fileSize)).c_str());
+        return ZM_HTTP_STATUS_CODE_RANGE_NOT_SATISFIABLE;
+    };
+
     int64_t start = 0, end = fileSize - 1;
     std::string startStr = rangeVal.substr(0, dashPos);
     std::string endStr = rangeVal.substr(dashPos + 1);
 
     if (startStr.empty() && !endStr.empty()) {
-        int64_t suffixLen = std::stoll(endStr);
+        int64_t suffixLen = 0;
+        if (!parseNum(endStr, &suffixLen))
+            return badRange();
         if (suffixLen >= fileSize) start = 0;
         else start = fileSize - suffixLen;
         end = fileSize - 1;
     } else if (!startStr.empty() && endStr.empty()) {
-        start = std::stoll(startStr);
+        if (!parseNum(startStr, &start))
+            return badRange();
         end = fileSize - 1;
     } else {
-        start = std::stoll(startStr);
-        end = std::stoll(endStr);
+        if (!parseNum(startStr, &start) || !parseNum(endStr, &end))
+            return badRange();
     }
 
-    if (start < 0 || end >= fileSize || start > end) {
-        task->SetReply(ZM_HTTP_STATUS_CODE_RANGE_NOT_SATISFIABLE, "Range Not Satisfiable");
-        task->PutReplyHeader("Content-Range", ("bytes */" + std::to_string(fileSize)).c_str());
-        return ZM_HTTP_STATUS_CODE_RANGE_NOT_SATISFIABLE;
-    }
+    if (start < 0 || end >= fileSize || start > end)
+        return badRange();
 
     int64_t rangeLength = end - start + 1;
     int fd = -1;
@@ -2883,6 +3044,31 @@ void FileHubModule::RemoveSharesOf(const std::string& targetType, uint64_t targe
 
 void FileHubModule::VerifyLoop()
 {
+    // 启动即校验一次,之后每日 03:00 窗口校验(修复长运行期文件系统/DB 漂移),
+    // 顺带清理过期分享下载日志;轮询 60s,可被 Shutdown 打断
+    int lastVerifyDay = 0;
+    while (!m_gone.load())
+    {
+        time_t now = time(nullptr);
+        if (now > 0)
+        {
+            struct tm tmv;
+            localtime_s(&tmv, &now);
+            bool inWindow = (tmv.tm_hour >= kVerifyCleanHour && tmv.tm_hour < kVerifyCleanHour + 1);
+            if ((lastVerifyDay == 0) || (inWindow && lastVerifyDay != tmv.tm_mday))
+            {
+                VerifyOnce();
+                CleanShareDownloadLogs();
+                lastVerifyDay = tmv.tm_mday;
+            }
+        }
+        for (int i = 0; i < 60 && !m_gone.load(); ++i)
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+}
+
+void FileHubModule::VerifyOnce()
+{
     // 等待 Open 完成(线程在 Open 尾部启动,已就绪);遍历各空间
     // 公共空间(0)+ 个人空间(以文件系统目录为准)
     std::vector<int> spaces;
@@ -2917,6 +3103,19 @@ void FileHubModule::VerifyLoop()
         VerifySpaceTree(space, spaceAbs);
     }
     DEFAULT_LOG_INFO("[FileHub] 一致性校验完成");
+}
+
+void FileHubModule::CleanShareDownloadLogs()
+{
+    std::lock_guard<std::mutex> lk(m_db.Mutex());
+    Stmt st(m_db, "DELETE FROM share_download_logs WHERE create_time<?");
+    if (st.p)
+    {
+        BindInt(st.p, 1, (int64_t)(time(nullptr) - kShareDownloadLogRetain));
+        sqlite3_step(st.p);
+        if (m_db.Changes() > 0)
+            DEFAULT_LOG_INFO("[FileHub] 清理分享下载日志 {} 条", m_db.Changes());
+    }
 }
 
 void FileHubModule::VerifySpaceTree(int space, const std::string& spaceAbs)

@@ -153,42 +153,26 @@ void ServerAudioStreamModule::HandleAudioStream(ZmReqLoop* loop, ZmHttpdTask* ta
         return;
     }
 
-    // ① 会话鉴权
+    // ① 鉴权 + 模块权限(公共前置,UserModule::RequireModule)
     UserModule::UserInfo ui;
-    uint64_t uid = m_userModule->AuthAndTouch(task, &ui);
-    if (!uid)
+    auto ar = m_userModule->RequireModule(task, "audio", &ui);
+    if (ar == UserModule::AuthResult::Unauthed)
     {
         ZmReqLoopRest::ResponseError(loop, 401, "会话已失效");
         return;
     }
-
-    // ② 模块权限:可见模块须含 audio
-    std::string role;
-    m_userModule->GetUserRole(uid, role);
+    if (ar == UserModule::AuthResult::Forbidden)
     {
-        std::vector<ZMJSON> mods;
-        if (!m_userModule->GetUserModules(uid, role, mods))
-        {
-            ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误");
-            return;
-        }
-        bool hasAudio = false;
-        for (const auto& m : mods)
-        {
-            if (zm_json_get_str(m, "code") == "audio")
-            {
-                hasAudio = true;
-                break;
-            }
-        }
-        if (!hasAudio)
-        {
-            ZmReqLoopRest::ResponseError(loop, 403, "权限不足");
-            return;
-        }
+        ZmReqLoopRest::ResponseError(loop, 403, "权限不足");
+        return;
+    }
+    if (ar != UserModule::AuthResult::Ok)
+    {
+        ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误");
+        return;
     }
 
-    // ③ 先订阅(必要时启动采集):失败可真实返回 503(无设备),响应未开始
+    // ② 先订阅(必要时启动采集):失败可真实返回 503(无设备),响应未开始
     if (!Subscribe(task, loop))
     {
         ZmReqLoopRest::ResponseError(loop, 503, "服务器无可用音频设备");
@@ -220,38 +204,23 @@ void ServerAudioStreamModule::HandleAudioStatus(ZmReqLoop* loop, ZmHttpdTask* ta
         return;
     }
 
+    // 鉴权 + 模块权限(公共前置,UserModule::RequireModule)
     UserModule::UserInfo ui;
-    uint64_t uid = m_userModule->AuthAndTouch(task, &ui);
-    if (!uid)
+    auto ar = m_userModule->RequireModule(task, "audio", &ui);
+    if (ar == UserModule::AuthResult::Unauthed)
     {
         ZmReqLoopRest::ResponseError(loop, 401, "会话已失效");
         return;
     }
-
-    // 模块权限:可见模块须含 audio
-    std::string role;
-    m_userModule->GetUserRole(uid, role);
+    if (ar == UserModule::AuthResult::Forbidden)
     {
-        std::vector<ZMJSON> mods;
-        if (!m_userModule->GetUserModules(uid, role, mods))
-        {
-            ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误");
-            return;
-        }
-        bool hasAudio = false;
-        for (const auto& m : mods)
-        {
-            if (zm_json_get_str(m, "code") == "audio")
-            {
-                hasAudio = true;
-                break;
-            }
-        }
-        if (!hasAudio)
-        {
-            ZmReqLoopRest::ResponseError(loop, 403, "权限不足");
-            return;
-        }
+        ZmReqLoopRest::ResponseError(loop, 403, "权限不足");
+        return;
+    }
+    if (ar != UserModule::AuthResult::Ok)
+    {
+        ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误");
+        return;
     }
 
     AudioStatus st;

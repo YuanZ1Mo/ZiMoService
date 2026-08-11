@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <map>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -110,14 +111,36 @@ public:
     /** @brief 按 id 查询账号(展示用,如文件上传者);不存在返回 false */
     bool GetUserAccount(uint64_t userId, std::string& account);
 
+    /** @brief 通用前置检查结果(调用方据此响应 401/403/500) */
+    enum class AuthResult { Ok, Unauthed, Forbidden, Error };
+
+    /**
+     * @brief 通用鉴权 + 模块权限前置(替代各模块复制粘贴的 ~30 行前置块:
+     *        鉴权 → 角色 → 可见模块须含 moduleCode)
+     * @param task        请求上下文
+     * @param moduleCode  所需模块 code(如 "audio"/"filehub")
+     * @param out         鉴权命中时输出用户信息(可为空)
+     * @return Ok 已授权;Unauthed 会话无效;Forbidden 已登录但无该模块权限;Error 系统错误
+     */
+    AuthResult RequireModule(ZmHttpdTask* task, const char* moduleCode, UserInfo* out = nullptr);
+
+    /**
+     * @brief 批量按 id 查询账号(展示用,如文件上传者/创建者);
+     *        一次 IN 查询替代逐行 GetUserAccount(N+1 消除)
+     * @param out 输出 id → account;不存在的 id 不在 map 中
+     */
+    bool BatchGetUserAccounts(const std::vector<uint64_t>& ids,
+                              std::map<uint64_t, std::string>& out);
+
     /** @brief 角色等级:developer=3 / admin=2 / user=1 / 未知=0(等级校验用) */
     static int GetUserRoleLevel(const std::string& role);
 
     /**
      * @brief 写入用户管理操作日志(业务日志库 db/audit/audit.db 的 user_manage_logs 表)
      * @param detail 操作细节 JSON 字符串(如 {role:"admin"}、{modules:[...]})
+     * @return false 落库失败(已记 ERROR 日志,安全操作审计缺失可追溯)
      */
-    void WriteAuditLog(uint64_t operatorId, const std::string& operatorAccount,
+    bool WriteAuditLog(uint64_t operatorId, const std::string& operatorAccount,
                        const std::string& action, uint64_t targetId,
                        const std::string& targetAccount, const std::string& detail);
 

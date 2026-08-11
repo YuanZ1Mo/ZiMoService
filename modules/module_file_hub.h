@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <map>
 #include <mutex>
 #include <set>
 #include <string>
@@ -95,8 +96,19 @@ private:
     /** @brief 递归收集子树全部文件行(space,dirId 子树的 files) */
     void CollectSubtreeFiles(int space, uint64_t dirId, std::vector<uint64_t>& out);
 
-    /** @brief 目录子树总大小(dirSize,递归 SUM) */
-    int64_t DirSize(int space, uint64_t dirId);
+    /**
+     * @brief 批量计算目录子树总大小(roots 各自含自身的子树,一次递归 CTE)
+     * @param out 输出 root dir id → 子树总大小(含 files.size 求和);替代逐目录 DirSize 的 N+1
+     */
+    void CollectDirSizes(int space, const std::vector<uint64_t>& roots,
+                         std::map<uint64_t, int64_t>& out);
+
+    /**
+     * @brief 批量计算目录相对空间根的路径链(dir_id → "a/b/c",根目录为空串)
+     *        一次拉取所有涉及目录行,父链缺失迭代补查;替代 relPathOf 逐层查询
+     */
+    void BatchRelPaths(const std::vector<uint64_t>& dirIds,
+                       std::map<uint64_t, std::string>& out);
 
     // ========================================================================
     // 鉴权辅助(模块内公共前置)
@@ -198,8 +210,13 @@ private:
     // ========================================================================
 
     void VerifyLoop();
+    /** @brief 单轮全空间校验(启动即执行一次 + 每日 03:00 窗口) */
+    void VerifyOnce();
     /** @brief 校验单个空间目录树与 DB 比对,漂移以文件系统为准修复并记日志 */
     void VerifySpaceTree(int space, const std::string& spaceAbs);
+
+    /** @brief 清理过期分享下载日志(保留期 kShareDownloadLogRetain,与审计一致) */
+    void CleanShareDownloadLogs();
 
     // ========================================================================
     // 数据

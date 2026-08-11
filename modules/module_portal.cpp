@@ -266,7 +266,9 @@ void PortalModule::HandleUserAction(ZmReqLoop* loop, const std::string& action, 
     }
 
     auto audit = [&](const std::string& act, const std::string& detail) {
-        m_userModule->WriteAuditLog(opId, opAccount, act, targetId, target.account, detail);
+        if (!m_userModule->WriteAuditLog(opId, opAccount, act, targetId, target.account, detail))
+            DEFAULT_LOG_ERROR("[Portal] 用户管理操作审计落库失败: act={} target={}",
+                              act, target.account);
     };
     auto respondOk = [&]() {
         ZmReqLoopRest::ResponseJson(loop, 200, {{"result", {{"ok", true}}}});

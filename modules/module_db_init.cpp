@@ -197,6 +197,12 @@ static const ZmDbTable kFileHubTables[] = {
 static const char* kFileHubIndexes[] = {
     "CREATE INDEX IF NOT EXISTS idx_files_space_dir ON files(space, dir_id)",
     "CREATE INDEX IF NOT EXISTS idx_dirs_space_parent ON dirs(space, parent_id)",
+    // 注:idx_files_space_dir/idx_dirs_space_parent 与 UNIQUE 约束前缀重复(写放大可忽略,
+    //     存量库不迁移,保持现状);shares/下载日志索引为查询与清理所需
+    "CREATE INDEX IF NOT EXISTS idx_shares_owner ON shares(owner_id)",
+    "CREATE INDEX IF NOT EXISTS idx_shares_target ON shares(target_type, target_id)",
+    "CREATE INDEX IF NOT EXISTS idx_share_download_logs_share ON share_download_logs(share_id)",
+    "CREATE INDEX IF NOT EXISTS idx_share_download_logs_create ON share_download_logs(create_time)",
 };
 
 } // namespace
