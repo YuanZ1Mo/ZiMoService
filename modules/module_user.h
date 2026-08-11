@@ -45,6 +45,9 @@ static constexpr int kUserPageSizeDefault = 20;
 static constexpr int kUserPageSizeMax = 100;
 /** 清理/校验线程轮询间隔(秒) */
 static constexpr int kUserCleanPollSec = 60;
+/** 用户唯一身份 user_id:起始值(10000001)/封顶值(99999999),注册时 MAX+1 递增生成 */
+static constexpr int64_t kUserIdMin = 10000001;
+static constexpr int64_t kUserIdMax = 99999999;
 /** 会话:续期落库节流(秒) */
 static constexpr int64_t kUserTouchThrottle = 60;
 /** 密码学:PBKDF2 迭代次数 */
@@ -179,7 +182,7 @@ public:
     /** 用户列表行 */
     struct UserRow
     {
-        uint64_t    id = 0;
+        uint64_t    userId = 0;   ///< 用户唯一身份(users.user_id,非行号 id;对外映射一律用它)
         std::string account;
         std::string nickname;
         std::string role;

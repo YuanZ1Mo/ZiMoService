@@ -21,6 +21,7 @@ namespace
 
 static const ZmDbColumn kUsersCols[] = {
     {"id",             "INTEGER PRIMARY KEY AUTOINCREMENT"},
+    {"user_id",        "INTEGER NOT NULL UNIQUE"},   // 用户唯一身份(10000001 起递增,账号可变的稳定映射键)
     {"account",        "TEXT NOT NULL UNIQUE"},
     {"nickname",       "TEXT NOT NULL"},
     {"pass_salt",      "BLOB NOT NULL"},

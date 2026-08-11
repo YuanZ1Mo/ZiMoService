@@ -779,7 +779,7 @@ bool UserModule::FindSession(const std::string& token, time_t now, SessionRow& o
     Stmt st(m_userDb,
         "SELECT s.id, s.user_id, u.account, u.nickname, s.create_ip, s.create_time, s.last_active, "
         "u.last_login_ip, u.last_login_time "
-        "FROM sessions s JOIN users u ON u.id=s.user_id "
+        "FROM sessions s JOIN users u ON u.user_id=s.user_id "
         "WHERE s.token_hash=? AND s.expire_time>? AND s.absolute_expire>? "
         "AND u.disabled=0 AND u.deleted=0");
     if (!st.p)
@@ -790,8 +790,8 @@ bool UserModule::FindSession(const std::string& token, time_t now, SessionRow& o
     if (sqlite3_step(st.p) != SQLITE_ROW)
         return false;
 
-    out.id = (uint64_t)sqlite3_column_int64(st.p, 0);
-    out.userId = (uint64_t)sqlite3_column_int64(st.p, 1);
+    out.id = (uint64_t)sqlite3_column_int64(st.p, 0);      // 会话行 id(TouchSession 用)
+    out.userId = (uint64_t)sqlite3_column_int64(st.p, 1);  // 用户唯一身份 user_id
     const char* ac = reinterpret_cast<const char*>(sqlite3_column_text(st.p, 2));
     out.account = ac ? ac : "";
     const char* nick = reinterpret_cast<const char*>(sqlite3_column_text(st.p, 3));
@@ -968,7 +968,7 @@ void UserModule::HandleLogin(ZmReqLoop* loop, const ZMJSON& body, ZmHttpdTask* t
     {
         std::lock_guard<std::mutex> lk(m_userDb.Mutex());
         Stmt st(m_userDb,
-            "SELECT id, pass_salt, pass_hash, nickname, disabled, deleted, force_change, "
+            "SELECT user_id, pass_salt, pass_hash, nickname, disabled, deleted, force_change, "
             "temp_pass_salt, temp_pass_hash FROM users WHERE account=?");
         if (st.p)
         {
@@ -1028,7 +1028,7 @@ void UserModule::HandleLogin(ZmReqLoop* loop, const ZMJSON& body, ZmHttpdTask* t
     // ④ 更新账号最后登录 IP/时间(账号维度,任意设备可见)
     {
         std::lock_guard<std::mutex> lk(m_userDb.Mutex());
-        Stmt st(m_userDb, "UPDATE users SET last_login_ip=?, last_login_time=? WHERE id=?");
+        Stmt st(m_userDb, "UPDATE users SET last_login_ip=?, last_login_time=? WHERE user_id=?");
         if (st.p)
         {
             BindText(st.p, 1, ip);
@@ -1078,7 +1078,7 @@ void UserModule::HandleCompleteChange(ZmReqLoop* loop, const ZMJSON& body, ZmHtt
     bool forceChange = false;
     {
         std::lock_guard<std::mutex> lk(m_userDb.Mutex());
-        Stmt st(m_userDb, "SELECT force_change FROM users WHERE id=?");
+        Stmt st(m_userDb, "SELECT force_change FROM users WHERE user_id=?");
         if (st.p)
         {
             BindInt(st.p, 1, (int64_t)uid);
@@ -1119,7 +1119,7 @@ void UserModule::HandleCompleteChange(ZmReqLoop* loop, const ZMJSON& body, ZmHtt
         std::lock_guard<std::mutex> lk(m_userDb.Mutex());
         Stmt st(m_userDb,
             "UPDATE users SET pass_salt=?, pass_hash=?, rescue_salt=?, rescue_hash=?, "
-            "temp_pass_salt=NULL, temp_pass_hash=NULL, force_change=0 WHERE id=?");
+            "temp_pass_salt=NULL, temp_pass_hash=NULL, force_change=0 WHERE user_id=?");
         if (!st.p)
         {
             ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误");
@@ -1257,26 +1257,41 @@ void UserModule::HandleRegister(ZmReqLoop* loop, const ZMJSON& body, ZmHttpdTask
             if (cnt.p && sqlite3_step(cnt.p) == SQLITE_ROW && sqlite3_column_int(cnt.p, 0) == 0)
                 role = "developer";
         }
+        // 生成 user_id:MAX+1 递增(10000001 起,99999999 封顶;与 INSERT 同锁,无并发碰撞)
+        int64_t newUserId = kUserIdMin;
+        {
+            Stmt mx(m_userDb, "SELECT COALESCE(MAX(user_id),0) FROM users");
+            if (mx.p && sqlite3_step(mx.p) == SQLITE_ROW)
+                newUserId = sqlite3_column_int64(mx.p, 0) + 1;
+            if (newUserId < kUserIdMin)
+                newUserId = kUserIdMin;
+            if (newUserId > kUserIdMax)
+            {
+                ZmReqLoopRest::ResponseError(loop, 500, "用户数已达上限");
+                return;
+            }
+        }
         Stmt st(m_userDb,
-            "INSERT INTO users(account,nickname,pass_salt,pass_hash,rescue_salt,rescue_hash,"
+            "INSERT INTO users(user_id,account,nickname,pass_salt,pass_hash,rescue_salt,rescue_hash,"
             "register_ip,create_time,last_login_ip,last_login_time,role) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?)");
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)");
         if (!st.p)
         {
             ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误");
             return;
         }
-        BindText(st.p, 1, naccount);
-        BindText(st.p, 2, nnickname);
-        BindText(st.p, 3, passSalt);
-        BindText(st.p, 4, passHash);
-        BindText(st.p, 5, rescueSalt);
-        BindText(st.p, 6, rescueHash);
-        BindText(st.p, 7, ip);
-        BindInt(st.p, 8, (int64_t)now);
-        BindText(st.p, 9, ip);
-        BindInt(st.p, 10, (int64_t)now);
-        BindText(st.p, 11, role);
+        BindInt(st.p, 1, newUserId);
+        BindText(st.p, 2, naccount);
+        BindText(st.p, 3, nnickname);
+        BindText(st.p, 4, passSalt);
+        BindText(st.p, 5, passHash);
+        BindText(st.p, 6, rescueSalt);
+        BindText(st.p, 7, rescueHash);
+        BindText(st.p, 8, ip);
+        BindInt(st.p, 9, (int64_t)now);
+        BindText(st.p, 10, ip);
+        BindInt(st.p, 11, (int64_t)now);
+        BindText(st.p, 12, role);
         if (sqlite3_step(st.p) != SQLITE_DONE)
         {
             if (m_userDb.ExtendedErrorCode() == SQLITE_CONSTRAINT_UNIQUE)
@@ -1285,7 +1300,7 @@ void UserModule::HandleRegister(ZmReqLoop* loop, const ZMJSON& body, ZmHttpdTask
                 ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误");
             return;
         }
-        userId = (uint64_t)m_userDb.LastInsertRowId();
+        userId = (uint64_t)newUserId;   // 对外身份 = user_id(不再用行号 id)
     }
 
     // ⑤ 自动登录:签发全新会话
@@ -1351,7 +1366,7 @@ void UserModule::HandleReset(ZmReqLoop* loop, const ZMJSON& body, ZmHttpdTask* t
     {
         std::lock_guard<std::mutex> lk(m_userDb.Mutex());
         Stmt st(m_userDb,
-            "SELECT id, rescue_salt, rescue_hash, disabled, deleted FROM users WHERE account=?");
+            "SELECT user_id, rescue_salt, rescue_hash, disabled, deleted FROM users WHERE account=?");
         if (st.p)
         {
             BindText(st.p, 1, naccount);
@@ -1406,7 +1421,7 @@ void UserModule::HandleReset(ZmReqLoop* loop, const ZMJSON& body, ZmHttpdTask* t
     {
         std::lock_guard<std::mutex> lk(m_userDb.Mutex());
         Stmt st(m_userDb,
-            "UPDATE users SET pass_salt=?, pass_hash=?, last_login_ip=?, last_login_time=? WHERE id=?");
+            "UPDATE users SET pass_salt=?, pass_hash=?, last_login_ip=?, last_login_time=? WHERE user_id=?");
         if (!st.p)
         {
             ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误");
@@ -1491,7 +1506,7 @@ void UserModule::HandleMe(ZmReqLoop* loop, ZmHttpdTask* task)
     // 强制改密状态(改密页据此判断是否拦截)
     {
         std::lock_guard<std::mutex> lk(m_userDb.Mutex());
-        Stmt st(m_userDb, "SELECT force_change FROM users WHERE id=?");
+        Stmt st(m_userDb, "SELECT force_change FROM users WHERE user_id=?");
         if (st.p)
         {
             BindInt(st.p, 1, (int64_t)sr.userId);
@@ -1520,7 +1535,7 @@ bool UserModule::GetUserRole(uint64_t userId, std::string& role)
 {
     role = "user";
     std::lock_guard<std::mutex> lk(m_userDb.Mutex());
-    Stmt st(m_userDb, "SELECT role FROM users WHERE id=?");
+    Stmt st(m_userDb, "SELECT role FROM users WHERE user_id=?");
     if (!st.p)
         return false;
     BindInt(st.p, 1, (int64_t)userId);
@@ -1537,7 +1552,7 @@ bool UserModule::GetUserAccount(uint64_t userId, std::string& account)
 {
     account.clear();
     std::lock_guard<std::mutex> lk(m_userDb.Mutex());
-    Stmt st(m_userDb, "SELECT account FROM users WHERE id=?");
+    Stmt st(m_userDb, "SELECT account FROM users WHERE user_id=?");
     if (!st.p)
         return false;
     BindInt(st.p, 1, (int64_t)userId);
@@ -1561,7 +1576,7 @@ bool UserModule::BatchGetUserAccounts(const std::vector<uint64_t>& ids,
         ph += i ? ",?" : "?";
 
     std::lock_guard<std::mutex> lk(m_userDb.Mutex());
-    Stmt st(m_userDb, ("SELECT id, account FROM users WHERE id IN (" + ph + ")").c_str());
+    Stmt st(m_userDb, ("SELECT user_id, account FROM users WHERE user_id IN (" + ph + ")").c_str());
     if (!st.p)
         return false;
     for (size_t i = 0; i < ids.size(); ++i)
@@ -1757,7 +1772,7 @@ bool UserModule::ListUsers(const std::string& keyword, const std::string& role, 
 
     list.clear();
     Stmt st(m_userDb,
-        ("SELECT id, account, nickname, role, disabled, create_time, last_login_time "
+        ("SELECT user_id, account, nickname, role, disabled, create_time, last_login_time "
          "FROM users WHERE" + cond + " ORDER BY id LIMIT ? OFFSET ?").c_str());
     if (!st.p)
         return false;
@@ -1770,7 +1785,7 @@ bool UserModule::ListUsers(const std::string& keyword, const std::string& role, 
     while (sqlite3_step(st.p) == SQLITE_ROW)
     {
         UserRow row;
-        row.id = (uint64_t)sqlite3_column_int64(st.p, 0);
+        row.userId = (uint64_t)sqlite3_column_int64(st.p, 0);
         const char* ac = reinterpret_cast<const char*>(sqlite3_column_text(st.p, 1));
         row.account = ac ? ac : "";
         const char* nick = reinterpret_cast<const char*>(sqlite3_column_text(st.p, 2));
@@ -1789,15 +1804,15 @@ bool UserModule::GetUserRow(uint64_t userId, UserRow& out)
 {
     std::lock_guard<std::mutex> lk(m_userDb.Mutex());
     Stmt st(m_userDb,
-        "SELECT id, account, nickname, role, disabled, deleted, create_time, last_login_time "
-        "FROM users WHERE id=?");
+        "SELECT user_id, account, nickname, role, disabled, deleted, create_time, last_login_time "
+        "FROM users WHERE user_id=?");
     if (!st.p)
         return false;
     BindInt(st.p, 1, (int64_t)userId);
     if (sqlite3_step(st.p) != SQLITE_ROW)
         return false;
 
-    out.id = (uint64_t)sqlite3_column_int64(st.p, 0);
+    out.userId = (uint64_t)sqlite3_column_int64(st.p, 0);
     const char* ac = reinterpret_cast<const char*>(sqlite3_column_text(st.p, 1));
     out.account = ac ? ac : "";
     const char* nick = reinterpret_cast<const char*>(sqlite3_column_text(st.p, 2));
@@ -1815,7 +1830,7 @@ bool UserModule::SetUserDisabled(uint64_t userId, bool disabled)
 {
     {
         std::lock_guard<std::mutex> lk(m_userDb.Mutex());
-        Stmt st(m_userDb, "UPDATE users SET disabled=? WHERE id=?");
+        Stmt st(m_userDb, "UPDATE users SET disabled=? WHERE user_id=?");
         if (!st.p)
             return false;
         BindInt(st.p, 1, disabled ? 1 : 0);
@@ -1833,7 +1848,7 @@ bool UserModule::SetUserDeleted(uint64_t userId, bool deleted)
 {
     {
         std::lock_guard<std::mutex> lk(m_userDb.Mutex());
-        Stmt st(m_userDb, "UPDATE users SET deleted=? WHERE id=?");
+        Stmt st(m_userDb, "UPDATE users SET deleted=? WHERE user_id=?");
         if (!st.p)
             return false;
         BindInt(st.p, 1, deleted ? 1 : 0);
@@ -1867,7 +1882,7 @@ bool UserModule::ResetUserPassword(uint64_t userId, std::string& tempPassword)
     {
         std::lock_guard<std::mutex> lk(m_userDb.Mutex());
         Stmt st(m_userDb,
-            "UPDATE users SET temp_pass_salt=?, temp_pass_hash=?, force_change=1 WHERE id=?");
+            "UPDATE users SET temp_pass_salt=?, temp_pass_hash=?, force_change=1 WHERE user_id=?");
         if (!st.p)
             return false;
         BindText(st.p, 1, salt);
@@ -1898,7 +1913,7 @@ bool UserModule::SetUserNickname(uint64_t userId, const std::string& nickname,
     }
 
     std::lock_guard<std::mutex> lk(m_userDb.Mutex());
-    Stmt st(m_userDb, "UPDATE users SET nickname=? WHERE id=?");
+    Stmt st(m_userDb, "UPDATE users SET nickname=? WHERE user_id=?");
     if (!st.p)
         return false;
     BindText(st.p, 1, nn);
@@ -1971,7 +1986,7 @@ bool UserModule::SetUserRole(uint64_t userId, const std::string& role)
         return false;
 
     std::lock_guard<std::mutex> lk(m_userDb.Mutex());
-    Stmt st(m_userDb, "UPDATE users SET role=? WHERE id=?");
+    Stmt st(m_userDb, "UPDATE users SET role=? WHERE user_id=?");
     if (!st.p)
         return false;
     BindText(st.p, 1, role);

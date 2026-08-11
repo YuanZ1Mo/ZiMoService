@@ -173,7 +173,7 @@ void PortalModule::HandleUserManage(ZmReqLoop* loop, evhttp_cmd_type verb,
             return;
         }
         ZMJSON rsp;
-        rsp["result"]["id"] = (int64_t)row.id;
+        rsp["result"]["id"] = (int64_t)row.userId;   // 对外暴露 user_id(用户唯一身份)
         rsp["result"]["account"] = row.account;
         rsp["result"]["nickname"] = row.nickname;
         rsp["result"]["role"] = row.role;
@@ -222,7 +222,7 @@ void PortalModule::HandleUserList(ZmReqLoop* loop, const std::string& keyword,
     for (const auto& row : list)
     {
         ZMJSON u;
-        u["id"] = (int64_t)row.id;
+        u["id"] = (int64_t)row.userId;   // 对外暴露 user_id(用户唯一身份)
         u["account"] = row.account;
         u["nickname"] = row.nickname;
         u["role"] = row.role;
