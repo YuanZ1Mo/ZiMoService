@@ -14,6 +14,7 @@ class NetDock;
 class HttpServerManager;
 class FileHubModule;
 class ServerAudioStreamModule;   // 业务层自有模块:构造时自建,析构时自删
+class DbInitModule;              // 数据库初始化:先于业务模块构造,连接归其所有
 
 /**
  * @brief JRPC 请求处理门户，接收 ZmReqLoopPool 分发来的 JRPC 请求并按 method 分发
@@ -68,8 +69,10 @@ private:
 	ZmHttpClientPool* m_httpClientPool = nullptr;   ///< 全门户通用外呼请求池(预创建4/上限16)
 	DeepSeekModule* m_deepseekModule = nullptr;     ///< DeepSeek 余额查询:构造时自建(注入池),析构时自删
 
-	UserModule* m_userModule = nullptr;             ///< 用户系统:构造时自建(双库初始化),析构时自删
+	UserModule* m_userModule = nullptr;             ///< 用户系统:构造时自建(注入已初始化连接),析构时自删
 	PortalModule* m_portalModule = nullptr;         ///< 门户模块:构造时自建(注入 UserModule),析构时自删
+
+	DbInitModule* m_dbInit = nullptr;               ///< 数据库初始化:先于一切业务模块构造,最后销毁(连接归其所有)
 };
 
 #endif // SERVICE_PORTAL_H

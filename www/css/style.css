@@ -774,11 +774,6 @@ body.portal-collapsed .portal-main { left: 64px; }
   color: var(--fg2);
   line-height: 1.7;
 }
-.ws-lines.ws-mono {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  letter-spacing: .02em;
-}
 
 /* 占位工作区 */
 .ws-placeholder {

@@ -492,9 +492,11 @@
     <ClInclude Include="..\ZiMoPublic\util\zm_util_file.h" />
     <ClInclude Include="..\ZiMoPublic\util\zm_util_libevent.h" />
     <ClInclude Include="..\ZiMoPublic\util\zm_util_str.h" />
+    <ClInclude Include="..\ZiMoPublic\util\zm_util_sqlite.h" />
     <ClInclude Include="..\ZiMoPublic\util\zm_util_sys.h" />
     <ClInclude Include="..\ZiMoPublic\util\zm_util_thread.h" />
     <ClInclude Include="..\ZiMoPublic\util\zm_util_win_os.h" />
+    <ClInclude Include="..\ZiMoPublic\util\zm_util_zlib.h" />
     <ClInclude Include="..\ZiMoPublic\zlib\include\zconf.h" />
     <ClInclude Include="..\ZiMoPublic\zlib\include\zlib.h" />
     <ClInclude Include="broadcast_manager.h" />
@@ -502,7 +504,6 @@
     <ClInclude Include="http_restful_manager.h" />
     <ClInclude Include="http_server_manager.h" />
     <ClInclude Include="modules\module_server_audio_stream.h" />
-    <ClInclude Include="modules\zip_writer.h" />
     <ClInclude Include="modules\module_file_hub.h" />
     <ClInclude Include="module_deepseek.h" />
     <ClInclude Include="net_dock.h" />
@@ -512,6 +513,7 @@
     <ClInclude Include="service_global.h" />
     <ClInclude Include="service_portal.h" />
     <ClInclude Include="modules\module_user.h" />
+    <ClInclude Include="modules\module_db_init.h" />
     <ClInclude Include="modules\module_portal.h" />
   </ItemGroup>
   <ItemGroup>
@@ -544,12 +546,13 @@
     <ClCompile Include="..\ZiMoPublic\util\zm_util_sys.cpp" />
     <ClCompile Include="..\ZiMoPublic\util\zm_util_thread.cpp" />
     <ClCompile Include="..\ZiMoPublic\util\zm_util_win_os.cpp" />
+    <ClCompile Include="..\ZiMoPublic\util\zm_util_sqlite.cpp" />
+    <ClCompile Include="..\ZiMoPublic\util\zm_util_zlib.cpp" />
     <ClCompile Include="broadcast_manager.cpp" />
     <ClCompile Include="http_jsonrpc_manager.cpp" />
     <ClCompile Include="http_restful_manager.cpp" />
     <ClCompile Include="http_server_manager.cpp" />
     <ClCompile Include="modules\module_server_audio_stream.cpp" />
-    <ClCompile Include="modules\zip_writer.cpp" />
     <ClCompile Include="modules\module_file_hub.cpp" />
     <ClCompile Include="module_deepseek.cpp" />
     <ClCompile Include="net_dock.cpp" />
@@ -557,6 +560,7 @@
     <ClCompile Include="service_main.cpp" />
     <ClCompile Include="service_portal.cpp" />
     <ClCompile Include="modules\module_user.cpp" />
+    <ClCompile Include="modules\module_db_init.cpp" />
     <ClCompile Include="modules\module_portal.cpp" />
   </ItemGroup>
   <ItemGroup>

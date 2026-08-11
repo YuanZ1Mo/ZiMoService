@@ -1,7 +1,6 @@
 #include "module_file_hub.h"
 
 #include "module_user.h"
-#include "zip_writer.h"
 #include "service_define.h"
 #include "http_server_manager.h"
 
@@ -9,13 +8,13 @@
 #include "zm_logger.h"
 #include "zm_util_str.h"
 #include "zm_util_sys.h"
+#include "zm_util_zlib.h"
 
 #include <sqlite3.h>
 #include <openssl/rand.h>
 #include <openssl/sha.h>
 
 #include <windows.h>
-#include <direct.h>
 
 #include <event2/buffer.h>
 
@@ -33,15 +32,10 @@ namespace
 // 内部小工具
 // ============================================================================
 
-void BindText(sqlite3_stmt* p, int idx, const std::string& v)
-{
-    sqlite3_bind_text(p, idx, v.data(), (int)v.size(), SQLITE_TRANSIENT);
-}
-
-void BindInt(sqlite3_stmt* p, int idx, int64_t v)
-{
-    sqlite3_bind_int64(p, idx, v);
-}
+// 公共库 sqlite 辅助(预处理语句/绑定):别名与 using 保持全部调用点不变
+using Stmt = zm::ZmSqliteStmt;
+using zm::BindText;
+using zm::BindInt;
 
 /** @brief 安全读 int64(字段缺失/类型不匹配返回默认值) */
 int64_t JsonInt(const ZMJSON& j, std::string_view key, int64_t def = 0)
@@ -143,66 +137,14 @@ bool DeleteDirRecursive(const std::wstring& dirPath)
     return RemoveDirectoryW(dirPath.c_str()) != 0;
 }
 
-// ============================================================================
-// 建表语句(filehub.db,Open 时执行;方案 2 全库驱动)
-// ============================================================================
-
-const char* kSqlCreateDirs =
-    "CREATE TABLE IF NOT EXISTS dirs ("
-    "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-    "  space INTEGER NOT NULL,"
-    "  parent_id INTEGER NOT NULL DEFAULT 0,"
-    "  name TEXT NOT NULL,"
-    "  create_by INTEGER NOT NULL,"
-    "  create_time INTEGER NOT NULL,"
-    "  UNIQUE(space, parent_id, name))";
-
-const char* kSqlCreateFiles =
-    "CREATE TABLE IF NOT EXISTS files ("
-    "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-    "  space INTEGER NOT NULL,"
-    "  dir_id INTEGER NOT NULL,"
-    "  name TEXT NOT NULL,"
-    "  size INTEGER NOT NULL,"
-    "  mtime INTEGER NOT NULL,"
-    "  uploader_id INTEGER NOT NULL,"
-    "  upload_time INTEGER NOT NULL,"
-    "  UNIQUE(space, dir_id, name))";
-
-const char* kSqlCreateShares =
-    "CREATE TABLE IF NOT EXISTS shares ("
-    "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-    "  token_hash TEXT NOT NULL UNIQUE,"
-    "  token TEXT NOT NULL,"
-    "  owner_id INTEGER NOT NULL,"
-    "  target_type TEXT NOT NULL,"
-    "  target_id INTEGER NOT NULL,"
-    "  create_time INTEGER NOT NULL)";
-
-const char* kSqlCreateDownloads =
-    "CREATE TABLE IF NOT EXISTS share_download_logs ("
-    "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-    "  share_id INTEGER NOT NULL,"
-    "  target_type TEXT NOT NULL,"
-    "  target_id INTEGER NOT NULL,"
-    "  downloader_id INTEGER NOT NULL,"
-    "  downloader_account TEXT NOT NULL,"
-    "  ip TEXT NOT NULL,"
-    "  create_time INTEGER NOT NULL)";
-
-const char* kSqlCreateFilesIdx =
-    "CREATE INDEX IF NOT EXISTS idx_files_space_dir ON files(space, dir_id)";
-
-const char* kSqlCreateDirsIdx =
-    "CREATE INDEX IF NOT EXISTS idx_dirs_space_parent ON dirs(space, parent_id)";
 } // namespace
 
 // ============================================================================
 // 构造 / 析构 / 初始化
 // ============================================================================
 
-FileHubModule::FileHubModule(UserModule* userModule)
-    : m_userModule(userModule)
+FileHubModule::FileHubModule(UserModule* userModule, zm::ZmSqliteConn& fileHubDb)
+    : m_userModule(userModule), m_db(fileHubDb)
 {
     // 文件仓库根:exe 同级 modules\filehub(与 db/ 三库分离;静态 www 同步不影响)
     char exePath[MAX_PATH];
@@ -223,44 +165,19 @@ bool FileHubModule::Open()
     if (m_openOk.load())
         return true;
 
-    char exePath[MAX_PATH];
-    ZmSystem::GetModuleDir(exePath, MAX_PATH);
-    const std::string dbDir = std::string(exePath) + "\\db\\filehub";
-    _mkdir((std::string(exePath) + "\\db").c_str());
-    _mkdir(dbDir.c_str());
-
-    const std::string dbPath = dbDir + "\\filehub.db";
-    if (sqlite3_open_v2(dbPath.c_str(), &m_db,
-            SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nullptr) != SQLITE_OK)
+    // 库由 DbInitializer 统一打开并建表/补列;此处仅检查可用性 + 文件系统根目录
+    if (!m_db.IsOpen())
     {
-        DEFAULT_LOG_ERROR("[FileHub] 打开数据库失败: {} err={}", dbPath,
-            m_db ? sqlite3_errmsg(m_db) : "?");
-        if (m_db) { sqlite3_close(m_db); m_db = nullptr; }
+        DEFAULT_LOG_ERROR("[FileHub] 数据库不可用,文件中心不可用");
         return false;
     }
 
-    std::lock_guard<std::mutex> lk(m_dbMutex);
-    if (!Exec(m_db, kSqlCreateDirs) ||
-        !Exec(m_db, kSqlCreateFiles) ||
-        !Exec(m_db, kSqlCreateShares) ||
-        !Exec(m_db, kSqlCreateDownloads) ||
-        !Exec(m_db, kSqlCreateFilesIdx) ||
-        !Exec(m_db, kSqlCreateDirsIdx))
-    {
-        DEFAULT_LOG_ERROR("[FileHub] filehub.db 建表失败,文件中心不可用");
-        Shutdown();
-        return false;
-    }
-
-    // 公共根种子(幂等):DB 根行 + 文件系统根目录
-    Exec(m_db,
-        "INSERT OR IGNORE INTO dirs(space,parent_id,name,create_by,create_time) "
-        "VALUES(0,0,'',0,0)");
+    // 公共空间根目录(DB 根行种子由 DbInitializer 的 dirs 表声明负责)
     std::string pubRoot = m_hubRoot + "\\0";
     CreateDirectoryW(ZmString::UTF8_To_Unicode(pubRoot).c_str(), nullptr);
 
     m_openOk.store(true);
-    DEFAULT_LOG_INFO("[FileHub] 文件中心初始化完成: {} / 仓库 {}", dbPath, m_hubRoot);
+    DEFAULT_LOG_INFO("[FileHub] 文件中心初始化完成,仓库 {}", m_hubRoot);
 
     // 启动一致性校验线程(启动即执行一次)
     m_verifyThread = std::thread(&FileHubModule::VerifyLoop, this);
@@ -275,40 +192,7 @@ void FileHubModule::Shutdown()
         m_verifyThread.join();
         m_verifyThread = std::thread();
     }
-    if (m_db)
-    {
-        sqlite3_close(m_db);
-        m_db = nullptr;
-    }
-}
-
-// ============================================================================
-// SQLite 辅助
-// ============================================================================
-
-FileHubModule::Stmt::Stmt(sqlite3* db, const char* sql)
-{
-    if (db && sqlite3_prepare_v2(db, sql, -1, &p, nullptr) != SQLITE_OK)
-        p = nullptr;
-}
-
-FileHubModule::Stmt::~Stmt()
-{
-    if (p)
-        sqlite3_finalize(p);
-}
-
-bool FileHubModule::Exec(sqlite3* db, const char* sql)
-{
-    char* err = nullptr;
-    int rc = sqlite3_exec(db, sql, nullptr, nullptr, &err);
-    if (rc != SQLITE_OK)
-    {
-        DEFAULT_LOG_ERROR("[FileHub] exec failed: {} err={}", sql, err ? err : "?");
-        sqlite3_free(err);
-        return false;
-    }
-    return true;
+    // 库连接由 DbInitializer 统一关闭
 }
 
 // ============================================================================
@@ -338,7 +222,7 @@ bool FileHubModule::EnsureUserRoot(uint64_t uid)
         return false;
 
     // DB 根行(幂等)
-    std::lock_guard<std::mutex> lk(m_dbMutex);
+    std::lock_guard<std::mutex> lk(m_db.Mutex());
     Stmt st(m_db,
         "INSERT OR IGNORE INTO dirs(space,parent_id,name,create_by,create_time) "
         "VALUES(?,0,'',?,?)");
@@ -362,7 +246,7 @@ bool FileHubModule::DirAbsPath(int space, uint64_t dirId, std::string& absPath)
     uint64_t cur = dirId;
     for (int depth = 0; depth < 64; ++depth)
     {
-        std::lock_guard<std::mutex> lk(m_dbMutex);
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
         Stmt st(m_db, "SELECT name,parent_id FROM dirs WHERE id=? AND space=?");
         if (!st.p)
             return false;
@@ -396,7 +280,7 @@ std::string FileHubModule::EntryAbsPath(int space, uint64_t dirId, const std::st
 void FileHubModule::CollectSubtreeDirs(int space, uint64_t dirId, std::vector<uint64_t>& out)
 {
     out.push_back(dirId);
-    std::lock_guard<std::mutex> lk(m_dbMutex);
+    std::lock_guard<std::mutex> lk(m_db.Mutex());
     for (size_t i = 0; i < out.size(); ++i)
     {
         Stmt st(m_db, "SELECT id FROM dirs WHERE space=? AND parent_id=?");
@@ -413,7 +297,7 @@ void FileHubModule::CollectSubtreeFiles(int space, uint64_t dirId, std::vector<u
 {
     std::vector<uint64_t> dirs;
     CollectSubtreeDirs(space, dirId, dirs);
-    std::lock_guard<std::mutex> lk(m_dbMutex);
+    std::lock_guard<std::mutex> lk(m_db.Mutex());
     for (uint64_t d : dirs)
     {
         Stmt st(m_db, "SELECT id FROM files WHERE space=? AND dir_id=?");
@@ -431,7 +315,7 @@ int64_t FileHubModule::DirSize(int space, uint64_t dirId)
     std::vector<uint64_t> dirs;
     CollectSubtreeDirs(space, dirId, dirs);
     int64_t total = 0;
-    std::lock_guard<std::mutex> lk(m_dbMutex);
+    std::lock_guard<std::mutex> lk(m_db.Mutex());
     for (uint64_t d : dirs)
     {
         Stmt st(m_db, "SELECT COALESCE(SUM(size),0) FROM files WHERE space=? AND dir_id=?");
@@ -729,7 +613,7 @@ void FileHubModule::BuildPathChain(ZMJSON& pathArr, int space, uint64_t dirId)
     uint64_t cur = dirId;
     while (cur != 0)
     {
-        std::lock_guard<std::mutex> lk(m_dbMutex);
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
         Stmt st(m_db, "SELECT name,parent_id FROM dirs WHERE id=? AND space=?");
         if (!st.p)
             break;
@@ -752,7 +636,7 @@ void FileHubModule::BuildPathChain(ZMJSON& pathArr, int space, uint64_t dirId)
     // 目录链(自上而下)
     for (auto it = stack.rbegin(); it != stack.rend(); ++it)
     {
-        std::lock_guard<std::mutex> lk(m_dbMutex);
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
         Stmt st(m_db, "SELECT name FROM dirs WHERE id=?");
         if (!st.p)
             break;
@@ -832,10 +716,10 @@ void FileHubModule::HandleList(ZmReqLoop* loop, ZmHttpdTask* task, int space, ui
             fileOrder += "name " + dir;
     }
 
-    // 目录行(先查后算:DirSize 需另取锁,不能在 m_dbMutex 内调用)
+    // 目录行(先查后算:DirSize 需另取锁,不能在 m_db.Mutex() 内调用)
     std::vector<std::tuple<uint64_t, std::string, uint64_t, int64_t>> dirRows;   // id,name,create_by,create_time
     {
-        std::lock_guard<std::mutex> lk(m_dbMutex);
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
         Stmt st(m_db, (std::string(
             "SELECT id,name,create_by,create_time FROM dirs WHERE space=? AND parent_id=? "
             "AND name != ''") + dirOrder).c_str());
@@ -868,7 +752,7 @@ void FileHubModule::HandleList(ZmReqLoop* loop, ZmHttpdTask* task, int space, ui
         rsp["result"]["dirs"].push_back(d);
     }
     {
-        std::lock_guard<std::mutex> lk(m_dbMutex);
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
         Stmt st(m_db, (std::string(
             "SELECT id,name,size,mtime,uploader_id,upload_time FROM files "
             "WHERE space=? AND dir_id=? ") + fileOrder).c_str());
@@ -925,7 +809,7 @@ void FileHubModule::HandleSearch(ZmReqLoop* loop, ZmHttpdTask* task, int space)
         uint64_t cur = dirId;
         while (cur != 0)
         {
-            std::lock_guard<std::mutex> lk(m_dbMutex);
+            std::lock_guard<std::mutex> lk(m_db.Mutex());
             Stmt st2(m_db, "SELECT name,parent_id FROM dirs WHERE id=?");
             if (!st2.p) break;
             BindInt(st2.p, 1, (int64_t)cur);
@@ -946,7 +830,7 @@ void FileHubModule::HandleSearch(ZmReqLoop* loop, ZmHttpdTask* task, int space)
     std::vector<std::tuple<uint64_t, std::string, uint64_t, int64_t, int64_t, uint64_t>> fileRows;
     // id,name,dir_id,size,mtime,uploader_id
     {
-        std::lock_guard<std::mutex> lk(m_dbMutex);
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
         Stmt st(m_db, "SELECT id,name,dir_id,size,mtime,uploader_id FROM files "
                       "WHERE space=? AND name LIKE ? ORDER BY name");
         if (!st.p) { ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误"); return; }
@@ -982,7 +866,7 @@ void FileHubModule::HandleSearch(ZmReqLoop* loop, ZmHttpdTask* task, int space)
     // 目录名匹配(先查后算:DirSize/relPathOf 另取锁)
     std::vector<std::tuple<uint64_t, std::string, uint64_t, uint64_t, int64_t>> dirRows;
     {
-        std::lock_guard<std::mutex> lk(m_dbMutex);
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
         Stmt st(m_db, "SELECT id,name,parent_id,create_by,create_time FROM dirs "
                       "WHERE space=? AND name LIKE ?  ORDER BY name");
         if (!st.p) { ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误"); return; }
@@ -1043,7 +927,7 @@ bool FileHubModule::DirExists(int space, uint64_t dirId)
 {
     if (dirId == 0)
         return true;   // 空间根恒存在
-    std::lock_guard<std::mutex> lk(m_dbMutex);
+    std::lock_guard<std::mutex> lk(m_db.Mutex());
     Stmt st(m_db, "SELECT 1 FROM dirs WHERE id=? AND space=?");
     if (!st.p)
         return false;
@@ -1078,7 +962,7 @@ void FileHubModule::HandleMkdir(ZmReqLoop* loop, const ZMJSON& body, int space, 
     // 同名冲突检查(幂等 mkdir:目录已存在 → 200 + 已有 dirId;同名文件 → 409)
     uint64_t existedId = 0;
     {
-        std::lock_guard<std::mutex> lk(m_dbMutex);
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
         Stmt st(m_db, "SELECT id FROM dirs WHERE space=? AND parent_id=? AND name=?");
         if (!st.p) { ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误"); return; }
         BindInt(st.p, 1, (int64_t)space);
@@ -1110,7 +994,7 @@ void FileHubModule::HandleMkdir(ZmReqLoop* loop, const ZMJSON& body, int space, 
         if (GetLastError() == ERROR_ALREADY_EXISTS)
         {
             // 物理目录已存在但 DB 无行(漂移):补查 dirs 行,幂等返回
-            std::lock_guard<std::mutex> lk(m_dbMutex);
+            std::lock_guard<std::mutex> lk(m_db.Mutex());
             Stmt st(m_db, "SELECT id FROM dirs WHERE space=? AND parent_id=? AND name=?");
             if (st.p)
             {
@@ -1135,7 +1019,7 @@ void FileHubModule::HandleMkdir(ZmReqLoop* loop, const ZMJSON& body, int space, 
     // DB 写入;失败回滚文件系统
     uint64_t newDirId = 0;
     {
-        std::lock_guard<std::mutex> lk(m_dbMutex);
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
         Stmt st(m_db,
             "INSERT INTO dirs(space,parent_id,name,create_by,create_time) VALUES(?,?,?,?,?)");
         if (!st.p)
@@ -1155,7 +1039,7 @@ void FileHubModule::HandleMkdir(ZmReqLoop* loop, const ZMJSON& body, int space, 
             ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误");
             return;
         }
-        newDirId = (uint64_t)sqlite3_last_insert_rowid(m_db);
+        newDirId = (uint64_t)m_db.LastInsertRowId();
     }
 
     Log(opUid, opAccount, "mkdir", "dir", newDirId, "{\"name\":\"" + name + "\"}");
@@ -1181,7 +1065,7 @@ void FileHubModule::HandleRename(ZmReqLoop* loop, const ZMJSON& body, uint64_t o
     uint64_t uploaderId = 0;
     std::string oldName;
     {
-        std::lock_guard<std::mutex> lk(m_dbMutex);
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
         if (type == "file")
         {
             Stmt st(m_db, "SELECT space,dir_id,name,uploader_id FROM files WHERE id=?");
@@ -1231,7 +1115,7 @@ void FileHubModule::HandleRename(ZmReqLoop* loop, const ZMJSON& body, uint64_t o
 
     // 同名冲突(同空间同目录)
     {
-        std::lock_guard<std::mutex> lk(m_dbMutex);
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
         if (type == "file")
         {
             Stmt st(m_db, "SELECT 1 FROM files WHERE space=? AND dir_id=? AND name=?");
@@ -1273,7 +1157,7 @@ void FileHubModule::HandleRename(ZmReqLoop* loop, const ZMJSON& body, uint64_t o
 
     // DB 更新;失败回滚(先 bind 再 step,防未绑定参数静默改 0 行)
     {
-        std::lock_guard<std::mutex> lk(m_dbMutex);
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
         if (type == "file")
         {
             Stmt st(m_db, "UPDATE files SET name=? WHERE id=?");
@@ -1286,7 +1170,7 @@ void FileHubModule::HandleRename(ZmReqLoop* loop, const ZMJSON& body, uint64_t o
             }
             BindText(st.p, 1, newName);
             BindInt(st.p, 2, (int64_t)id);
-            if (sqlite3_step(st.p) != SQLITE_DONE || sqlite3_changes(m_db) == 0)
+            if (sqlite3_step(st.p) != SQLITE_DONE || m_db.Changes() == 0)
             {
                 MoveFileW(ZmString::UTF8_To_Unicode(newAbs).c_str(),
                           ZmString::UTF8_To_Unicode(oldAbs).c_str());
@@ -1335,7 +1219,7 @@ void FileHubModule::HandleMove(ZmReqLoop* loop, const ZMJSON& body, uint64_t opU
     // 目标目录存在性 + 空间(targetDir==0 = 各条目自身空间根,空间校验跳过)
     int tgtSpace = -1;
     {
-        std::lock_guard<std::mutex> lk(m_dbMutex);
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
         if (targetDir == 0)
         {
             // 移动到本空间根:不设 tgtSpace,条目循环内跳过空间校验
@@ -1363,7 +1247,7 @@ void FileHubModule::HandleMove(ZmReqLoop* loop, const ZMJSON& body, uint64_t opU
         uint64_t dirId = 0, uploaderId = 0;
         std::string name;
         {
-            std::lock_guard<std::mutex> lk(m_dbMutex);
+            std::lock_guard<std::mutex> lk(m_db.Mutex());
             if (type == "file")
             {
                 Stmt st(m_db, "SELECT space,dir_id,name,uploader_id FROM files WHERE id=?");
@@ -1424,7 +1308,7 @@ void FileHubModule::HandleMove(ZmReqLoop* loop, const ZMJSON& body, uint64_t opU
         }
         // 目标同名冲突
         {
-            std::lock_guard<std::mutex> lk(m_dbMutex);
+            std::lock_guard<std::mutex> lk(m_db.Mutex());
             if (type == "file")
             {
                 Stmt st(m_db, "SELECT 1 FROM files WHERE space=? AND dir_id=? AND name=?");
@@ -1471,7 +1355,7 @@ void FileHubModule::HandleMove(ZmReqLoop* loop, const ZMJSON& body, uint64_t opU
 
         // DB 更新(文件改 dir_id;目录改 parent_id);失败回滚
         {
-            std::lock_guard<std::mutex> lk(m_dbMutex);
+            std::lock_guard<std::mutex> lk(m_db.Mutex());
             if (type == "file")
             {
                 Stmt st(m_db, "UPDATE files SET dir_id=? WHERE id=?");
@@ -1533,7 +1417,7 @@ void FileHubModule::HandleCopy(ZmReqLoop* loop, const ZMJSON& body, uint64_t opU
     // 目标目录存在性 + 空间(targetDir==0 = 空间根,需 target_space 指定目标空间)
     int tgtSpace = -1;
     {
-        std::lock_guard<std::mutex> lk(m_dbMutex);
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
         if (targetDir == 0)
         {
             // target_space:数字 uid / "public" / "personal"(当前用户个人空间)
@@ -1585,7 +1469,7 @@ void FileHubModule::HandleCopy(ZmReqLoop* loop, const ZMJSON& body, uint64_t opU
         uint64_t dirId = 0, uploaderId = 0;
         std::string name;
         {
-            std::lock_guard<std::mutex> lk(m_dbMutex);
+            std::lock_guard<std::mutex> lk(m_db.Mutex());
             if (type == "file")
             {
                 Stmt st(m_db, "SELECT space,dir_id,name,uploader_id FROM files WHERE id=?");
@@ -1639,7 +1523,7 @@ void FileHubModule::HandleCopy(ZmReqLoop* loop, const ZMJSON& body, uint64_t opU
         }
         // 目标同名冲突
         {
-            std::lock_guard<std::mutex> lk(m_dbMutex);
+            std::lock_guard<std::mutex> lk(m_db.Mutex());
             if (type == "file")
             {
                 Stmt st(m_db, "SELECT 1 FROM files WHERE space=? AND dir_id=? AND name=?");
@@ -1686,7 +1570,7 @@ void FileHubModule::HandleCopy(ZmReqLoop* loop, const ZMJSON& body, uint64_t opU
                 return;
             }
             {
-                std::lock_guard<std::mutex> lk(m_dbMutex);
+                std::lock_guard<std::mutex> lk(m_db.Mutex());
                 Stmt st(m_db,
                     "INSERT INTO files(space,dir_id,name,size,mtime,uploader_id,upload_time) "
                     "VALUES(?,?,?,?,?,?,?)");
@@ -1745,7 +1629,7 @@ void FileHubModule::HandleCopy(ZmReqLoop* loop, const ZMJSON& body, uint64_t opU
             }
             else
             {
-                std::lock_guard<std::mutex> lk(m_dbMutex);
+                std::lock_guard<std::mutex> lk(m_db.Mutex());
                 Stmt st(m_db,
                     "INSERT INTO dirs(space,parent_id,name,create_by,create_time) VALUES(?,?,?,?,?)");
                 if (!st.p)
@@ -1761,7 +1645,7 @@ void FileHubModule::HandleCopy(ZmReqLoop* loop, const ZMJSON& body, uint64_t opU
                         failed = true;
                     else
                         stack.push_back({srcRoot, dstRoot, id,
-                                         (uint64_t)sqlite3_last_insert_rowid(m_db)});
+                                         (uint64_t)m_db.LastInsertRowId()});
                 }
             }
 
@@ -1792,7 +1676,7 @@ void FileHubModule::HandleCopy(ZmReqLoop* loop, const ZMJSON& body, uint64_t opU
                         }
                         uint64_t newDirId = 0;
                         {
-                            std::lock_guard<std::mutex> lk(m_dbMutex);
+                            std::lock_guard<std::mutex> lk(m_db.Mutex());
                             Stmt st(m_db,
                                 "INSERT INTO dirs(space,parent_id,name,create_by,create_time) "
                                 "VALUES(?,?,?,?,?)");
@@ -1803,12 +1687,12 @@ void FileHubModule::HandleCopy(ZmReqLoop* loop, const ZMJSON& body, uint64_t opU
                             BindInt(st.p, 4, (int64_t)opUid);
                             BindInt(st.p, 5, (int64_t)time(nullptr));
                             if (sqlite3_step(st.p) != SQLITE_DONE) { failed = true; break; }
-                            newDirId = (uint64_t)sqlite3_last_insert_rowid(m_db);
+                            newDirId = (uint64_t)m_db.LastInsertRowId();
                         }
                         // 源子目录 id(按名查源空间)
                         uint64_t childSrcId = 0;
                         {
-                            std::lock_guard<std::mutex> lk(m_dbMutex);
+                            std::lock_guard<std::mutex> lk(m_db.Mutex());
                             Stmt st(m_db,
                                 "SELECT id FROM dirs WHERE space=? AND parent_id=? AND name=?");
                             if (st.p)
@@ -1844,7 +1728,7 @@ void FileHubModule::HandleCopy(ZmReqLoop* loop, const ZMJSON& body, uint64_t opU
                             m.LowPart = fad.ftLastWriteTime.dwLowDateTime;
                             mt = (int64_t)(m.QuadPart / 10000000ULL - 11644473600ULL);
                         }
-                        std::lock_guard<std::mutex> lk(m_dbMutex);
+                        std::lock_guard<std::mutex> lk(m_db.Mutex());
                         Stmt st(m_db,
                             "INSERT INTO files(space,dir_id,name,size,mtime,uploader_id,upload_time) "
                             "VALUES(?,?,?,?,?,?,?)");
@@ -1868,7 +1752,7 @@ void FileHubModule::HandleCopy(ZmReqLoop* loop, const ZMJSON& body, uint64_t opU
                 DeleteDirRecursive(ZmString::UTF8_To_Unicode(dstRoot).c_str());
                 std::vector<uint64_t> dirtyDirs;
                 {
-                    std::lock_guard<std::mutex> lk(m_dbMutex);
+                    std::lock_guard<std::mutex> lk(m_db.Mutex());
                     Stmt st(m_db, "SELECT id FROM dirs WHERE space=? AND parent_id=? AND name=?");
                     if (st.p)
                     {
@@ -1887,14 +1771,14 @@ void FileHubModule::HandleCopy(ZmReqLoop* loop, const ZMJSON& body, uint64_t opU
                         dirtyDirs.push_back(d);
                 }
                 {
-                    std::lock_guard<std::mutex> lk(m_dbMutex);
+                    std::lock_guard<std::mutex> lk(m_db.Mutex());
                     std::string ph;
                     for (size_t i = 0; i < dirtyDirs.size(); ++i)
                         ph += (i ? "," : "") + std::to_string(dirtyDirs[i]);
                     if (!dirtyDirs.empty())
                     {
-                        Exec(m_db, ("DELETE FROM files WHERE dir_id IN (" + ph + ")").c_str());
-                        Exec(m_db, ("DELETE FROM dirs WHERE id IN (" + ph + ")").c_str());
+                        m_db.Exec(("DELETE FROM files WHERE dir_id IN (" + ph + ")").c_str());
+                        m_db.Exec(("DELETE FROM dirs WHERE id IN (" + ph + ")").c_str());
                     }
                 }
                 ZmReqLoopRest::ResponseError(loop, 500, "复制失败");
@@ -1925,7 +1809,7 @@ void FileHubModule::HandleDelete(ZmReqLoop* loop, const ZMJSON& body, uint64_t o
         uint64_t dirId = 0, uploaderId = 0;
         std::string name;
         {
-            std::lock_guard<std::mutex> lk(m_dbMutex);
+            std::lock_guard<std::mutex> lk(m_db.Mutex());
             if (type == "file")
             {
                 Stmt st(m_db, "SELECT space,dir_id,name,uploader_id FROM files WHERE id=?");
@@ -1980,7 +1864,7 @@ void FileHubModule::HandleDelete(ZmReqLoop* loop, const ZMJSON& body, uint64_t o
                 }
             }
             {
-                std::lock_guard<std::mutex> lk(m_dbMutex);
+                std::lock_guard<std::mutex> lk(m_db.Mutex());
                 Stmt st(m_db, "DELETE FROM files WHERE id=?");
                 if (!st.p)
                 {
@@ -2011,13 +1895,13 @@ void FileHubModule::HandleDelete(ZmReqLoop* loop, const ZMJSON& body, uint64_t o
                 }
             }
             {
-                std::lock_guard<std::mutex> lk(m_dbMutex);
+                std::lock_guard<std::mutex> lk(m_db.Mutex());
                 std::string placeholders;
                 for (size_t i = 0; i < dirs.size(); ++i)
                     placeholders += (i ? "," : "") + std::to_string(dirs[i]);
                 if (!dirs.empty())
-                    Exec(m_db, ("DELETE FROM files WHERE dir_id IN (" + placeholders + ")").c_str());
-                Exec(m_db, ("DELETE FROM dirs WHERE id IN (" + placeholders + ")").c_str());
+                    m_db.Exec(("DELETE FROM files WHERE dir_id IN (" + placeholders + ")").c_str());
+                m_db.Exec(("DELETE FROM dirs WHERE id IN (" + placeholders + ")").c_str());
             }
             for (uint64_t fid : fileIds)
                 RemoveSharesOf("file", fid);
@@ -2086,7 +1970,7 @@ void FileHubModule::HandleUpload(ZmReqLoop* loop, ZmHttpdTask* task, int space, 
     }
     // 同名冲突
     {
-        std::lock_guard<std::mutex> lk(m_dbMutex);
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
         Stmt st(m_db, "SELECT 1 FROM files WHERE space=? AND dir_id=? AND name=?");
         if (!st.p) { ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误"); return; }
         BindInt(st.p, 1, (int64_t)space);
@@ -2138,7 +2022,7 @@ void FileHubModule::HandleUpload(ZmReqLoop* loop, ZmHttpdTask* task, int space, 
 
     uint64_t newId = 0;
     {
-        std::lock_guard<std::mutex> lk(m_dbMutex);
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
         Stmt st(m_db,
             "INSERT INTO files(space,dir_id,name,size,mtime,uploader_id,upload_time) "
             "VALUES(?,?,?,?,?,?,?)");
@@ -2161,7 +2045,7 @@ void FileHubModule::HandleUpload(ZmReqLoop* loop, ZmHttpdTask* task, int space, 
             ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误");
             return;
         }
-        newId = (uint64_t)sqlite3_last_insert_rowid(m_db);
+        newId = (uint64_t)m_db.LastInsertRowId();
     }
 
     Log(opUid, opAccount, "upload", "file", newId,
@@ -2297,7 +2181,7 @@ void FileHubModule::HandleDownload(ZmReqLoop* loop, ZmHttpdTask* task, uint64_t 
     uint64_t dirId = 0;
     std::string name;
     {
-        std::lock_guard<std::mutex> lk(m_dbMutex);
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
         Stmt st(m_db, "SELECT space,dir_id,name FROM files WHERE id=?");
         if (!st.p) { ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误"); return; }
         BindInt(st.p, 1, (int64_t)fileId);
@@ -2343,7 +2227,7 @@ bool FileHubModule::ZipAddFile(ZipWriter& zip, int space, uint64_t fileId,
     uint64_t dirId = 0;
     std::string name;
     {
-        std::lock_guard<std::mutex> lk(m_dbMutex);
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
         Stmt st(m_db, "SELECT space,dir_id,name FROM files WHERE id=?");
         if (!st.p)
             return false;
@@ -2396,7 +2280,7 @@ bool FileHubModule::ZipAddDirRecursive(ZipWriter& zip, int space, uint64_t dirId
     std::vector<uint64_t> childDirs;
     std::vector<uint64_t> childFiles;
     {
-        std::lock_guard<std::mutex> lk(m_dbMutex);
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
         // 目录名
         if (dirId != 0)
         {
@@ -2470,7 +2354,7 @@ void FileHubModule::HandleZip(ZmReqLoop* loop, ZmHttpdTask* task, const ZMJSON& 
     // 校验条目空间一致 + 存在性
     for (auto& it : ids)
     {
-        std::lock_guard<std::mutex> lk(m_dbMutex);
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
         if (it.first == "file")
         {
             Stmt st(m_db, "SELECT space FROM files WHERE id=?");
@@ -2510,7 +2394,7 @@ void FileHubModule::HandleZip(ZmReqLoop* loop, ZmHttpdTask* task, const ZMJSON& 
     std::string zipName = "filehub-打包.zip";
     if (ids.size() == 1 && ids[0].first == "dir")
     {
-        std::lock_guard<std::mutex> lk(m_dbMutex);
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
         Stmt st(m_db, "SELECT name FROM dirs WHERE id=?");
         if (st.p)
         {
@@ -2599,7 +2483,7 @@ void FileHubModule::HandleShareCreate(ZmReqLoop* loop, const ZMJSON& body, uint6
     int space = -1;
     uint64_t uploaderId = 0;
     {
-        std::lock_guard<std::mutex> lk(m_dbMutex);
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
         if (type == "file")
         {
             Stmt st(m_db, "SELECT space,uploader_id FROM files WHERE id=?");
@@ -2642,7 +2526,7 @@ void FileHubModule::HandleShareCreate(ZmReqLoop* loop, const ZMJSON& body, uint6
         return;
     }
     {
-        std::lock_guard<std::mutex> lk(m_dbMutex);
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
         Stmt st(m_db,
             "INSERT INTO shares(token_hash,token,owner_id,target_type,target_id,create_time) "
             "VALUES(?,?,?,?,?,?)");
@@ -2680,7 +2564,7 @@ void FileHubModule::HandleShareAccess(ZmReqLoop* loop, ZmHttpdTask* task, const 
     uint64_t targetId = 0;
     int space = -1;
     {
-        std::lock_guard<std::mutex> lk(m_dbMutex);
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
         Stmt st(m_db,
             "SELECT id,owner_id,target_type,target_id FROM shares WHERE token_hash=?");
         if (!st.p) { ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误"); return; }
@@ -2760,7 +2644,7 @@ void FileHubModule::HandleShareAccess(ZmReqLoop* loop, ZmHttpdTask* task, const 
     {
         uint64_t dirId = 0;
         {
-            std::lock_guard<std::mutex> lk(m_dbMutex);
+            std::lock_guard<std::mutex> lk(m_db.Mutex());
             Stmt st(m_db, "SELECT dir_id,name FROM files WHERE id=?");
             if (!st.p) { ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误"); return; }
             BindInt(st.p, 1, (int64_t)targetId);
@@ -2783,7 +2667,7 @@ void FileHubModule::HandleShareAccess(ZmReqLoop* loop, ZmHttpdTask* task, const 
     }
     else
     {
-        std::lock_guard<std::mutex> lk(m_dbMutex);
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
         Stmt st(m_db, "SELECT name FROM dirs WHERE id=?");
         if (!st.p) { ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误"); return; }
         BindInt(st.p, 1, (int64_t)targetId);
@@ -2803,7 +2687,7 @@ void FileHubModule::HandleShareAccess(ZmReqLoop* loop, ZmHttpdTask* task, const 
 
     // 记 downloads(分享下载日志)
     {
-        std::lock_guard<std::mutex> lk(m_dbMutex);
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
         Stmt st(m_db,
             "INSERT INTO share_download_logs(share_id,target_type,target_id,downloader_id,"
             "downloader_account,ip,create_time) VALUES(?,?,?,?,?,?,?)");
@@ -2864,7 +2748,7 @@ void FileHubModule::HandleShareCancel(ZmReqLoop* loop, const ZMJSON& body, uint6
     std::string targetType;
     uint64_t targetId = 0;
     {
-        std::lock_guard<std::mutex> lk(m_dbMutex);
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
         Stmt st(m_db, "SELECT owner_id,target_type,target_id FROM shares WHERE id=?");
         if (!st.p) { ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误"); return; }
         BindInt(st.p, 1, (int64_t)shareId);
@@ -2896,7 +2780,7 @@ void FileHubModule::HandleShareList(ZmReqLoop* loop, uint64_t opUid)
 {
     ZMJSON rsp;
     rsp["result"]["shares"] = ZMJSON::array();   // 空分享也返回空数组,防前端 null 访问
-    std::lock_guard<std::mutex> lk(m_dbMutex);
+    std::lock_guard<std::mutex> lk(m_db.Mutex());
     Stmt st(m_db,
         "SELECT id,target_type,target_id,create_time,token FROM shares WHERE owner_id=? "
         "ORDER BY create_time DESC");
@@ -2959,7 +2843,7 @@ void FileHubModule::HandleShareList(ZmReqLoop* loop, uint64_t opUid)
 
 void FileHubModule::RemoveSharesOf(const std::string& targetType, uint64_t targetId)
 {
-    std::lock_guard<std::mutex> lk(m_dbMutex);
+    std::lock_guard<std::mutex> lk(m_db.Mutex());
     Stmt st(m_db, "DELETE FROM shares WHERE target_type=? AND target_id=?");
     if (!st.p)
         return;
@@ -3053,7 +2937,7 @@ void FileHubModule::VerifySpaceTree(int space, const std::string& spaceAbs)
         FindClose(hFind);
 
         // 目录:物理有而 DB 无 → 补建(递归入栈继续);DB 有而物理无 → 删行
-        std::lock_guard<std::mutex> lk(m_dbMutex);
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
         std::set<std::string> dbDirNames, dbFileNames;
         {
             Stmt st(m_db, "SELECT name FROM dirs WHERE space=? AND parent_id=? AND name != ''");

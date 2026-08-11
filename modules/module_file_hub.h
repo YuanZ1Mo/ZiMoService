@@ -12,10 +12,10 @@
 #include <thread>
 #include <vector>
 
+#include "zm_util_sqlite.h"
+
 class UserModule;
 class HttpServerManager;
-struct sqlite3;
-struct sqlite3_stmt;
 class ZipWriter;
 
 /**
@@ -35,13 +35,14 @@ class ZipWriter;
 class FileHubModule
 {
 public:
-    explicit FileHubModule(UserModule* userModule);
+    /** @brief 注入 UserModule(鉴权/角色/模块权限/业务日志)+ 已初始化 filehub.db 连接(不拥有) */
+    FileHubModule(UserModule* userModule, zm::ZmSqliteConn& fileHubDb);
     ~FileHubModule();
 
-    /** @brief 初始化 filehub.db(建目录/开库/建表/公共根种子);失败记日志并拒绝启用 */
+    /** @brief 启动:检查库可用 + 建文件系统公共根目录 + 起一致性校验线程 */
     bool Open();
 
-    /** @brief 停止钩子:置 gone + join 校验线程 + 关库 */
+    /** @brief 停止钩子:置 gone + join 校验线程(库连接由 DbInitializer 统一关闭) */
     void Shutdown();
 
     /**
@@ -68,19 +69,6 @@ public:
                            const std::string& rangeStr, int64_t fileSize);
 
 private:
-    // ========================================================================
-    // SQLite 辅助
-    // ========================================================================
-
-    struct Stmt
-    {
-        sqlite3_stmt* p = nullptr;
-        Stmt(sqlite3* db, const char* sql);
-        ~Stmt();
-    };
-
-    static bool Exec(sqlite3* db, const char* sql);
-
     // ========================================================================
     // 空间与路径(路径全部由 DB id 组装,不接受用户原始路径,防穿越天然消失)
     // ========================================================================
@@ -213,8 +201,7 @@ private:
     // 数据
     // ========================================================================
 
-    sqlite3* m_db = nullptr;          ///< filehub.db(唯一连接 + mutex 串行化)
-    std::mutex m_dbMutex;
+    zm::ZmSqliteConn& m_db;           ///< filehub.db 连接引用(归 DbInitializer 所有,锁经 m_db.Mutex())
     std::atomic<bool> m_openOk {false};
     std::atomic<bool> m_gone {false};
     std::thread m_verifyThread;       ///< 一致性校验线程(Open 启动,Shutdown join)

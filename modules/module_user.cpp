@@ -3,14 +3,12 @@
 #include "http_server_manager.h"
 
 #include "zm_logger.h"
-#include "zm_util_sys.h"
 
 #include <sqlite3.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 
 #include <windows.h>
-#include <direct.h>
 
 #include <chrono>
 #include <cstring>
@@ -22,136 +20,14 @@ namespace
 // 内部小工具
 // ============================================================================
 
-void BindText(sqlite3_stmt* p, int idx, const std::string& v)
-{
-    sqlite3_bind_text(p, idx, v.data(), (int)v.size(), SQLITE_TRANSIENT);
-}
-
-void BindInt(sqlite3_stmt* p, int idx, int64_t v)
-{
-    sqlite3_bind_int64(p, idx, v);
-}
+// 公共库 sqlite 辅助(预处理语句/绑定):别名与 using 保持全部调用点不变
+using Stmt = zm::ZmSqliteStmt;
+using zm::BindText;
+using zm::BindInt;
 
 /** 计时均衡假盐:账号不存在时也跑一次 PBKDF2,消除存在性时间侧信道 */
 const unsigned char kDummySalt[16] = {0x5F, 0x2C, 0x9E, 0x17, 0xA3, 0x41, 0x08, 0x6D,
                                       0xE1, 0x7B, 0xC4, 0x59, 0x30, 0x95, 0x42, 0xF8};
-
-// ============================================================================
-// 建表语句(代码层初始化,Open 时执行)
-// ============================================================================
-
-const char* kSqlCreateUsers =
-    "CREATE TABLE IF NOT EXISTS users ("
-    "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-    "  account TEXT NOT NULL UNIQUE,"
-    "  nickname TEXT NOT NULL,"
-    "  pass_salt BLOB NOT NULL,"
-    "  pass_hash BLOB NOT NULL,"
-    "  rescue_salt BLOB NOT NULL,"
-    "  rescue_hash BLOB NOT NULL,"
-    "  register_ip TEXT NOT NULL,"
-    "  create_time INTEGER NOT NULL,"
-    "  last_login_ip TEXT NOT NULL DEFAULT '',"
-    "  last_login_time INTEGER NOT NULL DEFAULT 0,"
-    "  role TEXT NOT NULL DEFAULT 'user',"
-    "  disabled INTEGER NOT NULL DEFAULT 0,"
-    "  deleted INTEGER NOT NULL DEFAULT 0,"
-    "  temp_pass_salt BLOB,"
-    "  temp_pass_hash BLOB,"
-    "  force_change INTEGER NOT NULL DEFAULT 0)";
-
-// 业务日志表按业务命名:user_manage_logs(用户管理操作)/ filehub_logs(文件中心操作),
-// 同库多表,后续业务日志同模式追加
-const char* kSqlCreateUserManageLogs =
-    "CREATE TABLE IF NOT EXISTS user_manage_logs ("
-    "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-    "  operator_id INTEGER NOT NULL,"
-    "  operator_account TEXT NOT NULL,"
-    "  action TEXT NOT NULL,"
-    "  target_id INTEGER NOT NULL,"
-    "  target_account TEXT NOT NULL,"
-    "  detail TEXT NOT NULL DEFAULT '',"
-    "  create_time INTEGER NOT NULL)";
-
-const char* kSqlCreateUserManageLogsIdx =
-    "CREATE INDEX IF NOT EXISTS idx_user_manage_logs_create ON user_manage_logs(create_time)";
-
-const char* kSqlCreateFileHubLogs =
-    "CREATE TABLE IF NOT EXISTS filehub_logs ("
-    "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-    "  operator_id INTEGER NOT NULL,"
-    "  operator_account TEXT NOT NULL,"
-    "  action TEXT NOT NULL,"
-    "  target_type TEXT NOT NULL,"
-    "  target_id INTEGER NOT NULL,"
-    "  detail TEXT NOT NULL DEFAULT '',"
-    "  create_time INTEGER NOT NULL)";
-
-const char* kSqlCreateFileHubLogsIdx =
-    "CREATE INDEX IF NOT EXISTS idx_filehub_logs_create ON filehub_logs(create_time)";
-
-const char* kSqlCreateModules =
-    "CREATE TABLE IF NOT EXISTS modules ("
-    "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-    "  code TEXT NOT NULL UNIQUE,"
-    "  name TEXT NOT NULL,"
-    "  url TEXT NOT NULL,"
-    "  sort INTEGER NOT NULL DEFAULT 0,"
-    "  enabled INTEGER NOT NULL DEFAULT 1)";
-
-const char* kSqlCreateUserModules =
-    "CREATE TABLE IF NOT EXISTS user_modules ("
-    "  user_id INTEGER NOT NULL,"
-    "  module_code TEXT NOT NULL,"
-    "  PRIMARY KEY(user_id, module_code))";
-
-/** 模块种子数据(幂等):主页/文件中心/服务器音频传输/用户管理 */
-const char* kSqlSeedModules =
-    "INSERT OR IGNORE INTO modules(code,name,url,sort) VALUES"
-    " ('home','主页','/portal',0),"
-    " ('filehub','文件中心','/portal/filehub',1),"
-    " ('audio','服务器音频传输','/portal/audio',2),"
-    " ('users','用户管理','/portal/users',3)";
-
-const char* kSqlCreateSessions =
-    "CREATE TABLE IF NOT EXISTS sessions ("
-    "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-    "  token_hash TEXT NOT NULL UNIQUE,"
-    "  user_id INTEGER NOT NULL,"
-    "  create_ip TEXT NOT NULL,"
-    "  last_active_ip TEXT NOT NULL,"
-    "  create_time INTEGER NOT NULL,"
-    "  last_active INTEGER NOT NULL,"
-    "  expire_time INTEGER NOT NULL,"
-    "  absolute_expire INTEGER NOT NULL)";
-
-const char* kSqlCreateSessionsUserIdx =
-    "CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)";
-
-const char* kSqlCreateSessionsExpireIdx =
-    "CREATE INDEX IF NOT EXISTS idx_sessions_expire ON sessions(expire_time)";
-
-const char* kSqlCreateLoginLocks =
-    "CREATE TABLE IF NOT EXISTS login_locks ("
-    "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-    "  account TEXT NOT NULL,"
-    "  ip TEXT NOT NULL,"
-    "  fail_count INTEGER NOT NULL DEFAULT 0,"
-    "  locked_until INTEGER NOT NULL DEFAULT 0,"
-    "  last_fail_at INTEGER NOT NULL DEFAULT 0,"
-    "  UNIQUE(account, ip))";
-
-const char* kSqlCreateRegisterRateLimits =
-    "CREATE TABLE IF NOT EXISTS register_rate_limits ("
-    "  ip TEXT PRIMARY KEY,"
-    "  window_start INTEGER NOT NULL,"
-    "  count INTEGER NOT NULL DEFAULT 0)";
-
-const char* kSqlCreateResetRateLimits =
-    "CREATE TABLE IF NOT EXISTS reset_rate_limits ("
-    "  ip TEXT PRIMARY KEY,"
-    "  window_start INTEGER NOT NULL,"
-    "  count INTEGER NOT NULL DEFAULT 0)";
 
 } // namespace
 
@@ -159,7 +35,9 @@ const char* kSqlCreateResetRateLimits =
 // 构造 / 析构 / 初始化
 // ============================================================================
 
-UserModule::UserModule()
+UserModule::UserModule(zm::ZmSqliteConn& userDb, zm::ZmSqliteConn& rateDb,
+                       zm::ZmSqliteConn& auditDb)
+    : m_userDb(userDb), m_rateDb(rateDb), m_auditDb(auditDb)
 {
 }
 
@@ -173,147 +51,15 @@ bool UserModule::Open()
     if (m_openOk.load())
         return true;
 
-    char exePath[MAX_PATH];
-    ZmSystem::GetModuleDir(exePath, MAX_PATH);
-    // 数据目录在 exe 同级 db/(与静态 www 分离:部署同步 www 不再影响数据)
-    const std::string base = std::string(exePath) + "\\db";
-
-    // 目录不存在则创建(EEXIST 忽略)
-    _mkdir((base + "\\user").c_str());
-    _mkdir((base + "\\rate").c_str());
-    _mkdir((base + "\\audit").c_str());
-
-    const std::string userDbPath = base + "\\user\\user.db";
-    const std::string rateDbPath = base + "\\rate\\rate.db";
-    const std::string auditDbPath = base + "\\audit\\audit.db";
-
-    auto openDb = [](const std::string& path, sqlite3** out) -> bool {
-        if (sqlite3_open_v2(path.c_str(), out,
-                SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nullptr) != SQLITE_OK)
-        {
-            DEFAULT_LOG_ERROR("[User] 打开数据库失败: {} err={}", path,
-                *out ? sqlite3_errmsg(*out) : "?");
-            if (*out)
-            {
-                sqlite3_close(*out);
-                *out = nullptr;
-            }
-            return false;
-        }
-        return true;
-    };
-
-    if (!openDb(userDbPath, &m_userDb) || !openDb(rateDbPath, &m_rateDb) ||
-        !openDb(auditDbPath, &m_auditDb))
+    // 库由 DbInitializer 统一打开并建表/补列;此处仅检查可用性
+    if (!m_userDb.IsOpen() || !m_rateDb.IsOpen() || !m_auditDb.IsOpen())
+    {
+        DEFAULT_LOG_ERROR("[User] 数据库不可用,用户系统不可用");
         return false;
-
-    // 建表(用户库)
-    if (!Exec(m_userDb, kSqlCreateUsers) ||
-        !Exec(m_userDb, kSqlCreateSessions) ||
-        !Exec(m_userDb, kSqlCreateSessionsUserIdx) ||
-        !Exec(m_userDb, kSqlCreateSessionsExpireIdx) ||
-        !Exec(m_userDb, kSqlCreateLoginLocks) ||
-        !Exec(m_userDb, kSqlCreateModules) ||
-        !Exec(m_userDb, kSqlCreateUserModules) ||
-        !Exec(m_userDb, kSqlSeedModules))
-    {
-        DEFAULT_LOG_ERROR("[User] 用户库建表失败,用户系统不可用");
-        Shutdown();
-        return false;
-    }
-
-    // ===== users 表迁移(三组 PRAGMA+ALTER):新增 users 列统一在此追加,勿在别处散落 =====
-    // 迁移:旧库 users 表补"最后登录 IP/时间"列(账号维度,与当前会话解耦)
-    {
-        bool hasLastLoginIp = false;
-        Stmt st(m_userDb, "PRAGMA table_info(users)");
-        if (st.p)
-        {
-            while (sqlite3_step(st.p) == SQLITE_ROW)
-            {
-                const char* col = reinterpret_cast<const char*>(sqlite3_column_text(st.p, 1));
-                if (col && std::strcmp(col, "last_login_ip") == 0)
-                    hasLastLoginIp = true;
-            }
-        }
-        if (!hasLastLoginIp)
-        {
-            Exec(m_userDb, "ALTER TABLE users ADD COLUMN last_login_ip TEXT NOT NULL DEFAULT ''");
-            Exec(m_userDb, "ALTER TABLE users ADD COLUMN last_login_time INTEGER NOT NULL DEFAULT 0");
-            DEFAULT_LOG_INFO("[User] 用户库迁移:users 补充最后登录 IP/时间列");
-        }
-    }
-
-    // 迁移:旧库 users 表补 role 列(管理员/用户/游客)
-    {
-        bool hasRole = false;
-        Stmt st(m_userDb, "PRAGMA table_info(users)");
-        if (st.p)
-        {
-            while (sqlite3_step(st.p) == SQLITE_ROW)
-            {
-                const char* col = reinterpret_cast<const char*>(sqlite3_column_text(st.p, 1));
-                if (col && std::strcmp(col, "role") == 0)
-                    hasRole = true;
-            }
-        }
-        if (!hasRole)
-        {
-            Exec(m_userDb, "ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'");
-            DEFAULT_LOG_INFO("[User] 用户库迁移:users 补充 role 列");
-        }
-    }
-
-    // 建表(限流库)
-    if (!Exec(m_rateDb, kSqlCreateRegisterRateLimits) ||
-        !Exec(m_rateDb, kSqlCreateResetRateLimits))
-    {
-        DEFAULT_LOG_ERROR("[User] 限流库建表失败,用户系统不可用");
-        Shutdown();
-        return false;
-    }
-
-    // 建表(业务日志库:用户管理日志 + 文件中心日志)
-    if (!Exec(m_auditDb, kSqlCreateUserManageLogs) ||
-        !Exec(m_auditDb, kSqlCreateUserManageLogsIdx) ||
-        !Exec(m_auditDb, kSqlCreateFileHubLogs) ||
-        !Exec(m_auditDb, kSqlCreateFileHubLogsIdx))
-    {
-        DEFAULT_LOG_ERROR("[User] 审计库建表失败,用户系统不可用");
-        Shutdown();
-        return false;
-    }
-
-    // 迁移:users 表补用户管理相关列(disabled/deleted/临时密码/强制改密)
-    {
-        bool hasDisabled = false;
-        {
-            Stmt st(m_userDb, "PRAGMA table_info(users)");
-            if (st.p)
-            {
-                while (sqlite3_step(st.p) == SQLITE_ROW)
-                {
-                    const char* col = reinterpret_cast<const char*>(sqlite3_column_text(st.p, 1));
-                    if (col && std::strcmp(col, "disabled") == 0)
-                        hasDisabled = true;
-                }
-            }
-        }
-        if (!hasDisabled)
-        {
-            Exec(m_userDb, "ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0");
-            Exec(m_userDb, "ALTER TABLE users ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0");
-            Exec(m_userDb, "ALTER TABLE users ADD COLUMN temp_pass_salt BLOB");
-            Exec(m_userDb, "ALTER TABLE users ADD COLUMN temp_pass_hash BLOB");
-            Exec(m_userDb, "ALTER TABLE users ADD COLUMN force_change INTEGER NOT NULL DEFAULT 0");
-            DEFAULT_LOG_INFO("[User] 用户库迁移:users 补充用户管理列");
-        }
-        // guest 角色已去除:旧数据迁移为 user
-        Exec(m_userDb, "UPDATE users SET role='user' WHERE role='guest'");
     }
 
     m_openOk.store(true);
-    DEFAULT_LOG_INFO("[User] 用户系统初始化完成: {} / {}", userDbPath, rateDbPath);
+    DEFAULT_LOG_INFO("[User] 用户系统初始化完成");
 
     // 每日清理线程(启动即执行一次 + 每日 03:00 窗口)
     m_cleanThread = std::thread(&UserModule::CleanLoop, this);
@@ -328,21 +74,7 @@ void UserModule::Shutdown()
         m_cleanThread.join();
         m_cleanThread = std::thread();
     }
-    if (m_userDb)
-    {
-        sqlite3_close(m_userDb);
-        m_userDb = nullptr;
-    }
-    if (m_rateDb)
-    {
-        sqlite3_close(m_rateDb);
-        m_rateDb = nullptr;
-    }
-    if (m_auditDb)
-    {
-        sqlite3_close(m_auditDb);
-        m_auditDb = nullptr;
-    }
+    // 库连接由 DbInitializer 统一关闭
 }
 
 // ============================================================================
@@ -470,35 +202,6 @@ uint64_t UserModule::AuthAndTouch(ZmHttpdTask* task, UserInfo* out)
         out->nickname = sr.nickname;
     }
     return sr.userId;
-}
-
-// ============================================================================
-// SQLite 辅助
-// ============================================================================
-
-UserModule::Stmt::Stmt(sqlite3* db, const char* sql)
-{
-    if (db && sqlite3_prepare_v2(db, sql, -1, &p, nullptr) != SQLITE_OK)
-        p = nullptr;
-}
-
-UserModule::Stmt::~Stmt()
-{
-    if (p)
-        sqlite3_finalize(p);
-}
-
-bool UserModule::Exec(sqlite3* db, const char* sql)
-{
-    char* err = nullptr;
-    int rc = sqlite3_exec(db, sql, nullptr, nullptr, &err);
-    if (rc != SQLITE_OK)
-    {
-        DEFAULT_LOG_ERROR("[User] exec failed: {} err={}", sql, err ? err : "?");
-        sqlite3_free(err);
-        return false;
-    }
-    return true;
 }
 
 // ============================================================================
@@ -840,7 +543,7 @@ bool UserModule::IsLocked(const std::string& account, const std::string& ip, tim
     if (account.empty())
         return false;
 
-    std::lock_guard<std::mutex> lk(m_userDbMutex);
+    std::lock_guard<std::mutex> lk(m_userDb.Mutex());
     Stmt st(m_userDb, "SELECT locked_until FROM login_locks WHERE account=? AND ip=?");
     if (!st.p)
         return false;
@@ -856,7 +559,7 @@ void UserModule::RecordFail(const std::string& account, const std::string& ip, t
     if (account.empty())
         return;
 
-    std::lock_guard<std::mutex> lk(m_userDbMutex);
+    std::lock_guard<std::mutex> lk(m_userDb.Mutex());
 
     // 读取当前计数(锁定期内请求已被 IsLocked 挡掉,不会走到这里;锁期满后计数继续累计)
     int64_t failCount = 0;
@@ -896,7 +599,7 @@ void UserModule::ClearLock(const std::string& account, const std::string& ip)
     if (account.empty())
         return;
 
-    std::lock_guard<std::mutex> lk(m_userDbMutex);
+    std::lock_guard<std::mutex> lk(m_userDb.Mutex());
     Stmt st(m_userDb, "DELETE FROM login_locks WHERE account=? AND ip=?");
     if (!st.p)
         return;
@@ -914,7 +617,7 @@ bool UserModule::CheckRate(const char* table, const std::string& ip, time_t now)
     if (ip.empty())
         return false;   // 拿不到 IP 时保守拒绝
 
-    std::lock_guard<std::mutex> lk(m_rateDbMutex);
+    std::lock_guard<std::mutex> lk(m_rateDb.Mutex());
 
     int64_t windowStart = 0, count = 0;
     bool haveRow = false;
@@ -972,7 +675,7 @@ bool UserModule::CreateSession(const std::string& token, uint64_t userId, const 
     if (!Sha256Hex(token, tokenHash))
         return false;
 
-    std::lock_guard<std::mutex> lk(m_userDbMutex);
+    std::lock_guard<std::mutex> lk(m_userDb.Mutex());
 
     // 活跃会话数(双上限有效)
     int active = 0;
@@ -1026,7 +729,7 @@ bool UserModule::FindSession(const std::string& token, time_t now, SessionRow& o
     if (!Sha256Hex(token, tokenHash))
         return false;
 
-    std::lock_guard<std::mutex> lk(m_userDbMutex);
+    std::lock_guard<std::mutex> lk(m_userDb.Mutex());
     Stmt st(m_userDb,
         "SELECT s.id, s.user_id, u.account, u.nickname, s.create_ip, s.create_time, s.last_active, "
         "u.last_login_ip, u.last_login_time "
@@ -1061,7 +764,7 @@ void UserModule::TouchSession(uint64_t sessionId, time_t now, time_t lastActive)
     if (now - lastActive < kUserTouchThrottle)
         return;   // 续期节流:距上次落库不足 60s 不写
 
-    std::lock_guard<std::mutex> lk(m_userDbMutex);
+    std::lock_guard<std::mutex> lk(m_userDb.Mutex());
     Stmt st(m_userDb, "UPDATE sessions SET last_active=?, expire_time=? WHERE id=?");
     if (!st.p)
         return;
@@ -1077,7 +780,7 @@ void UserModule::DeleteSession(const std::string& token)
     if (!Sha256Hex(token, tokenHash))
         return;
 
-    std::lock_guard<std::mutex> lk(m_userDbMutex);
+    std::lock_guard<std::mutex> lk(m_userDb.Mutex());
     Stmt st(m_userDb, "DELETE FROM sessions WHERE token_hash=?");
     if (!st.p)
         return;
@@ -1087,7 +790,7 @@ void UserModule::DeleteSession(const std::string& token)
 
 void UserModule::RevokeAllSessions(uint64_t userId)
 {
-    std::lock_guard<std::mutex> lk(m_userDbMutex);
+    std::lock_guard<std::mutex> lk(m_userDb.Mutex());
     Stmt st(m_userDb, "DELETE FROM sessions WHERE user_id=?");
     if (!st.p)
         return;
@@ -1202,7 +905,7 @@ void UserModule::HandleLogin(ZmReqLoop* loop, const ZMJSON& body, ZmHttpdTask* t
     bool userExists = false;
     bool disabledFlag = false, deletedFlag = false, forceChange = false;
     {
-        std::lock_guard<std::mutex> lk(m_userDbMutex);
+        std::lock_guard<std::mutex> lk(m_userDb.Mutex());
         Stmt st(m_userDb,
             "SELECT id, pass_salt, pass_hash, nickname, disabled, deleted, force_change, "
             "temp_pass_salt, temp_pass_hash FROM users WHERE account=?");
@@ -1261,7 +964,7 @@ void UserModule::HandleLogin(ZmReqLoop* loop, const ZMJSON& body, ZmHttpdTask* t
 
     // ④ 更新账号最后登录 IP/时间(账号维度,任意设备可见)
     {
-        std::lock_guard<std::mutex> lk(m_userDbMutex);
+        std::lock_guard<std::mutex> lk(m_userDb.Mutex());
         Stmt st(m_userDb, "UPDATE users SET last_login_ip=?, last_login_time=? WHERE id=?");
         if (st.p)
         {
@@ -1329,7 +1032,7 @@ void UserModule::HandleCompleteChange(ZmReqLoop* loop, const ZMJSON& body, ZmHtt
     // 必须处于强制改密状态
     bool forceChange = false;
     {
-        std::lock_guard<std::mutex> lk(m_userDbMutex);
+        std::lock_guard<std::mutex> lk(m_userDb.Mutex());
         Stmt st(m_userDb, "SELECT force_change FROM users WHERE id=?");
         if (st.p)
         {
@@ -1354,7 +1057,7 @@ void UserModule::HandleCompleteChange(ZmReqLoop* loop, const ZMJSON& body, ZmHtt
         return;
     }
     {
-        std::lock_guard<std::mutex> lk(m_userDbMutex);
+        std::lock_guard<std::mutex> lk(m_userDb.Mutex());
         Stmt st(m_userDb,
             "UPDATE users SET pass_salt=?, pass_hash=?, rescue_salt=?, rescue_hash=?, "
             "temp_pass_salt=NULL, temp_pass_hash=NULL, force_change=0 WHERE id=?");
@@ -1438,7 +1141,7 @@ void UserModule::HandleRegister(ZmReqLoop* loop, const ZMJSON& body, ZmHttpdTask
 
     // ③ 账号唯一性(先查;唯一索引兜底并发)
     {
-        std::lock_guard<std::mutex> lk(m_userDbMutex);
+        std::lock_guard<std::mutex> lk(m_userDb.Mutex());
         Stmt st(m_userDb, "SELECT 1 FROM users WHERE account=?");
         if (st.p)
         {
@@ -1463,7 +1166,7 @@ void UserModule::HandleRegister(ZmReqLoop* loop, const ZMJSON& body, ZmHttpdTask
 
     uint64_t userId = 0;
     {
-        std::lock_guard<std::mutex> lk(m_userDbMutex);
+        std::lock_guard<std::mutex> lk(m_userDb.Mutex());
         // 首个注册用户自动成为开发者(系统所有者,最高等级)
         std::string role = "user";
         {
@@ -1493,13 +1196,13 @@ void UserModule::HandleRegister(ZmReqLoop* loop, const ZMJSON& body, ZmHttpdTask
         BindText(st.p, 11, role);
         if (sqlite3_step(st.p) != SQLITE_DONE)
         {
-            if (sqlite3_extended_errcode(m_userDb) == SQLITE_CONSTRAINT_UNIQUE)
+            if (m_userDb.ExtendedErrorCode() == SQLITE_CONSTRAINT_UNIQUE)
                 ZmReqLoopRest::ResponseError(loop, 400, "账号已被注册");
             else
                 ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误");
             return;
         }
-        userId = (uint64_t)sqlite3_last_insert_rowid(m_userDb);
+        userId = (uint64_t)m_userDb.LastInsertRowId();
     }
 
     // ⑤ 自动登录:签发全新会话
@@ -1573,7 +1276,7 @@ void UserModule::HandleReset(ZmReqLoop* loop, const ZMJSON& body, ZmHttpdTask* t
     std::string salt, hash;
     bool userExists = false;
     {
-        std::lock_guard<std::mutex> lk(m_userDbMutex);
+        std::lock_guard<std::mutex> lk(m_userDb.Mutex());
         Stmt st(m_userDb, "SELECT id, rescue_salt, rescue_hash FROM users WHERE account=?");
         if (st.p)
         {
@@ -1616,7 +1319,7 @@ void UserModule::HandleReset(ZmReqLoop* loop, const ZMJSON& body, ZmHttpdTask* t
         return;
     }
     {
-        std::lock_guard<std::mutex> lk(m_userDbMutex);
+        std::lock_guard<std::mutex> lk(m_userDb.Mutex());
         Stmt st(m_userDb,
             "UPDATE users SET pass_salt=?, pass_hash=?, last_login_ip=?, last_login_time=? WHERE id=?");
         if (!st.p)
@@ -1671,7 +1374,7 @@ void UserModule::HandleLogout(ZmReqLoop* loop, ZmHttpdTask* task)
 
     int64_t deleted = 0;
     {
-        std::lock_guard<std::mutex> lk(m_userDbMutex);
+        std::lock_guard<std::mutex> lk(m_userDb.Mutex());
         Stmt st(m_userDb, "DELETE FROM sessions WHERE token_hash=?");
         if (!st.p)
         {
@@ -1680,7 +1383,7 @@ void UserModule::HandleLogout(ZmReqLoop* loop, ZmHttpdTask* task)
         }
         BindText(st.p, 1, tokenHash);
         sqlite3_step(st.p);
-        deleted = sqlite3_changes(m_userDb);
+        deleted = m_userDb.Changes();
     }
 
     if (deleted == 0)
@@ -1714,7 +1417,7 @@ void UserModule::HandleMe(ZmReqLoop* loop, ZmHttpdTask* task)
     FillUserResult(rsp["result"]["user"], sr);
     // 强制改密状态(改密页据此判断是否拦截)
     {
-        std::lock_guard<std::mutex> lk(m_userDbMutex);
+        std::lock_guard<std::mutex> lk(m_userDb.Mutex());
         Stmt st(m_userDb, "SELECT force_change FROM users WHERE id=?");
         if (st.p)
         {
@@ -1743,7 +1446,7 @@ void UserModule::HandleHeartbeat(ZmReqLoop* loop, ZmHttpdTask* task)
 bool UserModule::GetUserRole(uint64_t userId, std::string& role)
 {
     role = "user";
-    std::lock_guard<std::mutex> lk(m_userDbMutex);
+    std::lock_guard<std::mutex> lk(m_userDb.Mutex());
     Stmt st(m_userDb, "SELECT role FROM users WHERE id=?");
     if (!st.p)
         return false;
@@ -1759,7 +1462,7 @@ bool UserModule::GetUserRole(uint64_t userId, std::string& role)
 bool UserModule::GetUserAccount(uint64_t userId, std::string& account)
 {
     account.clear();
-    std::lock_guard<std::mutex> lk(m_userDbMutex);
+    std::lock_guard<std::mutex> lk(m_userDb.Mutex());
     Stmt st(m_userDb, "SELECT account FROM users WHERE id=?");
     if (!st.p)
         return false;
@@ -1784,7 +1487,7 @@ void UserModule::WriteAuditLog(uint64_t operatorId, const std::string& operatorA
                                const std::string& action, uint64_t targetId,
                                const std::string& targetAccount, const std::string& detail)
 {
-    std::lock_guard<std::mutex> lk(m_auditDbMutex);
+    std::lock_guard<std::mutex> lk(m_auditDb.Mutex());
     Stmt st(m_auditDb,
         "INSERT INTO user_manage_logs(operator_id,operator_account,action,target_id,target_account,"
         "detail,create_time) VALUES(?,?,?,?,?,?,?)");
@@ -1805,7 +1508,7 @@ bool UserModule::WriteBusinessLog(const char* table, uint64_t opId,
                                   const std::string& targetType, uint64_t targetId,
                                   const std::string& detail)
 {
-    std::lock_guard<std::mutex> lk(m_auditDbMutex);
+    std::lock_guard<std::mutex> lk(m_auditDb.Mutex());
     Stmt st(m_auditDb,
         ("INSERT INTO " + std::string(table) +
          "(operator_id,operator_account,action,target_type,target_id,detail,create_time) "
@@ -1827,7 +1530,7 @@ bool UserModule::GetUserModules(uint64_t userId, const std::string& role,
                                 std::vector<ZMJSON>& modules)
 {
     modules.clear();
-    std::lock_guard<std::mutex> lk(m_userDbMutex);
+    std::lock_guard<std::mutex> lk(m_userDb.Mutex());
     Stmt st(m_userDb,
         "SELECT DISTINCT m.code, m.name, m.url FROM modules m "
         "LEFT JOIN user_modules um ON um.module_code=m.code AND um.user_id=? "
@@ -1872,7 +1575,7 @@ bool UserModule::ListUsers(const std::string& keyword, const std::string& role, 
     else if (status == 2)
         cond += " AND disabled=1";
 
-    std::lock_guard<std::mutex> lk(m_userDbMutex);
+    std::lock_guard<std::mutex> lk(m_userDb.Mutex());
 
     total = 0;
     {
@@ -1918,7 +1621,7 @@ bool UserModule::ListUsers(const std::string& keyword, const std::string& role, 
 
 bool UserModule::GetUserRow(uint64_t userId, UserRow& out)
 {
-    std::lock_guard<std::mutex> lk(m_userDbMutex);
+    std::lock_guard<std::mutex> lk(m_userDb.Mutex());
     Stmt st(m_userDb,
         "SELECT id, account, nickname, role, disabled, deleted, create_time, last_login_time "
         "FROM users WHERE id=?");
@@ -1945,14 +1648,14 @@ bool UserModule::GetUserRow(uint64_t userId, UserRow& out)
 bool UserModule::SetUserDisabled(uint64_t userId, bool disabled)
 {
     {
-        std::lock_guard<std::mutex> lk(m_userDbMutex);
+        std::lock_guard<std::mutex> lk(m_userDb.Mutex());
         Stmt st(m_userDb, "UPDATE users SET disabled=? WHERE id=?");
         if (!st.p)
             return false;
         BindInt(st.p, 1, disabled ? 1 : 0);
         BindInt(st.p, 2, (int64_t)userId);
         sqlite3_step(st.p);
-        if (sqlite3_changes(m_userDb) == 0)
+        if (m_userDb.Changes() == 0)
             return false;
     }
     if (disabled)
@@ -1963,14 +1666,14 @@ bool UserModule::SetUserDisabled(uint64_t userId, bool disabled)
 bool UserModule::SetUserDeleted(uint64_t userId, bool deleted)
 {
     {
-        std::lock_guard<std::mutex> lk(m_userDbMutex);
+        std::lock_guard<std::mutex> lk(m_userDb.Mutex());
         Stmt st(m_userDb, "UPDATE users SET deleted=? WHERE id=?");
         if (!st.p)
             return false;
         BindInt(st.p, 1, deleted ? 1 : 0);
         BindInt(st.p, 2, (int64_t)userId);
         sqlite3_step(st.p);
-        if (sqlite3_changes(m_userDb) == 0)
+        if (m_userDb.Changes() == 0)
             return false;
     }
     if (deleted)
@@ -1996,7 +1699,7 @@ bool UserModule::ResetUserPassword(uint64_t userId, std::string& tempPassword)
         return false;
 
     {
-        std::lock_guard<std::mutex> lk(m_userDbMutex);
+        std::lock_guard<std::mutex> lk(m_userDb.Mutex());
         Stmt st(m_userDb,
             "UPDATE users SET temp_pass_salt=?, temp_pass_hash=?, force_change=1 WHERE id=?");
         if (!st.p)
@@ -2005,7 +1708,7 @@ bool UserModule::ResetUserPassword(uint64_t userId, std::string& tempPassword)
         BindText(st.p, 2, hash);
         BindInt(st.p, 3, (int64_t)userId);
         sqlite3_step(st.p);
-        if (sqlite3_changes(m_userDb) == 0)
+        if (m_userDb.Changes() == 0)
             return false;
     }
     RevokeAllSessions(userId);   // 锁外调用(内部自持锁)
@@ -2028,19 +1731,19 @@ bool UserModule::SetUserNickname(uint64_t userId, const std::string& nickname,
         return false;
     }
 
-    std::lock_guard<std::mutex> lk(m_userDbMutex);
+    std::lock_guard<std::mutex> lk(m_userDb.Mutex());
     Stmt st(m_userDb, "UPDATE users SET nickname=? WHERE id=?");
     if (!st.p)
         return false;
     BindText(st.p, 1, nn);
     BindInt(st.p, 2, (int64_t)userId);
     sqlite3_step(st.p);
-    return sqlite3_changes(m_userDb) > 0;
+    return m_userDb.Changes() > 0;
 }
 
 bool UserModule::SetUserModules(uint64_t userId, const std::vector<std::string>& codes)
 {
-    std::lock_guard<std::mutex> lk(m_userDbMutex);
+    std::lock_guard<std::mutex> lk(m_userDb.Mutex());
 
     // 校验模块 code 均存在
     for (const auto& code : codes)
@@ -2076,14 +1779,14 @@ bool UserModule::SetUserModules(uint64_t userId, const std::vector<std::string>&
 
 bool UserModule::SetUserRole(uint64_t userId, const std::string& role)
 {
-    std::lock_guard<std::mutex> lk(m_userDbMutex);
+    std::lock_guard<std::mutex> lk(m_userDb.Mutex());
     Stmt st(m_userDb, "UPDATE users SET role=? WHERE id=?");
     if (!st.p)
         return false;
     BindText(st.p, 1, role);
     BindInt(st.p, 2, (int64_t)userId);
     sqlite3_step(st.p);
-    if (sqlite3_changes(m_userDb) == 0)
+    if (m_userDb.Changes() == 0)
         return false;
 
     // 授权制配套:提升为 admin 时自动授予「用户管理」(管理职能保证);
@@ -2146,7 +1849,7 @@ void UserModule::DoCleanup()
 
     // 用户库:过期会话 + 长期无动静锁定记录
     {
-        std::lock_guard<std::mutex> lk(m_userDbMutex);
+        std::lock_guard<std::mutex> lk(m_userDb.Mutex());
         Stmt st1(m_userDb, "DELETE FROM sessions WHERE expire_time<=? OR absolute_expire<=?");
         if (st1.p)
         {
@@ -2164,7 +1867,7 @@ void UserModule::DoCleanup()
 
     // 限流库:长期无访问的 IP 行
     {
-        std::lock_guard<std::mutex> lk(m_rateDbMutex);
+        std::lock_guard<std::mutex> lk(m_rateDb.Mutex());
         Stmt st1(m_rateDb, "DELETE FROM register_rate_limits WHERE window_start<?");
         if (st1.p)
         {
@@ -2181,7 +1884,7 @@ void UserModule::DoCleanup()
 
     // 审计库:90 天前的操作日志
     {
-        std::lock_guard<std::mutex> lk(m_auditDbMutex);
+        std::lock_guard<std::mutex> lk(m_auditDb.Mutex());
         Stmt st1(m_auditDb, "DELETE FROM user_manage_logs WHERE create_time<?");
         if (st1.p)
         {

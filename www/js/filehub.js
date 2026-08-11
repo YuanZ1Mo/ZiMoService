@@ -663,23 +663,31 @@
 
     /* ---------------- 操作实现 ---------------- */
 
-    /* 单文件下载:进队列跟踪(fetch blob;下载中→完成/失败) */
-    function downloadFile(id) {
-      const f = (st.files || []).find((x) => x.id === id);
-      const item = {
-        uid: Date.now() + Math.random(), createTime: Date.now(),
-        kind: 'dl', name: f ? f.name : '文件',
-        size: f ? f.size : 0, status: 'uploading', loaded: 0, total: 0, speed: 0, file: null,
-      };
-      st.uploadQueue.push(item);
+    /* 单文件下载执行(fetch blob→触发下载;完成→done / 失败→err;重试与首次共用) */
+    function startDownloadItem(item) {
+      item.status = 'uploading';
       renderQueue();
-      A.api.filehubDownload(st.space, id).then(() => {
+      A.api.filehubDownload(st.space, item.fileId).then(() => {
         item.status = 'done';
       }).catch((e) => {
         item.status = 'err';
         item.err = e.message;
         if (e.code !== 401) A.toast(e.message, 'err');
       }).finally(() => renderQueue());
+    }
+
+    /* 单文件下载:进队列跟踪(fetch blob;下载中→完成/失败) */
+    function downloadFile(id) {
+      const f = (st.files || []).find((x) => x.id === id);
+      const item = {
+        uid: Date.now() + Math.random(), createTime: Date.now(),
+        kind: 'dl', name: f ? f.name : '文件',
+        size: f ? f.size : 0, status: 'wait', loaded: 0, total: 0, speed: 0, file: null,
+        fileId: id,   // 重试下载用
+      };
+      st.uploadQueue.push(item);
+      renderQueue();
+      startDownloadItem(item);
     }
 
     /* zip 打包下载:进入队列,串行执行(同一时间仅一个打包请求,
@@ -723,6 +731,8 @@
         kind: 'zip',   // 打包项(与上传项区分)
         name: singleDir ? '打包文件夹' : '打包下载',
         size: 0, status: 'wait', loaded: 0, total: 0, speed: 0, file: null,
+        zipIds: ids,          // 重试打包用
+        zipName: fallbackName, // 重试打包用
       };
       st.uploadQueue.push(item);
       zipJobs.push({ ids, item, fallbackName });
@@ -1045,21 +1055,21 @@
         <div class="modal fh-upload-modal">
           <div class="modal-title">上传到 ${esc(destName)}<button class="fh-pick-close" id="fhUpClose">关闭</button></div>
           <div class="modal-body">
-            <div class="fh-up-drop" id="fhUpDrop">
-              <div class="fh-up-drop-text">点击选择文件</div>
-              <div class="fh-up-drop-sub">或 <span class="fh-up-link" id="fhUpPickDir">选择文件夹</span></div>
+            <div class="fh-up-pick" id="fhUpPick">
+              <div class="fh-up-pick-text">点击选择文件</div>
+              <div class="fh-up-pick-sub">或 <span class="fh-up-link" id="fhUpPickDir">选择文件夹</span></div>
             </div>
           </div>
         </div>`;
       document.body.appendChild(mask);
-      const drop = mask.querySelector('#fhUpDrop');
+      const pick = mask.querySelector('#fhUpPick');
 
       const close = () => {
         mask.remove();
         if (closeUploadDialogFn === close) closeUploadDialogFn = null;
       };
       closeUploadDialogFn = close;
-      drop.addEventListener('click', () => pickFilesViaPicker());
+      pick.addEventListener('click', () => pickFilesViaPicker());
       mask.querySelector('#fhUpPickDir').addEventListener('click', () => pickDirViaPicker());
       mask.querySelector('#fhUpClose').addEventListener('click', close);
     }
@@ -1230,13 +1240,21 @@
       return '完成';
     }
 
-    /* 队列项操作 */
+    /* 队列项操作:按类型分派重试
+       (下载/打包项绝不能进上传泵,否则会被当上传项执行并提示"上传完成") */
     function retryQueueItem(uid) {
       const item = st.uploadQueue.find((x) => x.uid === uid);
-      if (item && item.status === 'err') {
-        item.status = 'wait';
-        item.err = '';
-        renderQueue();
+      if (!item || item.status !== 'err') return;
+      item.err = '';
+      renderQueue();
+
+      if (item.kind === 'dl') {
+        startDownloadItem(item);            // 重试单文件下载
+      } else if (item.kind === 'zip') {
+        zipJobs.push({ ids: item.zipIds, item, fallbackName: item.zipName });   // 重新入打包队列
+        pumpZip();
+      } else {
+        item.status = 'wait';               // 上传项:重入上传泵
         pumpQueue();
       }
     }

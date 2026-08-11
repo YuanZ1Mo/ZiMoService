@@ -231,14 +231,14 @@
     <ClCompile Include="..\ZiMoPublic\json\zm_json.cpp">
       <Filter>源文件\Public\json</Filter>
     </ClCompile>
-    <ClCompile Include="modules\module_file_hub.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
     <ClCompile Include="module_deepseek.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="..\ZiMoPublic\sqllite\sqlite3.c">
       <Filter>源文件\Public\sqllite</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\module_db_init.cpp">
+      <Filter>源文件\modules</Filter>
     </ClCompile>
     <ClCompile Include="modules\module_portal.cpp">
       <Filter>源文件\modules</Filter>
@@ -247,6 +247,15 @@
       <Filter>源文件\modules</Filter>
     </ClCompile>
     <ClCompile Include="modules\module_server_audio_stream.cpp">
+      <Filter>源文件\modules</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ZiMoPublic\util\zm_util_sqlite.cpp">
+      <Filter>源文件\Public\util</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ZiMoPublic\util\zm_util_zlib.cpp">
+      <Filter>源文件\Public\util</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\module_file_hub.cpp">
       <Filter>源文件\modules</Filter>
     </ClCompile>
   </ItemGroup>
@@ -1223,9 +1232,6 @@
     <ClInclude Include="..\ZiMoPublic\net\zm_net_broadcast_base.h">
       <Filter>头文件\Public\net</Filter>
     </ClInclude>
-    <ClInclude Include="modules\module_file_hub.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
     <ClInclude Include="module_deepseek.h">
       <Filter>头文件</Filter>
     </ClInclude>
@@ -1250,6 +1256,9 @@
     <ClInclude Include="..\ZiMoPublic\sqllite\sqlite3ext.h">
       <Filter>头文件\Public\sqllite</Filter>
     </ClInclude>
+    <ClInclude Include="modules\module_db_init.h">
+      <Filter>头文件\modules</Filter>
+    </ClInclude>
     <ClInclude Include="modules\module_portal.h">
       <Filter>头文件\modules</Filter>
     </ClInclude>
@@ -1257,6 +1266,15 @@
       <Filter>头文件\modules</Filter>
     </ClInclude>
     <ClInclude Include="modules\module_server_audio_stream.h">
+      <Filter>头文件\modules</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ZiMoPublic\util\zm_util_sqlite.h">
+      <Filter>头文件\Public\util</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ZiMoPublic\util\zm_util_zlib.h">
+      <Filter>头文件\Public\util</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\module_file_hub.h">
       <Filter>头文件\modules</Filter>
     </ClInclude>
   </ItemGroup>

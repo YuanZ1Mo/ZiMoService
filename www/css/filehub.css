@@ -238,29 +238,18 @@ tr.err .fh-q-name { color: var(--err); }
 .fh-q-meta { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
 .fh-q-ops { white-space: nowrap; }
 
-/* 上传窗体:拖拽区 */
+/* 上传窗体:选择区(点击选文件/文件夹;拖拽逻辑已移除) */
 .fh-upload-modal.modal { width: 480px; max-width: 92vw; }
-.fh-up-drop {
+.fh-up-pick {
   border: 2px dashed var(--line-strong); border-radius: var(--radius-sm);
   padding: 26px 16px; text-align: center; cursor: pointer; transition: all .15s;
   color: var(--fg2);
 }
-.fh-up-drop:hover { border-color: var(--ac-dim); }
-.fh-up-drop.over { border-color: var(--ac); color: var(--ac); background: var(--ac-dim); }
-.fh-up-drop-icon { font-size: 26px; margin-bottom: 6px; }
-.fh-up-drop-text { font-size: 14px; }
-.fh-up-drop-sub { font-size: 12px; color: var(--fg3); margin-top: 4px; }
+.fh-up-pick:hover { border-color: var(--ac-dim); }
+.fh-up-pick-text { font-size: 14px; }
+.fh-up-pick-sub { font-size: 12px; color: var(--fg3); margin-top: 4px; }
 .fh-up-link { color: var(--ac); text-decoration: underline; }
 .fh-up-queue { margin-top: 12px; max-height: 220px; overflow-y: auto; }
-
-/* 拖拽遮罩 */
-.fh-wrap { position: relative; }
-.fh-drop-overlay {
-  position: absolute; inset: 0; background: rgba(10, 13, 16, 0.85);
-  border: 2px dashed var(--ac); display: none; align-items: center; justify-content: center;
-  color: var(--ac); font-size: 18px; letter-spacing: 2px; z-index: 20;
-}
-.fh-drop-overlay.show { display: flex; }
 
 /* 弹窗输入框(重命名/新建文件夹等):墨色主题 */
 .modal-input {

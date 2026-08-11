@@ -7,6 +7,7 @@
 #include "modules/module_file_hub.h"
 
 #include "module_deepseek.h"
+#include "modules/module_db_init.h"
 #include "modules/module_user.h"
 #include "modules/module_portal.h"
 #include "modules/module_server_audio_stream.h"
@@ -26,21 +27,26 @@
 
 ServicePortal::ServicePortal()
 {
-	// 用户系统先建(双库初始化/建表):音频/文件中心/门户模块依赖其鉴权与权限查询
-	m_userModule = new UserModule();
+	// Winsock 先行初始化(幂等):池预创建客户端循环线程时 libevent 需已 WSAStartup,
+	// 否则 event_base_new 失败(实测:池 init 报 client start failed,预创建全部落空)
+	ZmWinSockHelper::Init();
+
+	// 数据库初始化先行:业务模块构造前打开全部 SQLite 库(建目录/建表/补列/种子)
+	m_dbInit = new DbInitModule();
+	if (!m_dbInit->Open())
+		DEFAULT_LOG_ERROR("ServicePortal: DbInitModule init failed");
+
+	// 用户系统:注入已初始化连接(鉴权/角色/模块权限查询)
+	m_userModule = new UserModule(m_dbInit->UserDb(), m_dbInit->RateDb(), m_dbInit->AuditDb());
 	if (!m_userModule->Open())
 		DEFAULT_LOG_ERROR("ServicePortal: UserModule init failed");
 
-	// 文件中心:注入 UserModule(鉴权/角色/模块权限/业务日志),建 filehub.db
-	m_fileHubModule = new FileHubModule(m_userModule);
+	// 文件中心:注入 UserModule(鉴权/角色/模块权限/业务日志)+ 已初始化 filehub.db 连接
+	m_fileHubModule = new FileHubModule(m_userModule, m_dbInit->FileHubDb());
 	if (!m_fileHubModule->Open())
 		DEFAULT_LOG_ERROR("ServicePortal: FileHubModule init failed");
 
 	m_audioModule = new ServerAudioStreamModule(m_userModule);
-
-	// Winsock 先行初始化(幂等):池预创建客户端循环线程时 libevent 需已 WSAStartup,
-	// 否则 event_base_new 失败(实测:池 init 报 client start failed,预创建全部落空)
-	ZmWinSockHelper::Init();
 
 	// 通用外呼请求池(全门户共用;预创建4,上限80)
 	m_httpClientPool = new ZmHttpClientPool();
@@ -73,6 +79,10 @@ ServicePortal::~ServicePortal()
 
 	delete m_userModule;
 	m_userModule = nullptr;
+
+	// 数据库连接最后销毁:必须晚于所有持连接引用的模块
+	delete m_dbInit;
+	m_dbInit = nullptr;
 }
 
 // ============================================================================
@@ -88,9 +98,15 @@ void ServicePortal::Shutdown()
 	// DeepSeek 模块:回调经 m_gone 跳过续体投递(防 loop 已销毁)
 	if (m_deepseekModule)
 		m_deepseekModule->Shutdown();
-	// 用户系统:停清理线程(join)+ 关双库
+	// 用户系统:停清理线程(join;库连接由 DbInitModule 统一关闭)
 	if (m_userModule)
 		m_userModule->Shutdown();
+	// 文件中心:停一致性校验线程(join;原仅析构时 join,统一纳入 Shutdown)
+	if (m_fileHubModule)
+		m_fileHubModule->Shutdown();
+	// 数据库:关闭全部连接(必须晚于所有持连接引用的模块线程 join)
+	if (m_dbInit)
+		m_dbInit->Shutdown();
 	m_sseGone.store(true);
 }
 

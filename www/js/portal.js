@@ -149,83 +149,9 @@
           </div>
         </section>
         <section class="ws-section">
-          <h3 class="ws-section-title">最近动态</h3>
-          <div class="ws-lines">
-            <div class="ws-line">· 门户框架上线(顶栏 / 功能目录 / 工作区)</div>
-            <div class="ws-line">· 用户系统上线(登录 / 注册 / 找回密码 / 会话管理)</div>
-            <div class="ws-line">· 权限模型就绪(管理员 / 用户 / 游客,模块授权)</div>
-          </div>
-        </section>
-        <section class="ws-section">
           <h3 class="ws-section-title">我的模块</h3>
           <div class="ws-lines">
             ${modules.map((m) => `· ${escapeHtml(m.name)} — ${escapeHtml(m.url)}`).join('')}
-          </div>
-        </section>
-        <section class="ws-section">
-          <h3 class="ws-section-title">快速开始</h3>
-          <div class="ws-lines">
-            <div class="ws-line">· 通过左侧功能目录切换模块,工作区互不干扰</div>
-            <div class="ws-line">· 目录支持收起/展开,状态自动记忆</div>
-            <div class="ws-line">· 工作区滚动位置在切换后自动保留</div>
-          </div>
-        </section>
-        <section class="ws-section">
-          <h3 class="ws-section-title">关于</h3>
-          <div class="ws-lines">
-            <div class="ws-line">· ZiMo Service — 子墨服务门户</div>
-            <div class="ws-line">· 更多功能模块正在建设中,敬请期待</div>
-          </div>
-        </section>
-        <section class="ws-section">
-          <h3 class="ws-section-title">服务信息</h3>
-          <div class="ws-lines ws-mono">
-            <div class="ws-line">REST API     https://${location.hostname}:39441/zimo/api</div>
-            <div class="ws-line">JRPC        https://${location.hostname}:39440/zimo/jrpc</div>
-            <div class="ws-line">静态服务    https://${location.hostname}/</div>
-            <div class="ws-line">广播端口    39640</div>
-            <div class="ws-line">SOCKS5      39540</div>
-            <div class="ws-line">TLS         自签证书(开发环境)</div>
-          </div>
-        </section>
-        <section class="ws-section">
-          <h3 class="ws-section-title">会话与安全</h3>
-          <div class="ws-lines">
-            <div class="ws-line">· 会话有效期:30 天滑动,90 天绝对上限</div>
-            <div class="ws-line">· 每账号最多 5 个活跃会话,超出自动踢除最久未活动者</div>
-            <div class="ws-line">· 登录失败锁定:同 IP 连续失败阶梯锁定</div>
-            <div class="ws-line">· 密码存储:PBKDF2-HMAC-SHA256 + 随机盐</div>
-            <div class="ws-line">· 救援码:找回密码的唯一凭证,请妥善保存</div>
-          </div>
-        </section>
-        <section class="ws-section">
-          <h3 class="ws-section-title">使用技巧</h3>
-          <div class="ws-lines">
-            <div class="ws-line">· 顶栏状态灯:绿色在线 / 琥珀色连接中断,断网不影响已打开的页面</div>
-            <div class="ws-line">· 目录支持收起展开,状态自动记忆;移动端为抽屉样式</div>
-            <div class="ws-line">· 工作区滚动位置在模块切换后自动保留</div>
-            <div class="ws-line">· 刷新页面停留在当前模块(History 路由)</div>
-            <div class="ws-line">· 浏览器建议使用 Chrome / Edge 最新版</div>
-          </div>
-        </section>
-        <section class="ws-section">
-          <h3 class="ws-section-title">开发计划</h3>
-          <div class="ws-lines">
-            <div class="ws-line">· 文件中心:目录管理 / 上传下载 / 扫码分享</div>
-            <div class="ws-line">· 服务器音频传输:远程音频采集与播放</div>
-            <div class="ws-line">· 用户管理:账号停用 / 启用 / 删除 / 重置密码 / 模块授权</div>
-            <div class="ws-line">· 个人中心 / 账户设置</div>
-            <div class="ws-line">· 云平台部署:域名 + 正式证书 + 自动续期</div>
-          </div>
-        </section>
-        <section class="ws-section">
-          <h3 class="ws-section-title">更新日志</h3>
-          <div class="ws-lines">
-            <div class="ws-line">· v1.0(2026-08-09):门户框架上线,权限模型就绪</div>
-            <div class="ws-line">· v0.9(2026-08-08):用户系统上线(登录/注册/找回密码/会话管理)</div>
-            <div class="ws-line">· v0.8:隧道 / 广播 / 文件中心服务端能力</div>
-            <div class="ws-line">· v0.7:远程音频传输能力</div>
-            <div class="ws-line">· v0.6:DeepSeek 余额查询</div>
           </div>
         </section>
       </div>`;

@@ -11,9 +11,9 @@
 #include <thread>
 #include <vector>
 
+#include "zm_util_sqlite.h"
+
 class HttpServerManager;
-struct sqlite3;
-struct sqlite3_stmt;
 
 // ============================================================================
 // 用户系统常量(设计文档 2.9;联调测试期可临时改短,验收后复原)
@@ -68,13 +68,14 @@ static constexpr int64_t kUserCookieMaxAge = 90LL * 24 * 3600;
 class UserModule
 {
 public:
-    UserModule();
+    /** @brief 注入已初始化连接(DbInitializer 打开并建表/补列后传入;本模块不拥有连接) */
+    UserModule(zm::ZmSqliteConn& userDb, zm::ZmSqliteConn& rateDb, zm::ZmSqliteConn& auditDb);
     ~UserModule();
 
-    /** @brief 初始化双库 + 建表;失败返回 false 并记日志(服务可继续跑,仅用户系统不可用) */
+    /** @brief 启动:检查三库可用 + 起每日清理线程;失败返回 false 并记日志(服务可继续跑,仅用户系统不可用) */
     bool Open();
 
-    /** @brief 停止钩子:置 gone + join 清理线程 + 关库(须在 NetDock 析构前调用) */
+    /** @brief 停止钩子:置 gone + join 清理线程(库连接由 DbInitializer 统一关闭) */
     void Shutdown();
 
     /** @brief 模块自注册静态页路由 /login /register /reset(service_portal.cpp 调用一行) */
@@ -229,19 +230,6 @@ private:
     static const char* FieldErrorText(FieldError e, const char* field);
 
     // ========================================================================
-    // SQLite 辅助
-    // ========================================================================
-
-    struct Stmt
-    {
-        sqlite3_stmt* p = nullptr;
-        Stmt(sqlite3* db, const char* sql);
-        ~Stmt();
-    };
-
-    static bool Exec(sqlite3* db, const char* sql);
-
-    // ========================================================================
     // 锁定(login_locks,用户库;维度 = 账号+IP,阶梯递增)
     // ========================================================================
 
@@ -321,12 +309,9 @@ private:
     void DoCleanup();
 
 private:
-    sqlite3* m_userDb = nullptr;      ///< 用户库(users/sessions/login_locks)
-    sqlite3* m_rateDb = nullptr;      ///< 通用限流库(register/reset_rate_limits)
-    sqlite3* m_auditDb = nullptr;     ///< 业务日志库(用户管理 user_manage_logs;文件中心 filehub_logs 复用本库)
-    std::mutex m_userDbMutex;
-    std::mutex m_rateDbMutex;
-    std::mutex m_auditDbMutex;
+    zm::ZmSqliteConn& m_userDb;       ///< 用户库(users/sessions/login_locks)连接引用(归 DbInitializer 所有)
+    zm::ZmSqliteConn& m_rateDb;       ///< 通用限流库(register/reset_rate_limits)
+    zm::ZmSqliteConn& m_auditDb;      ///< 业务日志库(用户管理 user_manage_logs;文件中心 filehub_logs 复用本库)
 
     std::thread m_cleanThread;        ///< 每日清理线程(Open 启动,Shutdown join)
     std::atomic<bool> m_gone {false}; ///< Shutdown 已开始:清理线程退出 + handler 短路
