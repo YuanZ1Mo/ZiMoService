@@ -66,6 +66,13 @@ private:
                          const char* const* indexes, int nIndexes);
     static bool EnsureTable(zm::ZmSqliteConn& conn, const ZmDbTable& t);
 
+    /**
+     * @brief 校验声明表级约束(extra)在存量库中真实存在(经 PRAGMA index_list/index_info
+     *        比对唯一索引列集合);缺失记 ERROR 并返回 false —— 依赖该约束的
+     *        ON CONFLICT upsert 会静默失效(如登录锁定计数),宁可整库不可用也不静默
+     */
+    static bool EnsureConstraint(zm::ZmSqliteConn& conn, const ZmDbTable& t);
+
     /** @brief 列定义是否可 ALTER 追加:不允许 UNIQUE / PRIMARY KEY / NOT NULL 无 DEFAULT */
     static bool AppendSafe(const char* def);
 

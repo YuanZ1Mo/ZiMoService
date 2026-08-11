@@ -355,7 +355,7 @@ bool DbInitModule::EnsureTable(zm::ZmSqliteConn& conn, const ZmDbTable& t)
         {
             DEFAULT_LOG_ERROR("[DbInit] 表 {} 缺列 {} 且定义含 UNIQUE/PRIMARY KEY(或 NOT NULL 无默认值),"
                 "无法 ALTER 追加;请将该列并入建表语句或人工迁移", t.name, t.cols[i].name);
-            continue;
+            return false;   // 缺不可追加列 = schema 残缺:整库标记失败,由 Open 关闭该库
         }
         std::string alter = "ALTER TABLE ";
         alter += t.name;
@@ -372,7 +372,87 @@ bool DbInitModule::EnsureTable(zm::ZmSqliteConn& conn, const ZmDbTable& t)
     if (t.postSql && *t.postSql && !conn.Exec(t.postSql))
         return false;
 
-    return true;
+    // 5) 约束存在性校验(存量库防缺约束导致 ON CONFLICT upsert 静默失效)
+    return EnsureConstraint(conn, t);
+}
+
+bool DbInitModule::EnsureConstraint(zm::ZmSqliteConn& conn, const ZmDbTable& t)
+{
+    if (!t.extra || !*t.extra)
+        return true;   // 无表级约束
+
+    // 解析声明约束列,如 "UNIQUE(account, ip)" → {account, ip}(去空格、小写)
+    std::string extra = t.extra;
+    size_t lp = extra.find('(');
+    size_t rp = extra.rfind(')');
+    if (lp == std::string::npos || rp == std::string::npos || rp <= lp)
+        return true;   // 声明本身解析不了:建表阶段已报错,此处防御放行
+
+    std::set<std::string> declared;
+    {
+        std::string cur;
+        for (size_t i = lp + 1; i < rp; ++i)
+        {
+            char c = extra[i];
+            if (c == ',')
+            {
+                if (!cur.empty())
+                {
+                    std::transform(cur.begin(), cur.end(), cur.begin(), ::tolower);
+                    declared.insert(cur);
+                    cur.clear();
+                }
+            }
+            else if (c != ' ')
+                cur.push_back((char)::tolower((unsigned char)c));
+        }
+        if (!cur.empty())
+            declared.insert(cur);
+    }
+    if (declared.empty())
+        return true;
+
+    // 遍历唯一索引(约束生成的 autoindex 与手工 UNIQUE INDEX 均满足 ON CONFLICT 语义),
+    // 任一索引列集合与声明一致 → 约束存在
+    {
+        zm::ZmSqliteStmt st(conn, ("PRAGMA index_list(" + std::string(t.name) + ")").c_str());
+        if (!st.p)
+            return true;   // 表不存在等情形:EnsureTable 已处理,防御放行
+        while (sqlite3_step(st.p) == SQLITE_ROW)
+        {
+            const char* iname = reinterpret_cast<const char*>(sqlite3_column_text(st.p, 1));
+            int unique = sqlite3_column_int(st.p, 2);
+            if (!iname || !unique)
+                continue;
+
+            std::set<std::string> cols;
+            bool ok = true;
+            zm::ZmSqliteStmt st2(conn, ("PRAGMA index_info(" + std::string(iname) + ")").c_str());
+            if (!st2.p)
+                ok = false;
+            else
+            {
+                while (sqlite3_step(st2.p) == SQLITE_ROW)
+                {
+                    const char* cn = reinterpret_cast<const char*>(sqlite3_column_text(st2.p, 2));
+                    if (!cn)
+                    {
+                        ok = false;
+                        break;
+                    }
+                    std::string low = cn;
+                    std::transform(low.begin(), low.end(), low.begin(), ::tolower);
+                    cols.insert(low);
+                }
+            }
+            if (ok && cols == declared)
+                return true;
+        }
+    }
+
+    DEFAULT_LOG_ERROR("[DbInit] 表 {} 声明约束 {} 在存量库中不存在:约束只在建表语句生效,"
+        "ALTER 无法补加,依赖它的 ON CONFLICT upsert 将静默失效;请人工迁移(重建该表)", t.name, t.extra);
+    return false;
 }
 
 bool DbInitModule::AppendSafe(const char* def)
