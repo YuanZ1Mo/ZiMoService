@@ -44,6 +44,24 @@ public:
 	/**
 	 * @brief 从 wwwRoot 目录读取并返回静态文件
 	 */
+	/**
+	 * @brief 解析静态资源物理路径(纯查询,无副作用)
+	 * @param uri 请求 URI(可带 ?query,自动剥离)
+	 * @param outPhysical 命中时输出规范化物理路径
+	 * @return true 文件存在且位于 www 根内(含路径穿越防护);false 不存在或非法
+	 */
+	bool ResolveStaticPath(const std::string& uri, std::string& outPhysical);
+
+	/**
+	 * @brief 发送物理文件(零拷贝 evbuffer_file_segment)
+	 * @return HTTP 状态码;失败不写任何响应体,返回码对调用方诚实
+	 */
+	int SendFile(ZmHttpdTask* task, const std::string& physicalPath);
+
+	/**
+	 * @brief 静态文件默认策略:解析+发送,文件不存在时输出 404 页面
+	 *        需要自定义 404 语义的调用方(如 SPA 回落)请改用 ResolveStaticPath + SendFile
+	 */
 	int ServeStaticFile(ZmHttpdTask* task, const std::string& uri);
 
 private:

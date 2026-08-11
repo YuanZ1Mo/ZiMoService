@@ -1,4 +1,4 @@
-# ZiMo 服务管理中心 — 前端
+# ZiMo 服务门户 — 前端
 
 ## 技术栈
 
@@ -6,116 +6,127 @@
 |------|------|
 | 框架 | Vue 3 (CDN, Options API) |
 | 样式 | 纯 CSS（深色主题，CSS Grid + Flexbox） |
-| 路由 | Hash 模式前端路由 |
-| 通信 | Fetch API / RESTful API（端口 39441，★ 已从 JRPC 迁移） |
-| 上传/下载 | XHR / HTTP POST/GET（端口 80） |
+| 路由 | 门户为 history 模式 SPA（服务器 `/portal/*` fallback）；各独立页直接跳转 |
+| 通信 | `auth.js` 公共 REST 客户端（`fetch` + 凭据携带），RESTful API（端口 39441，路径 `/zimo/api`） |
+| 会话 | `zm_session` cookie（HttpOnly 由服务器种置），`auth.js` 统一会话检查/心跳/失效跳转 |
+| 音频播放 | WebCodecs `AudioDecoder` 解码 Opus 帧流（fetch 流式拉取） |
+| 密码强度 | zxcvbn.js（注册/重置/强制改密页） |
+| 其他 | qrcode.min.js（分享链接二维码）、marked.min.js（富文本渲染）、ink.js（Canvas 粒子背景） |
 
 ## 项目结构
 
 ```
 www/
 ├── html/
-│   ├── index.html         着陆页（进入控制中心）
-│   ├── control.html       控制中心 SPA（首页/文档/接口测试/关于）
-│   ├── filehub.html       文件中心（文件管理/上传/下载）
+│   ├── index.html         着陆页（会话检查 → 用户面板 + 在线状态 + 心跳）
+│   ├── login.html         登录页
+│   ├── register.html      注册页（zxcvbn 密码强度 + 救援码）
+│   ├── reset.html         找回密码页（救援码验证）
+│   ├── force-reset.html   强制重置密码页（管理员重置后首次登录进入）
+│   ├── portal.html        门户 SPA（主页/文件中心/服务器音频传输/用户管理）
 │   └── 404.html           自定义 404 页面（兜底展示）
 ├── js/
-│   ├── app.js             control.html 的 Vue 应用
-│   └── filehub.js         filehub.html 的 Vue 应用
+│   ├── auth.js            ★ 公共 REST 客户端 + 会话管理（所有页面共用）
+│   ├── index.js           着陆页逻辑（三态分流：已登录/会话失效/网络异常）
+│   ├── login.js / register.js / reset.js / force-reset.js
+│   ├── portal.js          门户壳（动态模块导航 + 用户管理模块）
+│   ├── filehub.js         文件中心模块（双空间/分享/zip/上传下载）
+│   ├── ink.js             着陆页 Canvas 粒子背景（"墨聚成印"）
+│   ├── vue.global.prod.js Vue 3 运行时（CDN 缓存副本）
+│   ├── zxcvbn.js          密码强度评估
+│   ├── marked.min.js / qrcode.min.js
 ├── css/
-│   └── style.css          深色主题样式（含文件中心样式）
-├── db/filehub/            文件中心数据目录（不可通过 URL 直接访问）
+│   ├── style.css          深色主题全局样式
+│   └── filehub.css        文件中心模块样式
+├── resource/favicon.ico
 └── doc/
     └── README.md          本文件
 ```
 
 ## 页面说明
 
-- **着陆页（/）** — "进入控制中心"按钮
-- **控制中心（/control）** — 管理面板 SPA：
-  - **首页** — 实时时钟 + 服务状态卡片 + CPU/内存/GPU 负载（每秒刷新）
-  - **文档** — ★ RESTful API 方法文档（含 JRPC 兼容文档），可折叠展开，支持一键复制和跳转测试
-  - **接口测试** — ★ RESTful 接口测试（含 JRPC 兼容测试模块），参数编辑 + 返回体预览
-  - **文件中心** — 点击跳转到文件中心页面
-  - **关于** — 从 README.md 动态读取渲染
-- **文件中心（/filehub）** — 文件管理页面：
-  - **面包屑导航** — 首页 › 文件中心 › 目录层级
-  - **文件列表** — 文件夹在前/文件在后，🔒 标识密码保护的目录
-  - **搜索** — 实时过滤当前目录内容，toast 悬浮提示结果数
-  - **上传** — 多文件选择 + XHR 进度条 + mmap 零拷贝存储
-  - **下载** — 零拷贝 + Range 断点续传
-  - **密码管理** — HMAC-SHA256，输入法自动禁用中文
-  - **模态框** — 模糊背景效果，点击外部不关闭
+- **着陆页（/）** — 会话检查三态分流：
+  - 已登录 → 用户面板（昵称/账号/最后登录 IP 与时间/活动时间）+ 在线状态徽标 + 心跳保活（断网/恢复 toast 提示）+ "进入门户"按钮 + 墨聚成印粒子动画
+  - 会话失效 → toast 提示后 1 秒跳转 `/login`
+  - 网络异常 → 错误视图 + 重试按钮
+- **登录页（/login）** — 账号 + 密码，失败提示具体原因（含锁定剩余时间）；成功后跳转 `/portal`（若 `force_change` 则跳 `/force-reset`）
+- **注册页（/register）** — 账号/密码（zxcvbn 强度条）/昵称/救援码，密码与救援码二次确认
+- **找回密码页（/reset）** — 账号 + 救援码验证后设置新密码
+- **强制重置密码页（/force-reset）** — 管理员重置后的临时密码会话进入，设置新密码 + 新救援码
+- **门户（/portal）** — SPA，顶部模块导航（来自 `/portal/info` 授权模块列表，前端未授权隐藏）：
+  - **主页（home）** — 用户信息 + 功能模块概览
+  - **文件中心（filehub）** — 公共/个人双空间切换、面包屑导航、文件列表（文件夹优先 + 排序）、搜索、多选/删除/重命名/移动/复制、上传（进度条）、下载（Range 断点续传）、zip 打包下载、分享（生成链接 + 二维码 + 复制 + 取消，分享面板含分享列表）
+  - **服务器音频传输（audio）** — 实时收听服务器系统声音：连接状态机（idle/connecting/listening/reconnecting），WebCodecs 解码播放，音量控制
+  - **用户管理（users）** — 用户列表（关键字/角色/状态筛选 + 分页）、停用/启用/删除/恢复、重置密码（临时密码弹窗）、改昵称/角色/授权模块（授权弹窗，提升 admin 自动授予用户管理）
 - **404（/404）** — 未匹配路由的兜底展示页
 
 ## 数据获取
 
-★ 所有业务数据统一通过 RESTful API 调用端口 39441 获取（跨域，服务器已配置 CORS）：
+★ 所有业务数据统一通过 RESTful API（端口 39441，根路径 `/zimo/api`）获取；跨域 + 凭据由 `auth.js` 统一处理（fetch `credentials: 'include'`，跨端口共享 `zm_session` cookie）。
 
 ```javascript
-// RESTful API（推荐）
-const r = await fetch('http://localhost:39441/zimo/api/files?path=');
-const json = await r.json();
-console.log(json.files); // [{name, size, type, hasChild, hasPassword}, ...]
-
-// 心跳
-await fetch('http://localhost:39441/zimo/api/ping');
-
-// 服务状态
-const status = await (await fetch('http://localhost:39441/zimo/api/status')).json();
-
-// SSE 事件流
-const es = new EventSource('http://localhost:39441/zimo/api/events');
-es.onmessage = (e) => console.log(JSON.parse(e.data));
-
-// 广播消息
-await fetch('http://localhost:39441/zimo/api/broadcast?topic=hello&content=world&tag=demo', {
-  method: 'POST'
-});
-
-// 上传文件
-const xhr = new XMLHttpRequest();
-xhr.open('POST', 'http://localhost:39441/zimo/api/files/upload?path=file.zip');
-xhr.upload.onprogress = (e) => { /* 进度 */ };
-xhr.send(file);
-
-// 下载文件
-window.open('http://localhost:39441/zimo/api/files/download?path=file.zip');
+// auth.js 公共客户端（window.ZmAuth）
+const A = window.ZmAuth;
+await A.api.login(account, password);       // POST /auth/login → 服务器种 cookie
+await A.api.portalInfo();                   // GET  /portal/info → {user, modules[]}
+const list = await A.api.filehubList('public', 0, 'name', 'asc');
+//    GET /portal/filehub/list?space=public&dir_id=0&sort=name&order=asc
 ```
 
-### 文件中心 RESTful API 完整列表
+### 认证 API（/auth/*）
 
-| 方法 | 路径 | Query 参数 | 说明 |
-|------|------|-----------|------|
-| GET | `/files` | `path` | 列出目录下的文件和文件夹 |
-| GET | `/files/search` | `keyword` | 模糊搜索文件/文件夹名 |
-| POST | `/files/dirs` | `path, dirName, username?, password?` | 创建目录（可选密码保护） |
-| DELETE | `/files` | `path, username?, password?` | 删除文件或空目录 |
-| GET/POST | `/files/verify-password` | `path, password` | 验证目录密码 |
-| PUT | `/files/password` | `path, username, oldPassword, newPassword` | 修改目录密码 |
-| POST | `/files/batch-delete` | `paths (逗号分隔), username?, password?` | 批量删除文件 |
-| POST | `/files/upload` | `path` (body=二进制) | 上传文件 |
-| GET | `/files/download` | `path` (支持 Range) | 下载文件 |
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/auth/login` | 登录，签发会话并种 `zm_session` cookie |
+| POST | `/auth/register` | 注册（账号/密码/昵称/救援码） |
+| POST | `/auth/reset` | 找回密码（救援码验证） |
+| POST | `/auth/complete-change` | 完成强制改密 |
+| POST | `/auth/logout` | 登出 |
+| GET | `/auth/me` | 当前会话用户信息 |
+| GET | `/auth/heartbeat` | 会话心跳（续期） |
 
-### 兼容 JRPC（端口 39440）
+### 门户 API（/portal/*）
 
-旧版 JRPC 接口仍在端口 39440 可用，方法名不变（`listFiles`/`searchFiles`/`createDir` 等），推荐新功能迁移到 RESTful API。
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/portal/info` | 门户初始化：用户 + 授权模块列表（`[{code,name,url}]`） |
+| GET | `/portal/users` | 用户列表（keyword/role/status + 分页） |
+| GET | `/portal/users/{id}` | 用户详情（含授权模块） |
+| POST | `/portal/users/{id}/{action}` | action: disable/enable/delete/restore/reset-password/nickname/modules/role |
 
-```javascript
-// JRPC（兼容保留）
-const r = await fetch('http://localhost:39440/zimo/jrpc', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'listFiles', params: { path: '' } }),
-});
-const json = await r.json();
-console.log(json.result.files);
-```
+### 文件中心 API（/portal/filehub/*）
+
+| 方法 | 路径 | Query/body 参数 | 说明 |
+|------|------|----------------|------|
+| GET | `/list` | `space, dir_id, sort, order` | 列目录（含面包屑链） |
+| GET | `/search` | `space, keyword` | 递归模糊搜索 |
+| GET | `/download` | `space, file_id`（支持 Range） | 下载文件 |
+| GET | `/shares` | — | 我的分享列表 |
+| POST | `/upload` | `space, dir_id, name`（body=二进制流，`X-File-Size` 头声明大小供完整性校验） | 上传文件 |
+| POST | `/mkdir` | `{parent_id, name}` | 新建目录 |
+| POST | `/rename` | `{type, id, new_name}` | 重命名 |
+| POST | `/move` | `{ids, target_dir_id}` | 移动 |
+| POST | `/copy` | `{ids, target_dir_id, target_space}` | 复制（可跨空间） |
+| POST | `/delete` | `{ids}` | 删除 |
+| POST | `/zip` | `space` + body `{ids}` | zip 打包下载（流式，前端 120s 超时保护） |
+| POST | `/share` | `{type, id}` | 创建分享（返回 token/url） |
+| POST | `/unshare` | `{share_id}` | 取消分享 |
+
+分享链接：`http://<host>/share/<token>`（HTTP 80 302 → RESTful 端口；公共分享免登录，个人分享需登录）。
+
+### 音频 API（/portal/audio/*）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/stream` | 音频流（二进制帧：len(4B)+seq(4B)+Opus 20ms 帧，48kHz 立体声 64kbps） |
+| GET | `/status` | 采集状态快照 |
 
 ## 设计理念
 
-- **专业运维面板风格** — 深色背景、柔和阴影、清晰信息层级
+- **统一会话管理** — 所有页面共用 `auth.js`（会话检查/心跳/失效跳转/401 统一处理），登录态由服务器 cookie 承载，前端不存 token
+- **模块化门户** — 模块清单来自服务器授权（`/portal/info`），后端 403 兜底，前端按模块隔离脚本
 - **零构建** — 从 CDN 加载 Vue 3，无需 Node.js/npm 构建工具
-- **悬浮提示** — toast 自动消失，不打断操作流程
-- **响应式** — 适配桌面管理场景
-- **RESTful 优先** — 语义化 HTTP 方法 + Query 参数，与 JRPC 兼容共存
+- **专业运维面板风格** — 深色背景、柔和阴影、清晰信息层级
+- **RESTful 优先** — 语义化 HTTP 方法 + Query 参数，JSON body
+- **文件中心体验** — 双空间切换、面包屑、批量操作、zip 打包、分享二维码、Range 断点续传
+- **密码安全** — zxcvbn 强度提示，密码/救援码二次确认，服务端 PBKDF2 散列

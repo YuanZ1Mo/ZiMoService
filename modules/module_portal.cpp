@@ -36,10 +36,13 @@ void PortalModule::RegisterHttpRoutes(HttpServerManager* httpMgr)
     });
     router.Any("/portal/*", [httpMgr](ZmHttpdTask* task, const BYTE*, size_t) {
         std::string uri(task->Uri() ? task->Uri() : "/");
-        int code = httpMgr->ServeStaticFile(task, uri);
-        if (code == 404)
-            return httpMgr->ServeStaticFile(task, "/html/portal.html");
-        return code;
+        // SPA 回落:先纯查询(无副作用),有同名静态文件则发文件,否则发 portal.html。
+        // 不可用 ServeStaticFile(uri) 直接探测——其"文件不存在写 404 页"的行为
+        // 会把 404.html 与 portal.html 拼接进同一响应体。
+        std::string physical;
+        if (httpMgr->ResolveStaticPath(uri, physical))
+            return httpMgr->SendFile(task, physical);
+        return httpMgr->ServeStaticFile(task, "/html/portal.html");
     });
 }
 
@@ -62,7 +65,7 @@ bool PortalModule::DispatchRest(ZmReqLoop* loop, evhttp_cmd_type verb, const std
 
     // 用户管理(/portal/users*):POST 需解析 body;段边界匹配,防 /portal/usersxyz 误配
     if (path.rfind("/portal/users", 0) == 0 &&
-        (path.size() == 12 || path[12] == '/'))
+        (path.size() == 13 || path[13] == '/'))
     {
         ZMJSON req;
         if (verb == EVHTTP_REQ_POST)

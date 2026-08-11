@@ -17,13 +17,12 @@
   const AMBIENT_FPS_INTERVAL = 33;   // 常驻态 30fps(慢速环绕,肉眼无差别)
 
   const GATHER_COUNT = 480;   // 入场汇聚粒子数
-  const DUST_COUNT = 140;     // 常驻光尘粒子数
+  const DUST_COUNT = 220;     // 常驻光尘粒子数
 
-  // 阶段时间线(ms);光尘在爆开尾声提前渐入,与方印飞散重叠过渡
-  const T_GATHER = 1400;
-  const T_SEAL = 2000;
-  const T_BURST = 2700;
-  const T_AMBIENT_FADE = 400;   // 爆开结束前 400ms 光尘开始渐入
+  // 阶段时间线(ms)
+  const T_GATHER = 800;
+  const T_SEAL = 1600;
+  const T_BURST = 2400;
 
   // 配色(与 style.css token 一致);一阶段/方印保持原墨色+朱砂,三阶段光尘另行混色
   const INK_COLOR = [233, 236, 240];   // 墨色
@@ -40,6 +39,7 @@
   let dustRyMax = 150;        // 光尘轨道纵向最大半径
   let particles = [];
   let ring = null;              // 爆开波环
+  let flash = null;             // 爆开瞬间中心闪光
   let startedAt = 0;
   let sealAssigned = false;
   let burstDone = false;
@@ -144,17 +144,18 @@
       p.vy = Math.sin(ang) * sp;
       p.fading = true;
     }
-    ring = { r: 8, alpha: 0.75 };
+    ring = { r: 8, alpha: 0.9 };
+    flash = { r: 0, alpha: 0.55 };   // 爆开瞬间中心闪光(快速扩散消散)
   }
 
   /** 常驻:光尘粒子(椭圆轨道环绕,少量朱砂点缀);追加而非替换,与方印飞散重叠过渡,alpha 从 0 渐入 */
   function spawnDust() {
     for (let i = 0; i < DUST_COUNT; i++) {
       const p = makeParticle(0, 0, 0, 0,
-        0.6 + Math.random() * 1.5,
+        0.8 + Math.random() * 2.0,
         0,   // alpha 从 0 渐入,与爆开余波无缝衔接
         DUST_PALETTE[Math.floor(Math.random() * DUST_PALETTE.length)]);
-      p.targetAlpha = 0.20 + Math.random() * 0.25;   // 提亮
+      p.targetAlpha = 0.35 + Math.random() * 0.30;   // 提亮(0.35~0.65)
       p.ang = Math.random() * Math.PI * 2;
       p.rx = dustRxMax * (0.2 + Math.random() * 0.8);
       p.ry = dustRyMax * (0.2 + Math.random() * 0.8);
@@ -185,16 +186,21 @@
         p.y += (p.ty - p.y) * 0.09;
         lerpColor(p, 0.15);
       }
-    } else if (elapsed < T_BURST - T_AMBIENT_FADE) {
+    } else if (elapsed < T_BURST) {
       if (!burstDone) {
         burst();
         burstDone = true;
       }
       updateBurst();
     } else {
-      if (!ambientDone) { spawnDust(); ambientDone = true; }
-      updateBurst();   // 方印飞散余波继续
-      updateDust(dtMs);    // 光尘同时渐入,重叠过渡
+      // 爆完(飞散粒子 + 波环 + 闪光全部消散)后再进入常驻光尘,不与爆开重叠
+      if (!ambientDone &&
+          !particles.some(p => p.fading) && !ring && !flash) {
+        spawnDust();
+        ambientDone = true;
+      }
+      updateBurst();   // 余波(环/闪光)收尾
+      updateDust(dtMs);    // 光尘渐入
     }
   }
 
@@ -206,13 +212,18 @@
       p.y += p.vy;
       p.vx *= 0.955;
       p.vy *= 0.955;
-      p.alpha -= 0.018;
+      p.alpha -= 0.015;   // 衰减放缓:飞散粒子停留更久更亮
       if (p.alpha <= 0.02) particles.splice(i, 1);
     }
     if (ring) {
       ring.r += Math.max(7, Math.min(W, H) * 0.014);   // 波环扩散速度随区域缩放
       ring.alpha -= 0.016;
       if (ring.alpha <= 0) ring = null;
+    }
+    if (flash) {
+      flash.r += Math.max(9, Math.min(W, H) * 0.018);   // 闪光扩散
+      flash.alpha -= 0.028;
+      if (flash.alpha <= 0) flash = null;
     }
   }
 
@@ -268,6 +279,18 @@
       ctx.beginPath();
       ctx.arc(cx, cy, ring.r, 0, Math.PI * 2);
       ctx.stroke();
+    }
+
+    // 爆开中心闪光(径向渐变光晕,朱砂色快速消散)
+    if (flash) {
+      const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, flash.r);
+      grad.addColorStop(0, `rgba(246, 190, 112, ${flash.alpha * 0.8})`);   // 琥珀核心
+      grad.addColorStop(0.4, `rgba(232, 174, 96, ${flash.alpha * 0.4})`);  // 暖金中段
+      grad.addColorStop(1, `rgba(192, 86, 46, 0)`);                        // 朱砂边缘淡出
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(cx, cy, flash.r, 0, Math.PI * 2);
+      ctx.fill();
     }
   }
 

@@ -191,7 +191,7 @@ int HttpServerManager::OnHttpRequest(ZmHttpdTask* task, const BYTE* data, size_t
 // 静态文件服务
 // ============================================================================
 
-int HttpServerManager::ServeStaticFile(ZmHttpdTask* task, const std::string& uri)
+bool HttpServerManager::ResolveStaticPath(const std::string& uri, std::string& outPhysical)
 {
 	std::string filePath = (uri == "/" || uri.empty()) ? "/html/index.html" : uri;
 	// 剥离 query 参数(静态资源带版本号 /css/x.css?v=1,浏览器缓存破除)
@@ -207,44 +207,67 @@ int HttpServerManager::ServeStaticFile(ZmHttpdTask* task, const std::string& uri
 	std::wstring wRaw = ZmString::UTF8_To_Unicode(rawPath);
 	WCHAR normalized[MAX_PATH];
 	if (!GetFullPathNameW(wRaw.c_str(), MAX_PATH, normalized, nullptr))
-		return ZM_HTTP_STATUS_CODE_FORBIDDEN;
+		return false;
 	std::string normPath = ZmString::Unicode_To_UTF8(normalized);
 
 	WCHAR normRoot[MAX_PATH];
 	std::wstring wRoot = ZmString::UTF8_To_Unicode(m_wwwRoot);
 	if (!GetFullPathNameW(wRoot.c_str(), MAX_PATH, normRoot, nullptr))
-		return ZM_HTTP_STATUS_CODE_INTERNAL_ERROR;
+		return false;
 	std::string normRootStr = ZmString::Unicode_To_UTF8(normRoot);
 
+	// 路径穿越防护:规范化后必须位于 www 根内
 	if (normPath.size() < normRootStr.size() ||
 	    _strnicmp(normPath.c_str(), normRootStr.c_str(), normRootStr.size()) != 0)
-		return ZM_HTTP_STATUS_CODE_FORBIDDEN;
+		return false;
 
-	auto trySendFile = [&](const std::string& path) -> bool {
-		int fd = -1;
-		if (_wsopen_s(&fd, ZmString::UTF8_To_Unicode(path).c_str(), _O_RDONLY | _O_BINARY, _SH_DENYNO, 0) != 0 || fd == -1)
-			return false;
+	// 存在性 + 非空文件
+	int fd = -1;
+	if (_wsopen_s(&fd, ZmString::UTF8_To_Unicode(normPath).c_str(), _O_RDONLY | _O_BINARY, _SH_DENYNO, 0) != 0 || fd == -1)
+		return false;
+	int64_t fileSize = _filelengthi64(fd);
+	_close(fd);
+	if (fileSize <= 0)
+		return false;
 
-		int64_t fileSize = _filelengthi64(fd);
-		if (fileSize <= 0) { _close(fd); return false; }
+	outPhysical = normPath;
+	return true;
+}
 
-		task->PutReplyHeader("Content-type", ZmHttpUtil::GetMimeType(path));
-		// HTML 不缓存(入口页需立即可见更新,浏览器启发式缓存会滞留旧页);
-		// JS/CSS 用 URL 版本号破除缓存(改动递增 ?v=)
-		std::string lower = path;
-		std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-		if (lower.size() > 5 && lower.compare(lower.size() - 5, 5, ".html") == 0)
-			task->PutReplyHeader("Cache-Control", "no-cache");
+int HttpServerManager::SendFile(ZmHttpdTask* task, const std::string& physicalPath)
+{
+	int fd = -1;
+	if (_wsopen_s(&fd, ZmString::UTF8_To_Unicode(physicalPath).c_str(), _O_RDONLY | _O_BINARY, _SH_DENYNO, 0) != 0 || fd == -1)
+		return ZM_HTTP_STATUS_CODE_NOT_FOUND;
 
-		if (task->SetReplyFile(fd, 0, fileSize) != 0) { _close(fd); return false; }
-		return true;
-	};
+	int64_t fileSize = _filelengthi64(fd);
+	if (fileSize <= 0) { _close(fd); return ZM_HTTP_STATUS_CODE_NOT_FOUND; }
 
-	if (trySendFile(normPath)) return ZM_HTTP_STATUS_CODE_OK;
+	task->PutReplyHeader("Content-type", ZmHttpUtil::GetMimeType(physicalPath));
+	// HTML 不缓存(入口页需立即可见更新,浏览器启发式缓存会滞留旧页);
+	// JS/CSS 用 URL 版本号破除缓存(改动递增 ?v=)
+	std::string lower = physicalPath;
+	std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+	if (lower.size() > 5 && lower.compare(lower.size() - 5, 5, ".html") == 0)
+		task->PutReplyHeader("Cache-Control", "no-cache");
 
-	// 兜底：文件不存在时转到 404 页面（避免 404 页面自身再次兜底导致无限递归）
-	std::string notFoundPath = normRootStr + "\\html\\404.html";
-	if (normPath != notFoundPath && trySendFile(notFoundPath)) return ZM_HTTP_STATUS_CODE_NOT_FOUND;
+	if (task->SetReplyFile(fd, 0, fileSize) != 0) { _close(fd); return ZM_HTTP_STATUS_CODE_INTERNAL_ERROR; }
+	return ZM_HTTP_STATUS_CODE_OK;
+}
 
+int HttpServerManager::ServeStaticFile(ZmHttpdTask* task, const std::string& uri)
+{
+	std::string physical;
+	if (ResolveStaticPath(uri, physical))
+		return SendFile(task, physical);
+
+	// 默认策略:文件不存在时转到 404 页面(请求自身就是 404 页且缺失时自然落到空 404,无递归)
+	// 注意:404 页体已写入回复缓冲,但状态码必须返回 404 而非 SendFile 的 200
+	std::string notFound;
+	if (ResolveStaticPath("/html/404.html", notFound))
+	{
+		SendFile(task, notFound);
+		return ZM_HTTP_STATUS_CODE_NOT_FOUND;
+	}
 	return ZM_HTTP_STATUS_CODE_NOT_FOUND;
 }
