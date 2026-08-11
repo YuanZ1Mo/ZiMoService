@@ -5,6 +5,7 @@
 #include "zm_logger.h"
 
 #include <sqlite3.h>
+#include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 
@@ -457,7 +458,7 @@ UserModule::FieldError UserModule::ValidateNickname(const std::string& nick)
     size_t n = 0;
     if (!CountCodePoints(nick, n))
         return FieldError::Charset;
-    if (n < 1 || n > 20)
+    if (n < 1 || n > (size_t)kUserNicknameMaxCp)
         return FieldError::Length;
 
     size_t i = 0;
@@ -740,9 +741,9 @@ bool UserModule::CreateSession(const std::string& token, uint64_t userId, const 
     }
 
     Stmt st(m_userDb,
-        "INSERT INTO sessions(token_hash,user_id,create_ip,last_active_ip,"
+        "INSERT INTO sessions(token_hash,user_id,create_ip,"
         "create_time,last_active,expire_time,absolute_expire) "
-        "VALUES(?,?,?,?,?,?,?,?)");
+        "VALUES(?,?,?,?,?,?,?)");
     if (!st.p)
     {
         m_userDb.Rollback();
@@ -751,11 +752,10 @@ bool UserModule::CreateSession(const std::string& token, uint64_t userId, const 
     BindText(st.p, 1, tokenHash);
     BindInt(st.p, 2, (int64_t)userId);
     BindText(st.p, 3, ip);
-    BindText(st.p, 4, ip);
+    BindInt(st.p, 4, (int64_t)now);
     BindInt(st.p, 5, (int64_t)now);
-    BindInt(st.p, 6, (int64_t)now);
-    BindInt(st.p, 7, (int64_t)now + kUserSessionSliding);
-    BindInt(st.p, 8, (int64_t)now + kUserSessionAbsolute);
+    BindInt(st.p, 6, (int64_t)now + kUserSessionSliding);
+    BindInt(st.p, 7, (int64_t)now + kUserSessionAbsolute);
     if (sqlite3_step(st.p) != SQLITE_DONE)
     {
         m_userDb.Rollback();
@@ -821,18 +821,32 @@ void UserModule::TouchSession(uint64_t sessionId, time_t now, time_t lastActive)
     sqlite3_step(st.p);
 }
 
-void UserModule::DeleteSession(const std::string& token)
+void UserModule::RespondWithNewSession(ZmReqLoop* loop, ZmHttpdTask* task, uint64_t userId,
+                                       const std::string& ip, time_t now,
+                                       const std::string& fallbackAccount,
+                                       const std::string& fallbackNickname,
+                                       bool forceChangeFlag)
 {
-    std::string tokenHash;
-    if (!Sha256Hex(token, tokenHash))
+    // 签发全新会话(防会话固定)并返回用户信息
+    std::string token;
+    if (!GenSessionToken(token) || !CreateSession(token, userId, ip, now))
+    {
+        ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误");
         return;
+    }
+    SetSessionCookie(task, token);
 
-    std::lock_guard<std::mutex> lk(m_userDb.Mutex());
-    Stmt st(m_userDb, "DELETE FROM sessions WHERE token_hash=?");
-    if (!st.p)
-        return;
-    BindText(st.p, 1, tokenHash);
-    sqlite3_step(st.p);
+    SessionRow sr;
+    FindSession(token, now, sr);   // 取完整会话行组装
+    if (!fallbackAccount.empty() && sr.account.empty())
+        sr.account = fallbackAccount;
+    if (!fallbackNickname.empty() && sr.nickname.empty())
+        sr.nickname = fallbackNickname;
+    ZMJSON rsp;
+    FillUserResult(rsp["result"]["user"], sr);
+    if (forceChangeFlag)
+        rsp["result"]["forceChange"] = true;   // 前端据此跳强制改密页
+    ZmReqLoopRest::ResponseJson(loop, 200, rsp);
 }
 
 void UserModule::RevokeAllSessions(uint64_t userId)
@@ -998,8 +1012,10 @@ void UserModule::HandleLogin(ZmReqLoop* loop, const ZMJSON& body, ZmHttpdTask* t
             : std::string(reinterpret_cast<const char*>(kDummySalt), sizeof(kDummySalt)),
         pwdHash);
     const std::string& targetHash = forceChange ? tempHash : hash;
+    bool pwdOk = userExists && pwdHash.size() == targetHash.size() &&
+                 CRYPTO_memcmp(pwdHash.data(), targetHash.data(), pwdHash.size()) == 0;
 
-    if (!userExists || pwdHash != targetHash)
+    if (!pwdOk)
     {
         // 账号不存在也记录锁定(account 允许不存在于 users,防探测)
         RecordFail(naccount, ip, now);
@@ -1023,25 +1039,7 @@ void UserModule::HandleLogin(ZmReqLoop* loop, const ZMJSON& body, ZmHttpdTask* t
     }
 
     // ⑤ 签发全新会话(防会话固定)并返回用户信息
-    std::string token;
-    if (!GenSessionToken(token) || !CreateSession(token, userId, ip, now))
-    {
-        ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误");
-        return;
-    }
-    SetSessionCookie(task, token);
-
-    SessionRow sr;
-    FindSession(token, now, sr);   // 取完整会话行组装
-    if (sr.account.empty())
-        sr.account = naccount;
-    if (sr.nickname.empty())
-        sr.nickname = nickname;
-    ZMJSON rsp;
-    FillUserResult(rsp["result"]["user"], sr);
-    if (forceChange)
-        rsp["result"]["forceChange"] = true;   // 前端据此跳强制改密页
-    ZmReqLoopRest::ResponseJson(loop, 200, rsp);
+    RespondWithNewSession(loop, task, userId, ip, now, naccount, nickname, forceChange);
 }
 
 void UserModule::HandleCompleteChange(ZmReqLoop* loop, const ZMJSON& body, ZmHttpdTask* task)
@@ -1188,10 +1186,25 @@ void UserModule::HandleRegister(ZmReqLoop* loop, const ZMJSON& body, ZmHttpdTask
         ZmReqLoopRest::ResponseError(loop, 400, FieldErrorText(pe, "password"));
         return;
     }
-    // 昵称可选:不填则默认与账号一致
+    // 昵称可选:不填则默认与账号一致(账号超过昵称上限时按码点截断,保持自校验规则成立)
     if (nnickname.empty())
     {
-        nnickname = naccount;
+        size_t cps = 0;
+        if (CountCodePoints(naccount, cps) && cps > kUserNicknameMaxCp)
+        {
+            size_t i = 0, cp = 0;
+            while (i < naccount.size() && cp < (size_t)kUserNicknameMaxCp)
+            {
+                unsigned char c = (unsigned char)naccount[i];
+                i += (c < 0x80) ? 1 : (c < 0xE0) ? 2 : (c < 0xF0) ? 3 : 4;
+                ++cp;
+            }
+            nnickname = naccount.substr(0, i);
+        }
+        else
+        {
+            nnickname = naccount;
+        }
     }
     else
     {
@@ -1276,19 +1289,7 @@ void UserModule::HandleRegister(ZmReqLoop* loop, const ZMJSON& body, ZmHttpdTask
     }
 
     // ⑤ 自动登录:签发全新会话
-    std::string token;
-    if (!GenSessionToken(token) || !CreateSession(token, userId, ip, now))
-    {
-        ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误");
-        return;
-    }
-    SetSessionCookie(task, token);
-
-    SessionRow sr;
-    FindSession(token, now, sr);
-    ZMJSON rsp;
-    FillUserResult(rsp["result"]["user"], sr);
-    ZmReqLoopRest::ResponseJson(loop, 200, rsp);
+    RespondWithNewSession(loop, task, userId, ip, now, "", "", false);
 }
 
 void UserModule::HandleReset(ZmReqLoop* loop, const ZMJSON& body, ZmHttpdTask* task,
@@ -1380,8 +1381,10 @@ void UserModule::HandleReset(ZmReqLoop* loop, const ZMJSON& body, ZmHttpdTask* t
     std::string rescueHash;
     Pbkdf2(nrescue, userExists ? salt
         : std::string(reinterpret_cast<const char*>(kDummySalt), sizeof(kDummySalt)), rescueHash);
+    bool rescueOk = userExists && rescueHash.size() == hash.size() &&
+                    CRYPTO_memcmp(rescueHash.data(), hash.data(), rescueHash.size()) == 0;
 
-    if (!userExists || rescueHash != hash)
+    if (!rescueOk)
     {
         // 防枚举:账号不存在与救援码错误统一文案,且同样计入锁定
         RecordFail(naccount, ip, now);
@@ -1421,19 +1424,7 @@ void UserModule::HandleReset(ZmReqLoop* loop, const ZMJSON& body, ZmHttpdTask* t
         }
     }
 
-    std::string token;
-    if (!GenSessionToken(token) || !CreateSession(token, userId, ip, now))
-    {
-        ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误");
-        return;
-    }
-    SetSessionCookie(task, token);
-
-    SessionRow sr;
-    FindSession(token, now, sr);
-    ZMJSON rsp;
-    FillUserResult(rsp["result"]["user"], sr);
-    ZmReqLoopRest::ResponseJson(loop, 200, rsp);
+    RespondWithNewSession(loop, task, userId, ip, now, "", "", false);
 }
 
 void UserModule::HandleLogout(ZmReqLoop* loop, ZmHttpdTask* task)
@@ -1537,8 +1528,9 @@ bool UserModule::GetUserRole(uint64_t userId, std::string& role)
     {
         const char* r = reinterpret_cast<const char*>(sqlite3_column_text(st.p, 0));
         role = r ? r : "user";
+        return true;
     }
-    return true;
+    return false;   // 行不存在:输出默认 "user",由调用方按返回值处理
 }
 
 bool UserModule::GetUserAccount(uint64_t userId, std::string& account)
@@ -1656,14 +1648,21 @@ bool UserModule::WriteAuditLog(uint64_t operatorId, const std::string& operatorA
     return true;
 }
 
-bool UserModule::WriteBusinessLog(const char* table, uint64_t opId,
+bool UserModule::WriteBusinessLog(BizLogTable table, uint64_t opId,
                                   const std::string& opAccount, const std::string& action,
                                   const std::string& targetType, uint64_t targetId,
                                   const std::string& detail)
 {
+    // 枚举 → 表名(代码内常量映射,杜绝运行时拼接)
+    const char* tableName = "filehub_logs";
+    switch (table)
+    {
+    case BizLogTable::FileHubLogs: tableName = "filehub_logs"; break;
+    }
+
     std::lock_guard<std::mutex> lk(m_auditDb.Mutex());
     Stmt st(m_auditDb,
-        ("INSERT INTO " + std::string(table) +
+        ("INSERT INTO " + std::string(tableName) +
          "(operator_id,operator_account,action,target_type,target_id,detail,create_time) "
          "VALUES(?,?,?,?,?,?,?)").c_str());
     if (!st.p)
@@ -1678,7 +1677,7 @@ bool UserModule::WriteBusinessLog(const char* table, uint64_t opId,
     if (sqlite3_step(st.p) != SQLITE_DONE)
     {
         DEFAULT_LOG_ERROR("[User] 业务日志落库失败: table={} action={} target={}",
-                          table, action, targetId);
+                          tableName, action, targetId);
         return false;
     }
     return true;
@@ -1720,12 +1719,21 @@ bool UserModule::GetUserModules(uint64_t userId, const std::string& role,
 bool UserModule::ListUsers(const std::string& keyword, const std::string& role, int status,
                            int page, int pageSize, int& total, std::vector<UserRow>& list)
 {
-    const std::string like = "%" + keyword + "%";
+    // keyword 转义 LIKE 通配符(\ % _),防用户输入通配符扩大匹配面
+    std::string esc;
+    esc.reserve(keyword.size());
+    for (char c : keyword)
+    {
+        if (c == '\\' || c == '%' || c == '_')
+            esc += '\\';
+        esc += c;
+    }
+    const std::string like = "%" + esc + "%";
     if (page < 1) page = 1;
-    if (pageSize < 1 || pageSize > 100) pageSize = 20;
+    if (pageSize < 1 || pageSize > kUserPageSizeMax) pageSize = kUserPageSizeDefault;
 
     // 动态筛选条件:账号模糊 + 角色 + 状态
-    std::string cond = " deleted=0 AND account LIKE ?";
+    std::string cond = " deleted=0 AND account LIKE ? ESCAPE '\\'";
     if (!role.empty())
         cond += " AND role=?";
     if (status == 1)
@@ -1841,10 +1849,10 @@ bool UserModule::SetUserDeleted(uint64_t userId, bool deleted)
 
 bool UserModule::ResetUserPassword(uint64_t userId, std::string& tempPassword)
 {
-    // 12 位随机可打印字符(a-zA-Z0-9)
+    // kUserTempPassLen 位随机可打印字符(a-zA-Z0-9)
     static const char kCharset[] =
         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    unsigned char buf[12];
+    unsigned char buf[kUserTempPassLen];
     if (RAND_bytes(buf, sizeof(buf)) != 1)
         return false;
     tempPassword.clear();
@@ -1958,6 +1966,10 @@ bool UserModule::SetUserModules(uint64_t userId, const std::vector<std::string>&
 
 bool UserModule::SetUserRole(uint64_t userId, const std::string& role)
 {
+    // 角色白名单(模块内防御,不依赖调用方校验)
+    if (role != "user" && role != "admin" && role != "developer")
+        return false;
+
     std::lock_guard<std::mutex> lk(m_userDb.Mutex());
     Stmt st(m_userDb, "UPDATE users SET role=? WHERE id=?");
     if (!st.p)
@@ -2014,8 +2026,8 @@ void UserModule::CleanLoop()
                 lastCleanDay = tmv.tm_mday;
             }
         }
-        // 轮询间隔 60s(可被 Shutdown 打断)
-        for (int i = 0; i < 60 && !m_gone.load(); ++i)
+        // 轮询间隔(可被 Shutdown 打断)
+        for (int i = 0; i < kUserCleanPollSec && !m_gone.load(); ++i)
             std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 }

@@ -136,7 +136,7 @@ private:
     std::thread m_captureThread;
     std::unordered_map<ZmHttpdTask*, Subscriber*> m_subscribers;  // 活跃订阅者(仅锁内访问)
     std::vector<Subscriber*> m_zombies;                         // 已退出发送线程,待 ReapZombies 回收(仅锁内访问)
-    uint32_t m_nextSeq = 1;                                     // 全局递增序号,重启不归零
+    uint32_t m_nextSeq = 1;                                     // 全局递增序号(进程内;重启归零,注释修正)
 
     // 采集资源(仅采集线程使用;StopCapture 后置空):
     void* m_opusEncoder   = nullptr;    // OpusEncoder*

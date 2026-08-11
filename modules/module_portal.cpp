@@ -60,8 +60,9 @@ bool PortalModule::DispatchRest(ZmReqLoop* loop, evhttp_cmd_type verb, const std
         return true;
     }
 
-    // 用户管理(/portal/users*):POST 需解析 body
-    if (path.rfind("/portal/users", 0) == 0)
+    // 用户管理(/portal/users*):POST 需解析 body;段边界匹配,防 /portal/usersxyz 误配
+    if (path.rfind("/portal/users", 0) == 0 &&
+        (path.size() == 12 || path[12] == '/'))
     {
         ZMJSON req;
         if (verb == EVHTTP_REQ_POST)
@@ -150,9 +151,12 @@ void PortalModule::HandleUserManage(ZmReqLoop* loop, evhttp_cmd_type verb,
     if (verb == EVHTTP_REQ_GET && path.rfind("/portal/users/", 0) == 0)
     {
         const std::string rest = path.substr(14);
-        uint64_t userId = strtoull(rest.c_str(), nullptr, 10);
-        if (userId == 0)
+        char* end = nullptr;
+        errno = 0;
+        uint64_t userId = strtoull(rest.c_str(), &end, 10);
+        if (end == rest.c_str() || (end && *end != '\0') || errno == ERANGE || userId == 0)
         {
+            // 严格解析:多余路径段("1/foo")/非数字/溢出一律 404
             ZmReqLoopRest::ResponseError(loop, 404, "用户不存在");
             return;
         }

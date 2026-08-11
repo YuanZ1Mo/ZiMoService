@@ -36,6 +36,15 @@ static constexpr int64_t kUserSessionSliding = 30LL * 24 * 3600;
 static constexpr int64_t kUserSessionAbsolute = 90LL * 24 * 3600;
 /** 会话:每账号活跃会话上限 */
 static constexpr int kUserMaxSessions = 5;
+/** 昵称最大码点数(ValidateNickname 与注册默认昵称共用) */
+static constexpr int kUserNicknameMaxCp = 20;
+/** 管理员重置的临时密码长度 */
+static constexpr int kUserTempPassLen = 12;
+/** 用户列表:默认页大小 / 页大小上限 */
+static constexpr int kUserPageSizeDefault = 20;
+static constexpr int kUserPageSizeMax = 100;
+/** 清理/校验线程轮询间隔(秒) */
+static constexpr int kUserCleanPollSec = 60;
 /** 会话:续期落库节流(秒) */
 static constexpr int64_t kUserTouchThrottle = 60;
 /** 密码学:PBKDF2 迭代次数 */
@@ -144,12 +153,15 @@ public:
                        const std::string& action, uint64_t targetId,
                        const std::string& targetAccount, const std::string& detail);
 
+    /** @brief 业务日志表(枚举替代运行时表名拼接,防误传) */
+    enum class BizLogTable { FileHubLogs };
+
     /**
-     * @brief 写入业务操作日志(业务日志库,表名参数化,如 filehub_logs;结构含 target_type 列)
-     * @param table 表名(代码内常量,非用户输入)
+     * @brief 写入业务操作日志(业务日志库,结构含 target_type 列)
+     * @param table 表枚举(内部映射表名)
      * @param detail 操作细节 JSON 字符串
      */
-    bool WriteBusinessLog(const char* table, uint64_t opId, const std::string& opAccount,
+    bool WriteBusinessLog(BizLogTable table, uint64_t opId, const std::string& opAccount,
                           const std::string& action, const std::string& targetType,
                           uint64_t targetId, const std::string& detail);
 
@@ -297,7 +309,16 @@ private:
     /** @brief 续期(last_active/expire_time);距上次 < kUserTouchThrottle 跳过落库 */
     void TouchSession(uint64_t sessionId, time_t now, time_t lastActive);
 
-    void DeleteSession(const std::string& token);
+    /**
+     * @brief 会话签发尾部(登录/注册/重置共用):签发全新 token → 种 cookie → 查回 →
+     *        组装 user 响应;失败时已发出 500 响应,调用方直接 return
+     * @param fallbackAccount/Nickname 查回缺失时的兜底(如登录请求刚注册的昵称);空=不兜底
+     * @param forceChangeFlag 强制改密标记(前端据此跳改密页)
+     */
+    void RespondWithNewSession(ZmReqLoop* loop, ZmHttpdTask* task, uint64_t userId,
+                               const std::string& ip, time_t now,
+                               const std::string& fallbackAccount,
+                               const std::string& fallbackNickname, bool forceChangeFlag);
 
     /** @brief 从 Cookie 头解析 zm_session= 值 */
     static bool ExtractCookieToken(ZmHttpdTask* task, std::string& token);

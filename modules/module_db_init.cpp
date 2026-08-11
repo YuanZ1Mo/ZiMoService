@@ -44,7 +44,6 @@ static const ZmDbColumn kSessionsCols[] = {
     {"token_hash",      "TEXT NOT NULL UNIQUE"},
     {"user_id",         "INTEGER NOT NULL"},
     {"create_ip",       "TEXT NOT NULL"},
-    {"last_active_ip",  "TEXT NOT NULL"},
     {"create_time",     "INTEGER NOT NULL"},
     {"last_active",     "INTEGER NOT NULL"},
     {"expire_time",     "INTEGER NOT NULL"},

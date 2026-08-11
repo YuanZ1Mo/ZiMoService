@@ -60,6 +60,8 @@ ServicePortal::ServicePortal()
 
 ServicePortal::~ServicePortal()
 {
+	Shutdown();   // 幂等兜底:OnStop 路径被绕过时,业务线程 join 与连接关闭仍按序收尾
+
 	delete m_audioModule;
 	m_audioModule = nullptr;
 	delete m_fileHubModule;

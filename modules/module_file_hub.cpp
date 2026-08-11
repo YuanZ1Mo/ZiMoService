@@ -468,7 +468,7 @@ void FileHubModule::Log(uint64_t opId, const std::string& opAccount,
                         uint64_t targetId, const std::string& detail)
 {
     if (m_userModule)
-        m_userModule->WriteBusinessLog("filehub_logs", opId, opAccount, action,
+        m_userModule->WriteBusinessLog(UserModule::BizLogTable::FileHubLogs, opId, opAccount, action,
                                        targetType, targetId, detail);
 }
 
@@ -1122,7 +1122,8 @@ void FileHubModule::HandleMkdir(ZmReqLoop* loop, const ZMJSON& body, int space, 
     {
         if (GetLastError() == ERROR_ALREADY_EXISTS)
         {
-            // 物理目录已存在但 DB 无行(漂移):补查 dirs 行,幂等返回
+            // 物理目录已存在但 DB 无行(漂移/并发窗口):补查 dirs 行;查不到则补行自愈,
+            // 幂等返回(不再误报 409)
             std::lock_guard<std::mutex> lk(m_db.Mutex());
             Stmt st(m_db, "SELECT id FROM dirs WHERE space=? AND parent_id=? AND name=?");
             if (st.p)
@@ -1133,6 +1134,24 @@ void FileHubModule::HandleMkdir(ZmReqLoop* loop, const ZMJSON& body, int space, 
                 if (sqlite3_step(st.p) == SQLITE_ROW)
                 {
                     existedId = (uint64_t)sqlite3_column_int64(st.p, 0);
+                    ZmReqLoopRest::ResponseJson(loop, 200,
+                        {{"result", {{"ok", true}, {"dirId", (int64_t)existedId}, {"existed", true}}}});
+                    return;
+                }
+            }
+            Stmt ins(m_db,
+                "INSERT INTO dirs(space,parent_id,name,create_by,create_time) VALUES(?,?,?,?,?)");
+            if (ins.p)
+            {
+                BindInt(ins.p, 1, (int64_t)space);
+                BindInt(ins.p, 2, (int64_t)parentId);
+                BindText(ins.p, 3, name);
+                BindInt(ins.p, 4, (int64_t)opUid);
+                BindInt(ins.p, 5, (int64_t)time(nullptr));
+                if (sqlite3_step(ins.p) == SQLITE_DONE)
+                {
+                    existedId = (uint64_t)m_db.LastInsertRowId();
+                    DEFAULT_LOG_INFO("[FileHub] mkdir 漂移自愈:space={} 补行 {}", space, name);
                     ZmReqLoopRest::ResponseJson(loop, 200,
                         {{"result", {{"ok", true}, {"dirId", (int64_t)existedId}, {"existed", true}}}});
                     return;
@@ -2068,9 +2087,11 @@ void FileHubModule::HandleDelete(ZmReqLoop* loop, const ZMJSON& body, uint64_t o
                     return;
                 }
             }
+            // 级联清理分享:子树全部 dirs + files 的 shares 行(dirs 含顶层自身)
+            for (uint64_t d : dirs)
+                RemoveSharesOf("dir", d);
             for (uint64_t fid : fileIds)
                 RemoveSharesOf("file", fid);
-            RemoveSharesOf("dir", id);
             Log(opUid, opAccount, "delete", "dir", id, "{\"name\":\"" + name + "\"}");
         }
     }
