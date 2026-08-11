@@ -88,6 +88,10 @@ private:
     /** @brief 递归收集目录子树全部 dir id(含自身) */
     void CollectSubtreeDirs(int space, uint64_t dirId, std::vector<uint64_t>& out);
 
+    /** @brief 同上,但要求调用方已持 m_db.Mutex()(Verify 级联清理等锁内场景;
+     *          勿在锁外调用,否则嵌套加锁抛异常) */
+    void CollectSubtreeDirsLocked(int space, uint64_t dirId, std::vector<uint64_t>& out);
+
     /** @brief 递归收集子树全部文件行(space,dirId 子树的 files) */
     void CollectSubtreeFiles(int space, uint64_t dirId, std::vector<uint64_t>& out);
 

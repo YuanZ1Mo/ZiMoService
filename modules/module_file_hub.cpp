@@ -279,8 +279,13 @@ std::string FileHubModule::EntryAbsPath(int space, uint64_t dirId, const std::st
 
 void FileHubModule::CollectSubtreeDirs(int space, uint64_t dirId, std::vector<uint64_t>& out)
 {
-    out.push_back(dirId);
     std::lock_guard<std::mutex> lk(m_db.Mutex());
+    CollectSubtreeDirsLocked(space, dirId, out);
+}
+
+void FileHubModule::CollectSubtreeDirsLocked(int space, uint64_t dirId, std::vector<uint64_t>& out)
+{
+    out.push_back(dirId);
     for (size_t i = 0; i < out.size(); ++i)
     {
         Stmt st(m_db, "SELECT id FROM dirs WHERE space=? AND parent_id=?");
@@ -1521,37 +1526,6 @@ void FileHubModule::HandleCopy(ZmReqLoop* loop, const ZMJSON& body, uint64_t opU
                 return;
             }
         }
-        // 目标同名冲突
-        {
-            std::lock_guard<std::mutex> lk(m_db.Mutex());
-            if (type == "file")
-            {
-                Stmt st(m_db, "SELECT 1 FROM files WHERE space=? AND dir_id=? AND name=?");
-                if (!st.p) { ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误"); return; }
-                BindInt(st.p, 1, (int64_t)tgtSpace);
-                BindInt(st.p, 2, (int64_t)targetDir);
-                BindText(st.p, 3, name);
-                if (sqlite3_step(st.p) == SQLITE_ROW)
-                {
-                    ZmReqLoopRest::ResponseError(loop, 409, "同名文件已存在");
-                    return;
-                }
-            }
-            else
-            {
-                Stmt st(m_db, "SELECT 1 FROM dirs WHERE space=? AND parent_id=? AND name=?");
-                if (!st.p) { ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误"); return; }
-                BindInt(st.p, 1, (int64_t)tgtSpace);
-                BindInt(st.p, 2, (int64_t)targetDir);
-                BindText(st.p, 3, name);
-                if (sqlite3_step(st.p) == SQLITE_ROW)
-                {
-                    ZmReqLoopRest::ResponseError(loop, 409, "同名文件已存在");
-                    return;
-                }
-            }
-        }
-
         std::string tgtAbs;
         if (!DirAbsPath(tgtSpace, targetDir, tgtAbs))
         {
@@ -1561,16 +1535,40 @@ void FileHubModule::HandleCopy(ZmReqLoop* loop, const ZMJSON& body, uint64_t opU
 
         if (type == "file")
         {
+            // 同名冲突 + 复制 + 落库整体持锁(与上传同款:并发同名复制由锁串行化,
+            // 检查即最终裁决,后到者 409 且不触碰先到者的物理文件)
             std::string srcAbs = EntryAbsPath(space, dirId, name);
             std::string dstAbs = tgtAbs + "\\" + name;
-            if (!CopyFileW(ZmString::UTF8_To_Unicode(srcAbs).c_str(),
-                           ZmString::UTF8_To_Unicode(dstAbs).c_str(), FALSE))
-            {
-                ZmReqLoopRest::ResponseError(loop, 500, "复制失败");
-                return;
-            }
             {
                 std::lock_guard<std::mutex> lk(m_db.Mutex());
+                {
+                    Stmt st(m_db, "SELECT 1 FROM files WHERE space=? AND dir_id=? AND name=?");
+                    if (!st.p) { ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误"); return; }
+                    BindInt(st.p, 1, (int64_t)tgtSpace);
+                    BindInt(st.p, 2, (int64_t)targetDir);
+                    BindText(st.p, 3, name);
+                    if (sqlite3_step(st.p) == SQLITE_ROW)
+                    {
+                        ZmReqLoopRest::ResponseError(loop, 409, "同名文件已存在");
+                        return;
+                    }
+                    Stmt st2(m_db, "SELECT 1 FROM dirs WHERE space=? AND parent_id=? AND name=?");
+                    if (!st2.p) { ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误"); return; }
+                    BindInt(st2.p, 1, (int64_t)tgtSpace);
+                    BindInt(st2.p, 2, (int64_t)targetDir);
+                    BindText(st2.p, 3, name);
+                    if (sqlite3_step(st2.p) == SQLITE_ROW)
+                    {
+                        ZmReqLoopRest::ResponseError(loop, 409, "同名文件已存在");
+                        return;
+                    }
+                }
+                if (!CopyFileW(ZmString::UTF8_To_Unicode(srcAbs).c_str(),
+                               ZmString::UTF8_To_Unicode(dstAbs).c_str(), FALSE))
+                {
+                    ZmReqLoopRest::ResponseError(loop, 500, "复制失败");
+                    return;
+                }
                 Stmt st(m_db,
                     "INSERT INTO files(space,dir_id,name,size,mtime,uploader_id,upload_time) "
                     "VALUES(?,?,?,?,?,?,?)");
@@ -1621,31 +1619,56 @@ void FileHubModule::HandleCopy(ZmReqLoop* loop, const ZMJSON& body, uint64_t opU
             std::string dstRoot = tgtAbs + "\\" + name;
             bool failed = false;
 
-            // 建根目录 + dirs 行
-            if (!CreateDirectoryW(ZmString::UTF8_To_Unicode(dstRoot).c_str(), nullptr) &&
-                GetLastError() != ERROR_ALREADY_EXISTS)
-            {
-                failed = true;
-            }
-            else
+            // 根目录:同名冲突 + 建目录 + dirs 行整体持锁 —— 并发同名目录复制由锁串行化,
+            // 输者在此 409 退出,不进入 DFS 也不触发回滚,杜绝"输者回滚删除赢者已复制内容"
             {
                 std::lock_guard<std::mutex> lk(m_db.Mutex());
-                Stmt st(m_db,
-                    "INSERT INTO dirs(space,parent_id,name,create_by,create_time) VALUES(?,?,?,?,?)");
-                if (!st.p)
-                    failed = true;
-                else
                 {
+                    Stmt st(m_db, "SELECT 1 FROM dirs WHERE space=? AND parent_id=? AND name=?");
+                    if (!st.p) { ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误"); return; }
                     BindInt(st.p, 1, (int64_t)tgtSpace);
                     BindInt(st.p, 2, (int64_t)targetDir);
                     BindText(st.p, 3, name);
-                    BindInt(st.p, 4, (int64_t)opUid);
-                    BindInt(st.p, 5, (int64_t)time(nullptr));
-                    if (sqlite3_step(st.p) != SQLITE_DONE)
+                    if (sqlite3_step(st.p) == SQLITE_ROW)
+                    {
+                        ZmReqLoopRest::ResponseError(loop, 409, "同名文件已存在");
+                        return;
+                    }
+                    Stmt st2(m_db, "SELECT 1 FROM files WHERE space=? AND dir_id=? AND name=?");
+                    if (!st2.p) { ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误"); return; }
+                    BindInt(st2.p, 1, (int64_t)tgtSpace);
+                    BindInt(st2.p, 2, (int64_t)targetDir);
+                    BindText(st2.p, 3, name);
+                    if (sqlite3_step(st2.p) == SQLITE_ROW)
+                    {
+                        ZmReqLoopRest::ResponseError(loop, 409, "同名文件已存在");
+                        return;
+                    }
+                }
+                if (!CreateDirectoryW(ZmString::UTF8_To_Unicode(dstRoot).c_str(), nullptr) &&
+                    GetLastError() != ERROR_ALREADY_EXISTS)
+                {
+                    failed = true;
+                }
+                else
+                {
+                    Stmt st(m_db,
+                        "INSERT INTO dirs(space,parent_id,name,create_by,create_time) VALUES(?,?,?,?,?)");
+                    if (!st.p)
                         failed = true;
                     else
-                        stack.push_back({srcRoot, dstRoot, id,
-                                         (uint64_t)m_db.LastInsertRowId()});
+                    {
+                        BindInt(st.p, 1, (int64_t)tgtSpace);
+                        BindInt(st.p, 2, (int64_t)targetDir);
+                        BindText(st.p, 3, name);
+                        BindInt(st.p, 4, (int64_t)opUid);
+                        BindInt(st.p, 5, (int64_t)time(nullptr));
+                        if (sqlite3_step(st.p) != SQLITE_DONE)
+                            failed = true;
+                        else
+                            stack.push_back({srcRoot, dstRoot, id,
+                                             (uint64_t)m_db.LastInsertRowId()});
+                    }
                 }
             }
 
@@ -1968,61 +1991,63 @@ void FileHubModule::HandleUpload(ZmReqLoop* loop, ZmHttpdTask* task, int space, 
         ZmReqLoopRest::ResponseError(loop, 404, "目录不存在");
         return;
     }
-    // 同名冲突
+    // 同名冲突 + 写盘 + 落库整体持锁:并发同名上传由该锁串行化,冲突检查即最终裁决,
+    // 后到者 409 且不触碰先到者的物理文件。原分锁实现存在窗口:两请求都通过检查 → 互覆写
+    // 同一路径 → INSERT 撞 UNIQUE 回滚误删对方文件,造成数据丢失。
+    std::string absPath = EntryAbsPath(space, dirId, name);   // 路径解析自持锁,须在整体锁外
+    uint64_t size = 0;
+    uint64_t newId = 0;
     {
         std::lock_guard<std::mutex> lk(m_db.Mutex());
-        Stmt st(m_db, "SELECT 1 FROM files WHERE space=? AND dir_id=? AND name=?");
-        if (!st.p) { ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误"); return; }
-        BindInt(st.p, 1, (int64_t)space);
-        BindInt(st.p, 2, (int64_t)dirId);
-        BindText(st.p, 3, name);
-        if (sqlite3_step(st.p) == SQLITE_ROW)
+
+        // 同名冲突
+        Stmt stChk(m_db, "SELECT 1 FROM files WHERE space=? AND dir_id=? AND name=?");
+        if (!stChk.p) { ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误"); return; }
+        BindInt(stChk.p, 1, (int64_t)space);
+        BindInt(stChk.p, 2, (int64_t)dirId);
+        BindText(stChk.p, 3, name);
+        if (sqlite3_step(stChk.p) == SQLITE_ROW)
         {
             DEFAULT_LOG_INFO("[FileHub] upload 409: space={} dir_id={} name={}",
                              space, dirId, name ? name : "");
             ZmReqLoopRest::ResponseError(loop, 409, "同名文件已存在");
             return;
         }
-    }
 
-    std::string absPath = EntryAbsPath(space, dirId, name);
-    uint64_t size = 0;
-    int rc = ReceiveFileStream(task, absPath, size);
-    if (rc != 0)
-    {
-        ZmReqLoopRest::ResponseError(loop, 500, "上传失败");
-        return;
-    }
-
-    // X-File-Size 声明校验(有则比对,不符删半成品)
-    const char* declared = task->GetRequestHeader("X-File-Size");
-    if (declared && declared[0])
-    {
-        uint64_t expected = (uint64_t)strtoull(declared, nullptr, 10);
-        if (expected != size)
+        // 写盘(锁内:冲突检查与落库之间不允许其他请求插入)
+        if (ReceiveFileStream(task, absPath, size) != 0)
         {
             DeleteFileW(ZmString::UTF8_To_Unicode(absPath).c_str());
-            ZmReqLoopRest::ResponseError(loop, 400, "文件大小不一致");
+            ZmReqLoopRest::ResponseError(loop, 500, "上传失败");
             return;
         }
-    }
-    // 允许 0 字节文件上传(空配置文件等合法场景;ReceiveFileStream 对空 body 创建空文件)
 
-    // 落盘 stat
-    WIN32_FILE_ATTRIBUTE_DATA fad;
-    int64_t mtime = time(nullptr);
-    if (GetFileAttributesExW(ZmString::UTF8_To_Unicode(absPath).c_str(),
-                             GetFileExInfoStandard, &fad))
-    {
-        ULARGE_INTEGER mt;
-        mt.HighPart = fad.ftLastWriteTime.dwHighDateTime;
-        mt.LowPart = fad.ftLastWriteTime.dwLowDateTime;
-        mtime = (int64_t)(mt.QuadPart / 10000000ULL - 11644473600ULL);   // FILETIME → unix
-    }
+        // X-File-Size 声明校验(有则比对,不符删半成品)
+        const char* declared = task->GetRequestHeader("X-File-Size");
+        if (declared && declared[0])
+        {
+            uint64_t expected = (uint64_t)strtoull(declared, nullptr, 10);
+            if (expected != size)
+            {
+                DeleteFileW(ZmString::UTF8_To_Unicode(absPath).c_str());
+                ZmReqLoopRest::ResponseError(loop, 400, "文件大小不一致");
+                return;
+            }
+        }
+        // 允许 0 字节文件上传(空配置文件等合法场景;ReceiveFileStream 对空 body 创建空文件)
 
-    uint64_t newId = 0;
-    {
-        std::lock_guard<std::mutex> lk(m_db.Mutex());
+        // 落盘 stat
+        WIN32_FILE_ATTRIBUTE_DATA fad;
+        int64_t mtime = time(nullptr);
+        if (GetFileAttributesExW(ZmString::UTF8_To_Unicode(absPath).c_str(),
+                                 GetFileExInfoStandard, &fad))
+        {
+            ULARGE_INTEGER mt;
+            mt.HighPart = fad.ftLastWriteTime.dwHighDateTime;
+            mt.LowPart = fad.ftLastWriteTime.dwLowDateTime;
+            mtime = (int64_t)(mt.QuadPart / 10000000ULL - 11644473600ULL);   // FILETIME → unix
+        }
+
         Stmt st(m_db,
             "INSERT INTO files(space,dir_id,name,size,mtime,uploader_id,upload_time) "
             "VALUES(?,?,?,?,?,?,?)");
@@ -2957,31 +2982,67 @@ void FileHubModule::VerifySpaceTree(int space, const std::string& spaceAbs)
         {
             if (dbDirNames.count(nm))
                 continue;
-            // 补建 dirs 行
+            // 补建 dirs 行(OR IGNORE:与请求并发时行已由对方创建 → 幂等跳过,防撞 UNIQUE 误报)
             Stmt ins(m_db,
-                "INSERT INTO dirs(space,parent_id,name,create_by,create_time) VALUES(?,?,?,0,0)");
+                "INSERT OR IGNORE INTO dirs(space,parent_id,name,create_by,create_time) VALUES(?,?,?,0,0)");
             if (ins.p)
             {
                 BindInt(ins.p, 1, (int64_t)space);
                 BindInt(ins.p, 2, (int64_t)node.dbDirId);
                 BindText(ins.p, 3, nm);
                 sqlite3_step(ins.p);
-                DEFAULT_LOG_INFO("[FileHub] 校验补建目录: space={} {}", space, nm);
+                if (m_db.Changes() > 0)
+                    DEFAULT_LOG_INFO("[FileHub] 校验补建目录: space={} {}", space, nm);
             }
         }
-        // 删 DB 有而物理无的目录行
+        // 删 DB 有而物理无的目录行(级联清其子树:物理目录整体丢失 → 子树 dirs/files 行全为孤儿;
+        // 原实现只删单行,遗留 files.dir_id 指向已删目录的幽灵文件)
         for (const auto& dbName : dbDirNames)
         {
             if (std::find(dirNames.begin(), dirNames.end(), dbName) == dirNames.end())
             {
-                Stmt del(m_db, "DELETE FROM dirs WHERE space=? AND parent_id=? AND name=?");
-                if (del.p)
+                uint64_t missDirId = 0;
                 {
-                    BindInt(del.p, 1, (int64_t)space);
-                    BindInt(del.p, 2, (int64_t)node.dbDirId);
-                    BindText(del.p, 3, dbName);
-                    sqlite3_step(del.p);
-                    DEFAULT_LOG_INFO("[FileHub] 校验删除孤儿目录: space={} {}", space, dbName);
+                    Stmt st(m_db, "SELECT id FROM dirs WHERE space=? AND parent_id=? AND name=?");
+                    if (st.p)
+                    {
+                        BindInt(st.p, 1, (int64_t)space);
+                        BindInt(st.p, 2, (int64_t)node.dbDirId);
+                        BindText(st.p, 3, dbName);
+                        if (sqlite3_step(st.p) == SQLITE_ROW)
+                            missDirId = (uint64_t)sqlite3_column_int64(st.p, 0);
+                    }
+                }
+                if (missDirId != 0)
+                {
+                    std::vector<uint64_t> subs;
+                    CollectSubtreeDirsLocked(space, missDirId, subs);
+                    if (!subs.empty())
+                    {
+                        std::string ph;
+                        for (size_t i = 0; i < subs.size(); ++i)
+                            ph += i ? ",?" : "?";
+                        {
+                            Stmt del(m_db, ("DELETE FROM files WHERE dir_id IN (" + ph + ")").c_str());
+                            if (del.p)
+                            {
+                                for (size_t i = 0; i < subs.size(); ++i)
+                                    BindInt(del.p, (int)i + 1, (int64_t)subs[i]);
+                                sqlite3_step(del.p);
+                            }
+                        }
+                        {
+                            Stmt del(m_db, ("DELETE FROM dirs WHERE id IN (" + ph + ")").c_str());
+                            if (del.p)
+                            {
+                                for (size_t i = 0; i < subs.size(); ++i)
+                                    BindInt(del.p, (int)i + 1, (int64_t)subs[i]);
+                                sqlite3_step(del.p);
+                            }
+                        }
+                        DEFAULT_LOG_INFO("[FileHub] 校验删除孤儿目录: space={} {} (级联子树 {} 个目录)",
+                                         space, dbName, subs.size());
+                    }
                 }
             }
         }
@@ -3022,7 +3083,7 @@ void FileHubModule::VerifySpaceTree(int space, const std::string& spaceAbs)
             if (dbFileNames.count(fileNames[i]))
                 continue;
             Stmt ins(m_db,
-                "INSERT INTO files(space,dir_id,name,size,mtime,uploader_id,upload_time) "
+                "INSERT OR IGNORE INTO files(space,dir_id,name,size,mtime,uploader_id,upload_time) "
                 "VALUES(?,?,?,?,?,0,0)");
             if (ins.p)
             {
@@ -3032,7 +3093,8 @@ void FileHubModule::VerifySpaceTree(int space, const std::string& spaceAbs)
                 BindInt(ins.p, 4, fileSizes[i]);
                 BindInt(ins.p, 5, (int64_t)time(nullptr));
                 sqlite3_step(ins.p);
-                DEFAULT_LOG_INFO("[FileHub] 校验补建文件: space={} {}", space, fileNames[i]);
+                if (m_db.Changes() > 0)
+                    DEFAULT_LOG_INFO("[FileHub] 校验补建文件: space={} {}", space, fileNames[i]);
             }
         }
         for (const auto& dbName : dbFileNames)
