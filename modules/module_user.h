@@ -268,7 +268,7 @@ private:
     /** @brief 签发新会话(会话轮换:每次登录/注册/重置全新 token);超上限按 LRU 踢最旧 */
     bool CreateSession(const std::string& token, uint64_t userId, const std::string& ip, time_t now);
 
-    /** @brief 按 token_hash 查有效会话(双上限)并 JOIN 用户信息 */
+    /** @brief 按 token_hash 查有效会话(双上限 + 账号未停用/未删除)并 JOIN 用户信息 */
     bool FindSession(const std::string& token, time_t now, SessionRow& out);
 
     /** @brief 续期(last_active/expire_time);距上次 < kUserTouchThrottle 跳过落库 */

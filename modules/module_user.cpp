@@ -734,7 +734,8 @@ bool UserModule::FindSession(const std::string& token, time_t now, SessionRow& o
         "SELECT s.id, s.user_id, u.account, u.nickname, s.create_ip, s.create_time, s.last_active, "
         "u.last_login_ip, u.last_login_time "
         "FROM sessions s JOIN users u ON u.id=s.user_id "
-        "WHERE s.token_hash=? AND s.expire_time>? AND s.absolute_expire>?");
+        "WHERE s.token_hash=? AND s.expire_time>? AND s.absolute_expire>? "
+        "AND u.disabled=0 AND u.deleted=0");
     if (!st.p)
         return false;
     BindText(st.p, 1, tokenHash);
@@ -1275,9 +1276,12 @@ void UserModule::HandleReset(ZmReqLoop* loop, const ZMJSON& body, ZmHttpdTask* t
     uint64_t userId = 0;
     std::string salt, hash;
     bool userExists = false;
+    bool disabledFlag = false;
+    bool deletedFlag = false;
     {
         std::lock_guard<std::mutex> lk(m_userDb.Mutex());
-        Stmt st(m_userDb, "SELECT id, rescue_salt, rescue_hash FROM users WHERE account=?");
+        Stmt st(m_userDb,
+            "SELECT id, rescue_salt, rescue_hash, disabled, deleted FROM users WHERE account=?");
         if (st.p)
         {
             BindText(st.p, 1, naccount);
@@ -1291,8 +1295,17 @@ void UserModule::HandleReset(ZmReqLoop* loop, const ZMJSON& body, ZmHttpdTask* t
                 const char* h = reinterpret_cast<const char*>(sqlite3_column_blob(st.p, 2));
                 int hlen = sqlite3_column_bytes(st.p, 2);
                 hash.assign(h ? h : "", hlen > 0 ? hlen : 0);
+                disabledFlag = sqlite3_column_int(st.p, 3) != 0;
+                deletedFlag = sqlite3_column_int(st.p, 4) != 0;
             }
         }
+    }
+
+    // 停用/软删除账号:直接拒绝(与登录一致;不计入锁定)
+    if (userExists && (disabledFlag || deletedFlag))
+    {
+        ZmReqLoopRest::ResponseError(loop, 401, "账号已被停用");
+        return;
     }
 
     std::string rescueHash;
