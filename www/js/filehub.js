@@ -778,8 +778,9 @@
 
     function downloadZip(ids) {
       const singleDir = ids.length === 1 && ids[0].type === 'dir';
-      // 本地构造打包名(与服务端规则一致:单文件夹 = 文件夹名.zip;其余 = filehub-打包.zip)
-      let fallbackName = 'filehub-打包.zip';
+      // 本地构造打包名(与服务端规则一致:单文件夹 = 文件夹名.zip;其余 = ZiMo文件中心-打包下载_<时间戳>.zip;
+      // 时间戳仅队列显示兜底,实际下载名以服务端 Content-Disposition 为准)
+      let fallbackName = `ZiMo文件中心-打包下载_${Date.now()}.zip`;
       if (singleDir) {
         const d = st.dirs.find((x) => x.id === ids[0].id);
         if (d && d.name) fallbackName = d.name + '.zip';

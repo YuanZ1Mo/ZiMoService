@@ -88,6 +88,20 @@ bool ValidTaskId(const std::string& id)
     return !id.empty() && id.size() <= 64;
 }
 
+/** @brief JSON 字符串转义(日志 detail 内嵌 name,防引号/反斜杠破坏 JSON;名字经 IsValidName 约束) */
+std::string JsonEscape(const std::string& s)
+{
+    std::string out;
+    out.reserve(s.size() + 8);
+    for (char c : s)
+    {
+        if (c == '"' || c == '\\')
+            out += '\\';
+        out += c;
+    }
+    return out;
+}
+
 /** @brief RFC 5987 百分号编码(Content-Disposition filename* 用) */
 std::string PercentEncode(const std::string& s)
 {
@@ -2698,14 +2712,18 @@ void FileHubModule::HandleZipDownload(ZmReqLoop* loop, ZmHttpdTask* task, uint64
         return;
     }
 
-    // 校验条目存在性 + 空间一致(全部条目须同属一个空间,防跨空间混打)
+    // 校验条目存在性 + 空间一致(全部条目须同属一个空间,防跨空间混打);
+    // 顺带查名称收集打包明细(日志记录"打包了哪些内容")
+    struct PackItem { std::string type; uint64_t id; std::string name; };
+    std::vector<PackItem> packItems;
+    packItems.reserve(ids.size());
     int space = -1;
     for (auto& it : ids)
     {
         std::lock_guard<std::mutex> lk(m_db.Mutex());
         if (it.first == "file")
         {
-            Stmt st(m_db, "SELECT space FROM files WHERE id=?");
+            Stmt st(m_db, "SELECT space,name FROM files WHERE id=?");
             if (!st.p) { ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误"); return; }
             BindInt(st.p, 1, (int64_t)it.second);
             if (sqlite3_step(st.p) != SQLITE_ROW)
@@ -2720,10 +2738,12 @@ void FileHubModule::HandleZipDownload(ZmReqLoop* loop, ZmHttpdTask* task, uint64
                 ZmReqLoopRest::ResponseError(loop, 403, "空间不匹配");
                 return;
             }
+            const char* n = reinterpret_cast<const char*>(sqlite3_column_text(st.p, 1));
+            packItems.push_back({"file", it.second, n ? n : ""});
         }
         else
         {
-            Stmt st(m_db, "SELECT space FROM dirs WHERE id=?");
+            Stmt st(m_db, "SELECT space,name FROM dirs WHERE id=?");
             if (!st.p) { ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误"); return; }
             BindInt(st.p, 1, (int64_t)it.second);
             if (sqlite3_step(st.p) != SQLITE_ROW)
@@ -2738,6 +2758,8 @@ void FileHubModule::HandleZipDownload(ZmReqLoop* loop, ZmHttpdTask* task, uint64
                 ZmReqLoopRest::ResponseError(loop, 403, "空间不匹配");
                 return;
             }
+            const char* n = reinterpret_cast<const char*>(sqlite3_column_text(st.p, 1));
+            packItems.push_back({"dir", it.second, n ? n : ""});
         }
     }
     if (space < 0)
@@ -2752,8 +2774,8 @@ void FileHubModule::HandleZipDownload(ZmReqLoop* loop, ZmHttpdTask* task, uint64
         return;
     }
 
-    // zip 文件名:单目录 = 目录名.zip;其余 = filehub-打包.zip
-    std::string zipName = "filehub-打包.zip";
+    // zip 文件名:单目录 = 目录名.zip;其余 = ZiMo文件中心-打包下载_<时间戳>.zip
+    std::string zipName = "ZiMo文件中心-打包下载_" + std::to_string((int64_t)time(nullptr)) + ".zip";
     if (ids.size() == 1 && ids[0].first == "dir")
     {
         std::lock_guard<std::mutex> lk(m_db.Mutex());
@@ -2780,7 +2802,7 @@ void FileHubModule::HandleZipDownload(ZmReqLoop* loop, ZmHttpdTask* task, uint64
         {{"Content-Type", "application/zip"},
          {"Content-Disposition", zipDisp.c_str()}});
 
-    loop->PostToLoop([this, task, space, ids, taskId, opUid, opAccount, zipName](ZmReqLoop* l) {
+    loop->PostToLoop([this, task, space, ids, taskId, opUid, opAccount, zipName, packItems](ZmReqLoop* l) {
         if (l->IsClosing())
             return;
         try
@@ -2840,8 +2862,20 @@ void FileHubModule::HandleZipDownload(ZmReqLoop* loop, ZmHttpdTask* task, uint64
             if (ok)
             {
                 UpdateTransferTask(taskId, opUid, kTaskStatusDone, "", zipTotal);
-                Log(opUid, opAccount, "download", "zip", 0,
-                    "{\"name\":\"" + zipName + "\",\"size\":" + std::to_string(zipTotal) + "}");
+                // 打包日志明细:条目清单(类型/ID/名称),审计可回溯"打包了哪些内容"
+                std::string detail = "{\"name\":\"" + JsonEscape(zipName) +
+                                     "\",\"size\":" + std::to_string(zipTotal) +
+                                     ",\"count\":" + std::to_string(packItems.size()) + ",\"items\":[";
+                for (size_t i = 0; i < packItems.size(); ++i)
+                {
+                    if (i > 0)
+                        detail += ',';
+                    detail += "{\"type\":\"" + packItems[i].type +
+                              "\",\"id\":" + std::to_string(packItems[i].id) +
+                              ",\"name\":\"" + JsonEscape(packItems[i].name) + "\"}";
+                }
+                detail += "]}";
+                Log(opUid, opAccount, "download", "zip", 0, detail);
             }
             else if (!cancelled)
             {
