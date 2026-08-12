@@ -42,6 +42,24 @@ static constexpr int kVerifyCleanHour = 3;
 /** 分享下载日志保留(秒,90 天,与审计一致) */
 static constexpr int64_t kShareDownloadLogRetain = 90LL * 24 * 3600;
 
+// ── 传输任务(transfer_tasks)常量 ─────────────────────────────────────────
+/** 任务状态 */
+static constexpr const char* kTaskStatusUploading = "uploading";  // 上传中
+static constexpr const char* kTaskStatusPacking   = "packing";    // zip 打包中
+static constexpr const char* kTaskStatusTriggered = "triggered";  // 已触发下载(直链已发出)
+static constexpr const char* kTaskStatusDone      = "done";       // 完成
+static constexpr const char* kTaskStatusFailed    = "failed";     // 失败/取消/中断
+
+/** 加载历史时"上传中断"判定阈值(秒):前端上传 60s 即超时放弃,活任务不可能超过 90s,
+ *  多标签页共存也不会误杀(活上传行 update_time 随状态推进刷新,且 <90s) */
+static constexpr int64_t kTaskStaleSec = 90;
+/** 清理线程兜底阈值(秒):非终态超 30 分钟强制标 failed(客户端中断) */
+static constexpr int64_t kTaskStaleForceSec = 30LL * 60;
+/** 历史保留(秒,30 天) */
+static constexpr int64_t kTaskRetainDays = 30LL * 24 * 3600;
+/** 历史分页页大小 */
+static constexpr int kTaskPageSize = 50;
+
 /** @brief 安全读 int64(字段缺失/类型不匹配返回默认值) */
 int64_t JsonInt(const ZMJSON& j, std::string_view key, int64_t def = 0)
 {
@@ -62,6 +80,12 @@ bool IsValidName(const std::string& name)
     if (name.find_first_of("<>:\"/\\|?*") != std::string::npos)
         return false;
     return true;
+}
+
+/** @brief task_id 合法性:非空且 ≤64 字符(前端 uuid,防御非法输入) */
+bool ValidTaskId(const std::string& id)
+{
+    return !id.empty() && id.size() <= 64;
 }
 
 /** @brief RFC 5987 百分号编码(Content-Disposition filename* 用) */
@@ -594,6 +618,32 @@ bool FileHubModule::DispatchRest(ZmReqLoop* loop, evhttp_cmd_type verb, const st
             HandleDownload(loop, task, uid, account);
             return true;
         }
+        // 传输任务:历史分页 / zip 打包状态轮询 / zip 直链流式打包下载
+        if (path == "/portal/filehub/tasks")
+        {
+            // 历史查询:无需 space 参数,直接鉴权
+            UserModule::UserInfo ui;
+            uint64_t uid = m_userModule ? m_userModule->AuthAndTouch(task, &ui) : 0;
+            if (!uid) { ZmReqLoopRest::ResponseError(loop, 401, "会话已失效"); return true; }
+            HandleTasks(loop, task, uid);
+            return true;
+        }
+        if (path == "/portal/filehub/task_status")
+        {
+            UserModule::UserInfo ui;
+            uint64_t uid = m_userModule ? m_userModule->AuthAndTouch(task, &ui) : 0;
+            if (!uid) { ZmReqLoopRest::ResponseError(loop, 401, "会话已失效"); return true; }
+            HandleTaskStatus(loop, task, uid);
+            return true;
+        }
+        if (path == "/portal/filehub/zip_download")
+        {
+            UserModule::UserInfo ui;
+            uint64_t uid = m_userModule ? m_userModule->AuthAndTouch(task, &ui) : 0;
+            if (!uid) { ZmReqLoopRest::ResponseError(loop, 401, "会话已失效"); return true; }
+            HandleZipDownload(loop, task, uid, ui.account);
+            return true;
+        }
         if (path == "/portal/filehub/shares")
         {
             // 我的分享:无需 space 参数,直接鉴权
@@ -644,6 +694,22 @@ bool FileHubModule::DispatchRest(ZmReqLoop* loop, evhttp_cmd_type verb, const st
         return true;
     }
 
+    // 传输任务管理(task_create/cancel/delete)不带空间语义,仅需登录(独立鉴权)
+    if (path == "/portal/filehub/task_create" || path == "/portal/filehub/task_cancel" ||
+        path == "/portal/filehub/task_delete")
+    {
+        UserModule::UserInfo ui;
+        uint64_t uid = m_userModule ? m_userModule->AuthAndTouch(task, &ui) : 0;
+        if (!uid) { ZmReqLoopRest::ResponseError(loop, 401, "会话已失效"); return true; }
+        if (path == "/portal/filehub/task_create")
+            HandleTaskCreate(loop, req, uid);
+        else if (path == "/portal/filehub/task_cancel")
+            HandleTaskCancel(loop, req, uid);
+        else
+            HandleTaskDelete(loop, req, uid);
+        return true;
+    }
+
     const char* scope = task->GetQueryValue("space", "");
     std::string role, account;
     int space = -1;
@@ -679,11 +745,6 @@ bool FileHubModule::DispatchRest(ZmReqLoop* loop, evhttp_cmd_type verb, const st
     if (path == "/portal/filehub/delete")
     {
         HandleDelete(loop, req, uid, role, account);
-        return true;
-    }
-    if (path == "/portal/filehub/zip")
-    {
-        HandleZip(loop, task, req, space, uid, account);
         return true;
     }
     ZmReqLoopRest::ResponseError(loop, 404, "Not found: " + path);
@@ -2142,24 +2203,46 @@ void FileHubModule::HandleUpload(ZmReqLoop* loop, ZmHttpdTask* task, int space, 
     // 不取消则超时收尾关闭连接 → 浏览器 XHR onerror「网络连接失败」)
     loop->CancelDeadline();
 
+    // 可选:传输任务 task_id(前端 task_create 预建行后携带;缺失时保持旧行为不记任务)
+    const char* tid = task->GetQueryValue("task_id", "");
+    std::string taskId = (tid && ValidTaskId(tid)) ? tid : "";
+    // 任务行收尾(幂等;终态由 UpdateTransferTask 内 NOT IN 守卫防覆盖)
+    auto markFail = [&](const char* msg) {
+        if (!taskId.empty())
+            UpdateTransferTask(taskId, opUid, kTaskStatusFailed, msg, -1);
+    };
+    auto markDone = [&](int64_t size) {
+        if (!taskId.empty())
+            UpdateTransferTask(taskId, opUid, kTaskStatusDone, "", size);
+    };
+
     uint64_t dirId = (uint64_t)strtoull(task->GetQueryValue("dir_id", "0"), nullptr, 10);
     const char* name = task->GetQueryValue("name", "");
     if (!IsValidName(name ? name : ""))
     {
+        markFail("文件名不合法");
         ZmReqLoopRest::ResponseError(loop, 400, "文件名不合法");
         return;
     }
     if (!DirExists(space, dirId))
     {
+        markFail("目录不存在");
         ZmReqLoopRest::ResponseError(loop, 404, "目录不存在");
         return;
     }
+    // 行兜底:task_create 未先行(旧版前端/直传)时按 uploading 建行
+    if (!taskId.empty())
+        CreateTransferTask(taskId, opUid, "upload", kTaskStatusUploading, name, 0);
     // 同名冲突 + 写盘 + 落库整体持锁:并发同名上传由该锁串行化,冲突检查即最终裁决,
     // 后到者 409 且不触碰先到者的物理文件。原分锁实现存在窗口:两请求都通过检查 → 互覆写
     // 同一路径 → INSERT 撞 UNIQUE 回滚误删对方文件,造成数据丢失。
+    // ★ 任务行更新(markFail/markDone)只能在锁外调用:UpdateTransferTask 内部加
+    //    m_db.Mutex(),锁内调用 = 非递归锁嵌套加锁,MSVC 抛异常(实测响应变空)。
     std::string absPath = EntryAbsPath(space, dirId, name);   // 路径解析自持锁,须在整体锁外
     uint64_t size = 0;
     uint64_t newId = 0;
+    int failCode = 0;
+    std::string failMsg;
     {
         std::lock_guard<std::mutex> lk(m_db.Mutex());
 
@@ -2173,69 +2256,85 @@ void FileHubModule::HandleUpload(ZmReqLoop* loop, ZmHttpdTask* task, int space, 
         {
             DEFAULT_LOG_INFO("[FileHub] upload 409: space={} dir_id={} name={}",
                              space, dirId, name ? name : "");
-            ZmReqLoopRest::ResponseError(loop, 409, "同名文件已存在");
-            return;
+            failCode = 409;
+            failMsg = "同名文件已存在";
         }
-
-        // 写盘(锁内:冲突检查与落库之间不允许其他请求插入)
-        if (ReceiveFileStream(task, absPath, size) != 0)
+        else if (ReceiveFileStream(task, absPath, size) != 0)
         {
             DeleteFileW(ZmString::UTF8_To_Unicode(absPath).c_str());
-            ZmReqLoopRest::ResponseError(loop, 500, "上传失败");
-            return;
+            failCode = 500;
+            failMsg = "上传失败";
         }
-
-        // X-File-Size 声明校验(有则比对,不符删半成品)
-        const char* declared = task->GetRequestHeader("X-File-Size");
-        if (declared && declared[0])
+        else
         {
-            uint64_t expected = (uint64_t)strtoull(declared, nullptr, 10);
-            if (expected != size)
+            // X-File-Size 声明校验(有则比对,不符删半成品)
+            const char* declared = task->GetRequestHeader("X-File-Size");
+            if (declared && declared[0])
             {
-                DeleteFileW(ZmString::UTF8_To_Unicode(absPath).c_str());
-                ZmReqLoopRest::ResponseError(loop, 400, "文件大小不一致");
-                return;
+                uint64_t expected = (uint64_t)strtoull(declared, nullptr, 10);
+                if (expected != size)
+                {
+                    DeleteFileW(ZmString::UTF8_To_Unicode(absPath).c_str());
+                    failCode = 400;
+                    failMsg = "文件大小不一致";
+                }
+            }
+            // 允许 0 字节文件上传(空配置文件等合法场景;ReceiveFileStream 对空 body 创建空文件)
+
+            if (failCode == 0)
+            {
+                // 落盘 stat
+                WIN32_FILE_ATTRIBUTE_DATA fad;
+                int64_t mtime = time(nullptr);
+                if (GetFileAttributesExW(ZmString::UTF8_To_Unicode(absPath).c_str(),
+                                         GetFileExInfoStandard, &fad))
+                {
+                    ULARGE_INTEGER mt;
+                    mt.HighPart = fad.ftLastWriteTime.dwHighDateTime;
+                    mt.LowPart = fad.ftLastWriteTime.dwLowDateTime;
+                    mtime = (int64_t)(mt.QuadPart / 10000000ULL - 11644473600ULL);   // FILETIME → unix
+                }
+
+                Stmt st(m_db,
+                    "INSERT INTO files(space,dir_id,name,size,mtime,uploader_id,upload_time) "
+                    "VALUES(?,?,?,?,?,?,?)");
+                if (!st.p)
+                {
+                    DeleteFileW(ZmString::UTF8_To_Unicode(absPath).c_str());
+                    failCode = 500;
+                    failMsg = "服务器内部错误";
+                }
+                else
+                {
+                    BindInt(st.p, 1, (int64_t)space);
+                    BindInt(st.p, 2, (int64_t)dirId);
+                    BindText(st.p, 3, name);
+                    BindInt(st.p, 4, (int64_t)size);
+                    BindInt(st.p, 5, mtime);
+                    BindInt(st.p, 6, (int64_t)opUid);
+                    BindInt(st.p, 7, (int64_t)time(nullptr));
+                    if (sqlite3_step(st.p) != SQLITE_DONE)
+                    {
+                        DeleteFileW(ZmString::UTF8_To_Unicode(absPath).c_str());
+                        failCode = 500;
+                        failMsg = "服务器内部错误";
+                    }
+                    else
+                    {
+                        newId = (uint64_t)m_db.LastInsertRowId();
+                    }
+                }
             }
         }
-        // 允许 0 字节文件上传(空配置文件等合法场景;ReceiveFileStream 对空 body 创建空文件)
-
-        // 落盘 stat
-        WIN32_FILE_ATTRIBUTE_DATA fad;
-        int64_t mtime = time(nullptr);
-        if (GetFileAttributesExW(ZmString::UTF8_To_Unicode(absPath).c_str(),
-                                 GetFileExInfoStandard, &fad))
-        {
-            ULARGE_INTEGER mt;
-            mt.HighPart = fad.ftLastWriteTime.dwHighDateTime;
-            mt.LowPart = fad.ftLastWriteTime.dwLowDateTime;
-            mtime = (int64_t)(mt.QuadPart / 10000000ULL - 11644473600ULL);   // FILETIME → unix
-        }
-
-        Stmt st(m_db,
-            "INSERT INTO files(space,dir_id,name,size,mtime,uploader_id,upload_time) "
-            "VALUES(?,?,?,?,?,?,?)");
-        if (!st.p)
-        {
-            DeleteFileW(ZmString::UTF8_To_Unicode(absPath).c_str());
-            ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误");
-            return;
-        }
-        BindInt(st.p, 1, (int64_t)space);
-        BindInt(st.p, 2, (int64_t)dirId);
-        BindText(st.p, 3, name);
-        BindInt(st.p, 4, (int64_t)size);
-        BindInt(st.p, 5, mtime);
-        BindInt(st.p, 6, (int64_t)opUid);
-        BindInt(st.p, 7, (int64_t)time(nullptr));
-        if (sqlite3_step(st.p) != SQLITE_DONE)
-        {
-            DeleteFileW(ZmString::UTF8_To_Unicode(absPath).c_str());
-            ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误");
-            return;
-        }
-        newId = (uint64_t)m_db.LastInsertRowId();
     }
 
+    if (failCode != 0)
+    {
+        markFail(failMsg.c_str());   // 锁外:UpdateTransferTask 自加锁,不嵌套
+        ZmReqLoopRest::ResponseError(loop, failCode, failMsg);
+        return;
+    }
+    markDone((int64_t)size);
     Log(opUid, opAccount, "upload", "file", newId,
         "{\"name\":\"" + std::string(name) + "\",\"size\":" + std::to_string(size) + "}");
     ZmReqLoopRest::ResponseJson(loop, 200,
@@ -2384,12 +2483,16 @@ void FileHubModule::HandleDownload(ZmReqLoop* loop, ZmHttpdTask* task, uint64_t 
         ZmReqLoopRest::ResponseError(loop, 400, "参数不合法");
         return;
     }
+    // 可选:传输任务 task_id(前端直链下载携带;缺失时保持旧行为不记任务)
+    const char* tid = task->GetQueryValue("task_id", "");
+    std::string taskId = (tid && ValidTaskId(tid)) ? tid : "";
     int space = -1;
     uint64_t dirId = 0;
     std::string name;
+    int64_t fileSize = 0;
     {
         std::lock_guard<std::mutex> lk(m_db.Mutex());
-        Stmt st(m_db, "SELECT space,dir_id,name FROM files WHERE id=?");
+        Stmt st(m_db, "SELECT space,dir_id,name,size FROM files WHERE id=?");
         if (!st.p) { ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误"); return; }
         BindInt(st.p, 1, (int64_t)fileId);
         if (sqlite3_step(st.p) != SQLITE_ROW)
@@ -2401,6 +2504,7 @@ void FileHubModule::HandleDownload(ZmReqLoop* loop, ZmHttpdTask* task, uint64_t 
         dirId = (uint64_t)sqlite3_column_int64(st.p, 1);
         const char* n = reinterpret_cast<const char*>(sqlite3_column_text(st.p, 2));
         name = n ? n : "";
+        fileSize = sqlite3_column_int64(st.p, 3);
     }
     // 权限:公共空间任何登录用户;个人空间仅本人
     if (space != 0 && opUid != (uint64_t)space)
@@ -2408,14 +2512,22 @@ void FileHubModule::HandleDownload(ZmReqLoop* loop, ZmHttpdTask* task, uint64_t 
         ZmReqLoopRest::ResponseError(loop, 403, "个人空间仅本人可下载");
         return;
     }
+    // 建行(triggered;幂等,前端重试携带新 task_id 各记一条)
+    if (!taskId.empty())
+        CreateTransferTask(taskId, opUid, "file", kTaskStatusTriggered, name, fileSize);
+
     std::string absPath = EntryAbsPath(space, dirId, name);
     int rc = SendFile(task, absPath);
     if (rc == ZM_HTTP_STATUS_CODE_NOT_FOUND)
     {
+        if (!taskId.empty())
+            UpdateTransferTask(taskId, opUid, kTaskStatusFailed, "文件不存在", -1);
         ZmReqLoopRest::ResponseError(loop, 404, "文件不存在");
         return;
     }
     task->TriggerReply();   // RESTful 异步路径:SetReply 后须显式触发,否则 deadline 504
+    if (!taskId.empty())
+        UpdateTransferTask(taskId, opUid, kTaskStatusDone, "", -1);
     Log(opUid, opAccount, "download", "file", fileId, "{\"name\":\"" + name + "\"}");
 }
 
@@ -2543,22 +2655,51 @@ bool FileHubModule::ZipAddDirRecursive(ZipWriter& zip, int space, uint64_t dirId
     return true;
 }
 
-void FileHubModule::HandleZip(ZmReqLoop* loop, ZmHttpdTask* task, const ZMJSON& body, int space,
-                              uint64_t opUid, const std::string& opAccount)
+void FileHubModule::HandleZipDownload(ZmReqLoop* loop, ZmHttpdTask* task, uint64_t opUid,
+                                      const std::string& opAccount)
 {
-    // ★ 立即取消 deadline:打包可能在 loop 队列中排队(前序打包未完成),
-    //   若等到 ResponseStreamStart 的 lambda 才取消,排队期间 5s deadline
-    //   到期会触发 TIMEOUT → onTimeout 504 收尾 → 流式被掐断,前端 fetch 挂起
+    // ★ 取消 deadline:流式打包可能超过默认 5s,且手动触发回复(同 HandleZip)
     loop->CancelDeadline();
 
+    const char* tid = task->GetQueryValue("task_id", "");
+    if (!ValidTaskId(tid ? tid : ""))
+    {
+        ZmReqLoopRest::ResponseError(loop, 400, "参数不合法");
+        return;
+    }
+    std::string taskId = tid;
+
+    // ids 解析:逗号分隔,前缀 f=文件/d=目录(如 "f12,d34"),与 JSON 形态等价
     std::vector<std::pair<std::string, uint64_t>> ids;
-    if (!ParseIdList(body, ids))
+    const char* idsStr = task->GetQueryValue("ids", "");
+    if (idsStr && idsStr[0])
+    {
+        std::string s = idsStr;
+        size_t pos = 0;
+        while (pos < s.size())
+        {
+            size_t comma = s.find(',', pos);
+            std::string tok = s.substr(pos, comma == std::string::npos ? std::string::npos : comma - pos);
+            pos = (comma == std::string::npos) ? s.size() : comma + 1;
+            if (tok.size() < 2)
+                continue;
+            char typeCh = tok[0];
+            if (typeCh != 'f' && typeCh != 'd')
+                continue;
+            char* e = nullptr;
+            long long v = strtoll(tok.c_str() + 1, &e, 10);
+            if (e && *e == '\0' && v > 0)
+                ids.emplace_back(typeCh == 'f' ? "file" : "dir", (uint64_t)v);
+        }
+    }
+    if (ids.empty())
     {
         ZmReqLoopRest::ResponseError(loop, 400, "参数不合法");
         return;
     }
 
-    // 校验条目空间一致 + 存在性
+    // 校验条目存在性 + 空间一致(全部条目须同属一个空间,防跨空间混打)
+    int space = -1;
     for (auto& it : ids)
     {
         std::lock_guard<std::mutex> lk(m_db.Mutex());
@@ -2572,7 +2713,9 @@ void FileHubModule::HandleZip(ZmReqLoop* loop, ZmHttpdTask* task, const ZMJSON& 
                 ZmReqLoopRest::ResponseError(loop, 404, "文件不存在");
                 return;
             }
-            if ((int)sqlite3_column_int64(st.p, 0) != space)
+            int sp = (int)sqlite3_column_int64(st.p, 0);
+            if (space < 0) space = sp;
+            else if (sp != space)
             {
                 ZmReqLoopRest::ResponseError(loop, 403, "空间不匹配");
                 return;
@@ -2580,7 +2723,7 @@ void FileHubModule::HandleZip(ZmReqLoop* loop, ZmHttpdTask* task, const ZMJSON& 
         }
         else
         {
-            Stmt st(m_db, "SELECT space,name FROM dirs WHERE id=?");
+            Stmt st(m_db, "SELECT space FROM dirs WHERE id=?");
             if (!st.p) { ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误"); return; }
             BindInt(st.p, 1, (int64_t)it.second);
             if (sqlite3_step(st.p) != SQLITE_ROW)
@@ -2588,15 +2731,27 @@ void FileHubModule::HandleZip(ZmReqLoop* loop, ZmHttpdTask* task, const ZMJSON& 
                 ZmReqLoopRest::ResponseError(loop, 404, "目录不存在");
                 return;
             }
-            if ((int)sqlite3_column_int64(st.p, 0) != space)
+            int sp = (int)sqlite3_column_int64(st.p, 0);
+            if (space < 0) space = sp;
+            else if (sp != space)
             {
                 ZmReqLoopRest::ResponseError(loop, 403, "空间不匹配");
                 return;
             }
         }
     }
+    if (space < 0)
+    {
+        ZmReqLoopRest::ResponseError(loop, 400, "参数不合法");
+        return;
+    }
+    // 个人空间仅本人可打包(与单文件下载同规则;ids 可被他人枚举,必须显式校验)
+    if (space != 0 && opUid != (uint64_t)space)
+    {
+        ZmReqLoopRest::ResponseError(loop, 403, "个人空间仅本人可下载");
+        return;
+    }
 
-    // 先响应头,再遍历打包(目录不存在等错误在流开始前返回)
     // zip 文件名:单目录 = 目录名.zip;其余 = filehub-打包.zip
     std::string zipName = "filehub-打包.zip";
     if (ids.size() == 1 && ids[0].first == "dir")
@@ -2615,16 +2770,17 @@ void FileHubModule::HandleZip(ZmReqLoop* loop, ZmHttpdTask* task, const ZMJSON& 
         }
     }
 
-    // 流式回复:Start 与打包均 PostToLoop(队列顺序保证 Start 先执行;
-    // 直接同步 SendReplyChunk 会早于 StartStreamReply,chunk 丢失/挂死)
-    // 文件名:ASCII 兜底 + RFC 5987 UTF-8 编码(中文名浏览器才能正确识别)
+    // 建行(packing;幂等,重复请求不覆盖已有行)
+    CreateTransferTask(taskId, opUid, "zip", kTaskStatusPacking, zipName, 0);
+
+    // 先响应头,再遍历打包(目录不存在等错误在流开始前返回;流式路径同 HandleZip)
     std::string zipDisp = "attachment; filename=\"filehub.zip\"; filename*=UTF-8''" +
                           PercentEncode(zipName);
     ZmReqLoopRest::ResponseStreamStart(loop, 200,
         {{"Content-Type", "application/zip"},
          {"Content-Disposition", zipDisp.c_str()}});
 
-    loop->PostToLoop([this, task, space, ids, zipName, opUid, opAccount](ZmReqLoop* l) {
+    loop->PostToLoop([this, task, space, ids, taskId, opUid, opAccount, zipName](ZmReqLoop* l) {
         if (l->IsClosing())
             return;
         try
@@ -2633,10 +2789,26 @@ void FileHubModule::HandleZip(ZmReqLoop* loop, ZmHttpdTask* task, const ZMJSON& 
             std::vector<unsigned char> chunk;
             std::set<uint64_t> skipFileIds;
             bool ok = true;
+            bool cancelled = false;
+            int64_t zipTotal = 0;
             for (auto& it : ids)
             {
                 if (task->IsConnClosed())
                     break;   // 连接已关闭:停止打包发送(防 doer 生命周期竞态)
+
+                // 取消/删除检测:行置 failed(task_cancel)即中止,不再发包
+                {
+                    std::string type, status, name, err;
+                    int64_t ts = 0;
+                    if (!LoadTransferTask(taskId, opUid, type, status, name, ts, err) ||
+                        status == kTaskStatusFailed)
+                    {
+                        cancelled = true;
+                        ok = false;
+                        break;
+                    }
+                }
+
                 if (it.first == "file")
                 {
                     if (!ZipAddFile(zip, space, it.second, "", skipFileIds)) { ok = false; break; }
@@ -2647,29 +2819,266 @@ void FileHubModule::HandleZip(ZmReqLoop* loop, ZmHttpdTask* task, const ZMJSON& 
                 }
                 zip.Drain(chunk);
                 if (!chunk.empty())
+                {
                     task->SendReplyChunk(chunk.data(), chunk.size());
+                    zipTotal += (int64_t)chunk.size();
+                }
             }
             if (ok)
             {
                 ok = zip.Finish();
                 zip.Drain(chunk);
                 if (ok && !chunk.empty())
+                {
                     task->SendReplyChunk(chunk.data(), chunk.size());
+                    zipTotal += (int64_t)chunk.size();
+                }
             }
-            // ★ 无条件结束流:即使连接已关闭,EndStreamReply 也安全(驱动 doer 回收,
-            //   保证前端 fetch 收到流结束)。若跳过,流永不结束 → 前端永久挂起卡住
+            // ★ 无条件结束流:即使连接已关闭,EndStreamReply 也安全(驱动 doer 回收)
             task->EndStreamReply();
-            (void)ok;
-            Log(opUid, opAccount, "download", "zip", 0,
-                "{\"count\":" + std::to_string(ids.size()) + "}");
+
+            if (ok)
+            {
+                UpdateTransferTask(taskId, opUid, kTaskStatusDone, "", zipTotal);
+                Log(opUid, opAccount, "download", "zip", 0,
+                    "{\"name\":\"" + zipName + "\",\"size\":" + std::to_string(zipTotal) + "}");
+            }
+            else if (!cancelled)
+            {
+                // 真实失败或连接中断:落状态;取消路径行已 failed"已取消",不覆盖 err
+                UpdateTransferTask(taskId, opUid, kTaskStatusFailed,
+                                   task->IsConnClosed() ? "下载中断" : "打包失败", -1);
+            }
         }
         catch (...)
         {
-            // 打包异常兜底:无条件结束流,防异常进入 loop 收尾与流式冲突
-            DEFAULT_LOG_ERROR("[FileHub] zip 打包异常");
+            // 打包异常兜底:无条件结束流;行落 failed
+            DEFAULT_LOG_ERROR("[FileHub] zip_download 打包异常");
             task->EndStreamReply();
+            UpdateTransferTask(taskId, opUid, kTaskStatusFailed, "打包异常", -1);
         }
     });
+}
+
+// ============================================================================
+// 传输任务(transfer_tasks:上传/单文件下载/zip 打包统一记录,队列历史数据源)
+// ============================================================================
+
+bool FileHubModule::CreateTransferTask(const std::string& taskId, uint64_t userUid,
+                                       const std::string& type, const std::string& status,
+                                       const std::string& name, int64_t totalSize)
+{
+    if (taskId.empty() || userUid == 0)
+        return false;
+    std::lock_guard<std::mutex> lk(m_db.Mutex());
+    Stmt st(m_db,
+        "INSERT OR IGNORE INTO transfer_tasks(task_id,user_id,type,status,name,total_size,"
+        "err,create_time,update_time) VALUES(?,?,?,?,?,?,'',?,?)");
+    if (!st.p)
+        return false;
+    int64_t now = time(nullptr);
+    BindText(st.p, 1, taskId);
+    BindInt(st.p, 2, (int64_t)userUid);
+    BindText(st.p, 3, type);
+    BindText(st.p, 4, status);
+    BindText(st.p, 5, name);
+    BindInt(st.p, 6, totalSize);
+    BindInt(st.p, 7, now);
+    BindInt(st.p, 8, now);
+    return sqlite3_step(st.p) == SQLITE_DONE;
+}
+
+bool FileHubModule::UpdateTransferTask(const std::string& taskId, uint64_t userUid,
+                                       const std::string& status, const std::string& err,
+                                       int64_t totalSize)
+{
+    if (taskId.empty() || userUid == 0)
+        return false;
+    std::lock_guard<std::mutex> lk(m_db.Mutex());
+    // 仅当行存在且归属匹配时更新;status 终态后(取消/中断/失败)不再被完成路径覆盖
+    Stmt st(m_db,
+        "UPDATE transfer_tasks SET status=?, err=?, total_size=MAX(total_size, ?), "
+        "update_time=? WHERE task_id=? AND user_id=? AND status NOT IN ('done','failed')");
+    if (!st.p)
+        return false;
+    BindText(st.p, 1, status);
+    BindText(st.p, 2, err);
+    BindInt(st.p, 3, totalSize);
+    BindInt(st.p, 4, (int64_t)time(nullptr));
+    BindText(st.p, 5, taskId);
+    BindInt(st.p, 6, (int64_t)userUid);
+    return sqlite3_step(st.p) == SQLITE_DONE;
+}
+
+bool FileHubModule::LoadTransferTask(const std::string& taskId, uint64_t userUid,
+                                     std::string& type, std::string& status,
+                                     std::string& name, int64_t& totalSize, std::string& err)
+{
+    if (taskId.empty() || userUid == 0)
+        return false;
+    std::lock_guard<std::mutex> lk(m_db.Mutex());
+    Stmt st(m_db,
+        "SELECT type,status,name,total_size,err FROM transfer_tasks "
+        "WHERE task_id=? AND user_id=?");
+    if (!st.p)
+        return false;
+    BindText(st.p, 1, taskId);
+    BindInt(st.p, 2, (int64_t)userUid);
+    if (sqlite3_step(st.p) != SQLITE_ROW)
+        return false;
+    const char* t = reinterpret_cast<const char*>(sqlite3_column_text(st.p, 0));
+    const char* s = reinterpret_cast<const char*>(sqlite3_column_text(st.p, 1));
+    const char* n = reinterpret_cast<const char*>(sqlite3_column_text(st.p, 2));
+    const char* e = reinterpret_cast<const char*>(sqlite3_column_text(st.p, 4));
+    type = t ? t : "";
+    status = s ? s : "";
+    name = n ? n : "";
+    err = e ? e : "";
+    totalSize = sqlite3_column_int64(st.p, 3);
+    return true;
+}
+
+void FileHubModule::HandleTaskCreate(ZmReqLoop* loop, const ZMJSON& body, uint64_t opUid)
+{
+    std::string taskId = zm_json_get_str(body, "task_id");
+    if (!ValidTaskId(taskId))
+    {
+        ZmReqLoopRest::ResponseError(loop, 400, "参数不合法");
+        return;
+    }
+    std::string name = zm_json_get_str(body, "name");
+    if (!IsValidName(name))
+    {
+        ZmReqLoopRest::ResponseError(loop, 400, "文件名不合法");
+        return;
+    }
+    int64_t size = JsonInt(body, "size", 0);
+    if (size < 0)
+        size = 0;
+    // 上传预建行:浏览器关闭后行留痕,重开队列可见"已中断"(HandleTasks 90s 标记)
+    CreateTransferTask(taskId, opUid, "upload", kTaskStatusUploading, name, size);
+    ZmReqLoopRest::ResponseJson(loop, 200, {{"result", {{"task_id", taskId}}}});
+}
+
+void FileHubModule::HandleTaskCancel(ZmReqLoop* loop, const ZMJSON& body, uint64_t opUid)
+{
+    std::string taskId = zm_json_get_str(body, "task_id");
+    if (!ValidTaskId(taskId))
+    {
+        ZmReqLoopRest::ResponseError(loop, 400, "参数不合法");
+        return;
+    }
+    // 行置 failed"已取消":上传请求已由前端 abort;打包循环逐文件检测到即中止
+    UpdateTransferTask(taskId, opUid, kTaskStatusFailed, "已取消", -1);
+    ZmReqLoopRest::ResponseJson(loop, 200, {{"result", {{"task_id", taskId}}}});
+}
+
+void FileHubModule::HandleTaskDelete(ZmReqLoop* loop, const ZMJSON& body, uint64_t opUid)
+{
+    std::string taskId = zm_json_get_str(body, "task_id");
+    if (!ValidTaskId(taskId))
+    {
+        ZmReqLoopRest::ResponseError(loop, 400, "参数不合法");
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
+        Stmt st(m_db, "DELETE FROM transfer_tasks WHERE task_id=? AND user_id=?");
+        if (st.p)
+        {
+            BindText(st.p, 1, taskId);
+            BindInt(st.p, 2, (int64_t)opUid);
+            sqlite3_step(st.p);
+        }
+    }
+    ZmReqLoopRest::ResponseJson(loop, 200, {{"result", {{"task_id", taskId}}}});
+}
+
+void FileHubModule::HandleTaskStatus(ZmReqLoop* loop, ZmHttpdTask* task, uint64_t opUid)
+{
+    const char* tid = task->GetQueryValue("task_id", "");
+    std::string type, status, name, err;
+    int64_t totalSize = 0;
+    // 行缺失(打包请求尚未建行/已删除)返回 404,前端视为"启动中"继续轮询
+    if (!LoadTransferTask(tid ? tid : "", opUid, type, status, name, totalSize, err))
+    {
+        ZmReqLoopRest::ResponseError(loop, 404, "任务不存在");
+        return;
+    }
+    ZmReqLoopRest::ResponseJson(loop, 200,
+        {{"result", {{"task_id", tid ? tid : ""}, {"type", type}, {"status", status},
+                     {"name", name}, {"total_size", (int64_t)totalSize}, {"err", err}}}});
+}
+
+void FileHubModule::HandleTasks(ZmReqLoop* loop, ZmHttpdTask* task, uint64_t opUid)
+{
+    // 1) 中断标记:超 90s 仍 uploading 的行 → failed"已中断"
+    //    (前端上传 60s 即超时放弃,活任务不可能超过 90s;packing/triggered 不在此列,
+    //     打包/下载可合法长时间进行,由清理线程兜底)
+    {
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
+        Stmt st(m_db, "UPDATE transfer_tasks SET status=?, err='已中断', update_time=? "
+                      "WHERE user_id=? AND status=? AND update_time<?");
+        if (st.p)
+        {
+            int64_t now = time(nullptr);
+            BindText(st.p, 1, kTaskStatusFailed);
+            BindInt(st.p, 2, now);
+            BindInt(st.p, 3, (int64_t)opUid);
+            BindText(st.p, 4, kTaskStatusUploading);
+            BindInt(st.p, 5, (int64_t)(now - kTaskStaleSec));
+            sqlite3_step(st.p);
+            if (m_db.Changes() > 0)
+                DEFAULT_LOG_INFO("[FileHub] 标记上传中断任务 {} 个", m_db.Changes());
+        }
+    }
+
+    // 2) 分页查询(按 id 倒序,最新在前)
+    const char* pageStr = task->GetQueryValue("page", "0");
+    char* end = nullptr;
+    long long page = pageStr ? strtoll(pageStr, &end, 10) : 0;
+    if (!end || *end != '\0' || page < 0)
+        page = 0;
+
+    ZMJSON rsp;
+    rsp["result"]["tasks"] = ZMJSON::array();
+    rsp["result"]["hasMore"] = false;
+    {
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
+        Stmt st(m_db, "SELECT task_id,type,status,name,total_size,err,create_time "
+                      "FROM transfer_tasks WHERE user_id=? ORDER BY id DESC LIMIT ? OFFSET ?");
+        if (st.p)
+        {
+            BindInt(st.p, 1, (int64_t)opUid);
+            BindInt(st.p, 2, kTaskPageSize + 1);   // 多取 1 判 hasMore
+            BindInt(st.p, 3, page * kTaskPageSize);
+            int count = 0;
+            while (sqlite3_step(st.p) == SQLITE_ROW)
+            {
+                if (count >= kTaskPageSize)
+                {
+                    rsp["result"]["hasMore"] = true;
+                    break;
+                }
+                const char* tid = reinterpret_cast<const char*>(sqlite3_column_text(st.p, 0));
+                const char* ty = reinterpret_cast<const char*>(sqlite3_column_text(st.p, 1));
+                const char* ss = reinterpret_cast<const char*>(sqlite3_column_text(st.p, 2));
+                const char* nm = reinterpret_cast<const char*>(sqlite3_column_text(st.p, 3));
+                const char* er = reinterpret_cast<const char*>(sqlite3_column_text(st.p, 5));
+                ZMJSON t;
+                t["task_id"] = tid ? tid : "";
+                t["type"] = ty ? ty : "";
+                t["status"] = ss ? ss : "";
+                t["name"] = nm ? nm : "";
+                t["total_size"] = sqlite3_column_int64(st.p, 4);
+                t["err"] = er ? er : "";
+                t["create_time"] = sqlite3_column_int64(st.p, 6);
+                rsp["result"]["tasks"].push_back(std::move(t));
+                ++count;
+            }
+        }
+    }
+    ZmReqLoopRest::ResponseJson(loop, 200, rsp);
 }
 
 // ============================================================================
@@ -3080,6 +3489,7 @@ void FileHubModule::VerifyLoop()
             {
                 VerifyOnce();
                 CleanShareDownloadLogs();
+                CleanTransferTasks();
                 lastVerifyDay = tmv.tm_mday;
             }
         }
@@ -3136,6 +3546,36 @@ void FileHubModule::CleanShareDownloadLogs()
         sqlite3_step(st.p);
         if (m_db.Changes() > 0)
             DEFAULT_LOG_INFO("[FileHub] 清理分享下载日志 {} 条", m_db.Changes());
+    }
+}
+
+void FileHubModule::CleanTransferTasks()
+{
+    int64_t now = time(nullptr);
+    {
+        std::lock_guard<std::mutex> lk(m_db.Mutex());
+        // 1) 历史保留:终态超 30 天删行
+        Stmt stDel(m_db,
+            "DELETE FROM transfer_tasks WHERE status IN ('done','failed') AND update_time<?");
+        if (stDel.p)
+        {
+            BindInt(stDel.p, 1, (int64_t)(now - kTaskRetainDays));
+            sqlite3_step(stDel.p);
+            if (m_db.Changes() > 0)
+                DEFAULT_LOG_INFO("[FileHub] 清理传输任务历史 {} 条", m_db.Changes());
+        }
+        // 2) 兜底:非终态超 30 分钟强制标 failed(客户端中断;正常路径由 HandleTasks 90s 标记)
+        Stmt stStuck(m_db, "UPDATE transfer_tasks SET status=?, err='客户端中断', update_time=? "
+                           "WHERE status IN ('uploading','packing','triggered') AND update_time<?");
+        if (stStuck.p)
+        {
+            BindText(stStuck.p, 1, kTaskStatusFailed);
+            BindInt(stStuck.p, 2, now);
+            BindInt(stStuck.p, 3, (int64_t)(now - kTaskStaleForceSec));
+            sqlite3_step(stStuck.p);
+            if (m_db.Changes() > 0)
+                DEFAULT_LOG_INFO("[FileHub] 清理超时传输任务 {} 个", m_db.Changes());
+        }
     }
 }
 

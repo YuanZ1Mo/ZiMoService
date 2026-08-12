@@ -4,19 +4,24 @@
             <button class="fh-seal" data-space="public"><span class="fh-seal-name">公共文件夹</span></button>
             <button class="fh-seal" data-space="personal"><span class="fh-seal-name">个人文件夹</span></button>
           </div>
+          <!-- 内容操作:上传/新建 -->
           <div class="fh-tb-group">
             <button class="btn-primary fh-tb" id="fhUploadBtn" style="width:auto;padding:6px 16px;font-size:13px">上传</button>
-            <button class="btn-ghost fh-tb" id="fhNewDir" style="padding:6px 14px;font-size:13px">新建文件夹</button>
-            <button class="btn-ghost fh-tb" id="fhQueueBtn" style="padding:6px 14px;font-size:13px" title="上传队列">队列</button>
-            <button class="btn-ghost fh-tb" id="fhSharesBtn" style="padding:6px 14px;font-size:13px" title="我的分享">我的分享</button>
+            <button class="btn-ghost fh-tb fh-tb-blue" id="fhNewDir" style="padding:6px 14px;font-size:13px">新建文件夹</button>
           </div>
-          <div class="fh-tb-group" id="fhSelBar" style="display:none">
-            <button class="btn-ghost fh-tb" id="fhSelDownload" style="padding:6px 14px;font-size:13px">下载</button>
-            <button class="btn-ghost fh-tb" id="fhSelDelete" style="padding:6px 14px;font-size:13px">删除</button>
-            <button class="btn-ghost fh-tb" id="fhSelShare" style="padding:6px 14px;font-size:13px">分享</button>
+          <!-- 任务管理:队列/我的分享 -->
+          <div class="fh-tb-group fh-tb-sep">
+            <button class="btn-ghost fh-tb" id="fhQueueBtn" style="padding:6px 14px;font-size:13px" title="上传队列">队列</button>
+            <button class="btn-ghost fh-tb fh-tb-purple" id="fhSharesBtn" style="padding:6px 14px;font-size:13px" title="我的分享">我的分享</button>
+          </div>
+          <!-- 选中操作:下载/分享/删除/更多 -->
+          <div class="fh-tb-group fh-tb-sep" id="fhSelBar" style="display:none">
+            <button class="btn-ghost fh-tb fh-tb-green" id="fhSelDownload" style="padding:6px 14px;font-size:13px">下载</button>
+            <button class="btn-ghost fh-tb fh-tb-purple" id="fhSelShare" style="padding:6px 14px;font-size:13px">分享</button>
+            <button class="btn-ghost fh-tb fh-tb-red" id="fhSelDelete" style="padding:6px 14px;font-size:13px">删除</button>
             <button class="btn-ghost fh-tb" id="fhSelMore" style="padding:6px 14px;font-size:13px">更多</button>
           </div>
-          <div class="fh-filters">
+          <div class="fh-filters fh-tb-sep">
             <select id="fhFilterType" class="fh-filter" title="类型筛选">
               <option value="all">全部类型</option>
               <option value="dir">文件夹</option>

@@ -565,9 +565,9 @@
         const r = await fhModal({
           title: '更多操作',
           content: `<div class="fh-more-list">
-            ${single ? '<button class="fh-more-item" data-modal-action="rename">重命名</button>' : ''}
-            <button class="fh-more-item" data-modal-action="copy">复制</button>
-            <button class="fh-more-item" data-modal-action="move">移动</button>
+            ${single ? moreItem('rename', '重命名') : ''}
+            ${moreItem('copy', '复制')}
+            ${moreItem('move', '移动')}
           </div>`,
           buttons: [{ label: '关闭', value: 'cancel' }],
         });
@@ -646,9 +646,9 @@
           const r = await fhModal({
             title: '更多操作',
             content: `<div class="fh-more-list">
-              <button class="fh-more-item" data-modal-action="rename">重命名</button>
-              <button class="fh-more-item" data-modal-action="copy">复制</button>
-              <button class="fh-more-item" data-modal-action="move">移动</button>
+              ${moreItem('rename', '重命名')}
+              ${moreItem('copy', '复制')}
+              ${moreItem('move', '移动')}
             </div>`,
             buttons: [{ label: '关闭', value: 'cancel' }],
           });
@@ -663,64 +663,122 @@
 
     /* ---------------- 操作实现 ---------------- */
 
-    /* 单文件下载执行(fetch blob→触发下载;完成→done / 失败→err;重试与首次共用) */
-    function startDownloadItem(item) {
-      item.status = 'uploading';
-      renderQueue();
-      A.api.filehubDownload(st.space, item.fileId).then(() => {
-        item.status = 'done';
-      }).catch((e) => {
-        item.status = 'err';
-        item.err = e.message;
-        if (e.code !== 401) A.toast(e.message, 'err');
-      }).finally(() => renderQueue());
+    /** 传输任务 task_id(前端生成,服务端任务行主键;每次传输/重试均为新 id) */
+    function genTaskId() {
+      return Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
     }
 
-    /* 单文件下载:进队列跟踪(fetch blob;下载中→完成/失败) */
+    /** 更多菜单项图标(16px 线条,stroke 跟随 currentColor) */
+    const kMoreIcons = {
+      rename: '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 1.8l2.7 2.7L5.5 13.2 2 14l.8-3.5z"/></svg>',
+      copy: '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="5.5" width="8.5" height="8.5" rx="1.5"/><path d="M10.5 3.5V3a1.5 1.5 0 0 0-1.5-1.5H3A1.5 1.5 0 0 0 1.5 3v6A1.5 1.5 0 0 0 3 10.5h.5"/></svg>',
+      move: '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1.8 3.2h6.9l1.6 1.7h3.9v8.1H1.8z"/><path d="M8.2 6.8l2.2 2.2-2.2 2.2M10.4 9H5.4"/></svg>',
+    };
+
+    /** 更多菜单项:图标 + 文案,统一结构 */
+    function moreItem(action, label) {
+      return `<button class="fh-more-item" data-modal-action="${action}">` +
+        `<span class="fh-more-ico">${kMoreIcons[action] || ''}</span>${label}</button>`;
+    }
+
+    /* 单文件下载执行:导航直链(浏览器/IDM 接管);队列只感知"已触发下载",
+       进度与结果由系统下载器展示(重试与首次共用);
+       1s 轮询 task_status:服务端响应发出(TriggerReply)即标 done,
+       队列从"已触发下载"翻转到"完成"(404=行未建继续等,10 分钟封顶) */
+    function startDownloadItem(item) {
+      item.status = 'triggered';
+      item.err = '';
+      renderQueue();
+      window.location.href = A.api.filehubDownloadUrl(st.space, item.fileId, item.taskId);
+      let tries = 0;
+      item.pollTimer = setInterval(async () => {
+        if (item.status !== 'triggered') { clearInterval(item.pollTimer); return; }
+        tries++;
+        try {
+          const r = await A.api.filehubTaskStatus(item.taskId);
+          if (r.status === 'done') {
+            clearInterval(item.pollTimer);
+            item.status = 'done';
+            renderQueue();
+          } else if (r.status === 'failed') {
+            clearInterval(item.pollTimer);
+            item.status = 'err';
+            item.err = r.err || '下载失败';
+            renderQueue();
+          }
+        } catch (e) {
+          if (e.code === 404 && tries <= 600) return;   // 行未建:继续等
+          if (tries > 600) {
+            clearInterval(item.pollTimer);
+            item.status = 'err';
+            item.err = '下载状态超时';
+            renderQueue();
+          }
+        }
+      }, 1000);
+    }
+
+    /* 单文件下载:进队列(直链导航;队列感知"已触发下载") */
     function downloadFile(id) {
       const f = (st.files || []).find((x) => x.id === id);
       const item = {
         uid: Date.now() + Math.random(), createTime: Date.now(),
         kind: 'dl', name: f ? f.name : '文件',
-        size: f ? f.size : 0, status: 'wait', loaded: 0, total: 0, speed: 0, file: null,
-        fileId: id,   // 重试下载用
+        size: f ? f.size : 0, status: 'wait', file: null,
+        fileId: id, taskId: genTaskId(),
       };
       st.uploadQueue.push(item);
       renderQueue();
       startDownloadItem(item);
     }
 
-    /* zip 打包下载:进入队列,串行执行(同一时间仅一个打包请求,
-       避免并发 zip 占满浏览器连接池/服务端信号交错导致卡住) */
-    const zipJobs = [];
-    let zipBusy = false;
-
-    async function pumpZip() {
-      if (zipBusy) return;
-      const job = zipJobs.shift();
-      if (!job) return;
-      zipBusy = true;
-      job.item.status = 'uploading';
+    /* zip 打包执行:导航直链(服务端流式打包,浏览器下载与打包并发);
+       1s 轮询 task_status:打包中→完成(服务端流结束即标 done,下载随之完成;
+       404(行未建)=继续等,120s 封顶) */
+    function startZipPack(item) {
+      item.status = 'packing';
+      item.err = '';
       renderQueue();
-      try {
-        const r = await A.api.filehubZip(st.space, job.ids, job.fallbackName);
-        job.item.status = 'done';
-        if (r && r.name) job.item.name = r.name;
-        A.toast('打包完成,已开始下载');
-      } catch (e) {
-        job.item.status = 'err';
-        job.item.err = e.message;
-        if (e.code !== 401) A.toast(e.message, 'err');
-      }
-      renderQueue();
-      zipBusy = false;
-      pumpZip();   // 执行下一个排队任务
+      window.location.href = A.api.filehubZipDownloadUrl(item.taskId, item.zipIds);
+      let tries = 0;
+      item.pollTimer = setInterval(async () => {
+        if (item.status !== 'packing') { clearInterval(item.pollTimer); return; }
+        tries++;
+        try {
+          const r = await A.api.filehubTaskStatus(item.taskId);
+          if (r.status === 'done') {
+            clearInterval(item.pollTimer);
+            item.status = 'done';        // 打包完成,下载已交付浏览器/IDM
+            renderQueue();
+          } else if (r.status === 'failed') {
+            clearInterval(item.pollTimer);
+            item.status = 'err';
+            item.err = r.err || '打包失败';
+            renderQueue();
+          }
+        } catch (e) {
+          if (e.code === 404) {
+            if (tries > 120) {   // 行迟迟未建/已删除:按超时失败
+              clearInterval(item.pollTimer);
+              item.status = 'err';
+              item.err = '打包超时';
+              renderQueue();
+            }
+            return;              // 404 且未超时:等下一轮
+          }
+          if (tries > 120) {
+            clearInterval(item.pollTimer);
+            item.status = 'err';
+            item.err = e.message || '打包失败';
+            renderQueue();
+          }
+        }
+      }, 1000);
     }
 
     function downloadZip(ids) {
       const singleDir = ids.length === 1 && ids[0].type === 'dir';
-      // 本地构造下载名(跨源 fetch 拿不到 Content-Disposition,需 CORS Expose-Headers):
-      // 单文件夹 = 文件夹名.zip;其余 = filehub-打包.zip
+      // 本地构造打包名(与服务端规则一致:单文件夹 = 文件夹名.zip;其余 = filehub-打包.zip)
       let fallbackName = 'filehub-打包.zip';
       if (singleDir) {
         const d = st.dirs.find((x) => x.id === ids[0].id);
@@ -729,15 +787,15 @@
       const item = {
         uid: Date.now() + Math.random(), createTime: Date.now(),
         kind: 'zip',   // 打包项(与上传项区分)
-        name: singleDir ? '打包文件夹' : '打包下载',
-        size: 0, status: 'wait', loaded: 0, total: 0, speed: 0, file: null,
+        name: fallbackName,
+        size: 0, status: 'wait', file: null,
         zipIds: ids,          // 重试打包用
-        zipName: fallbackName, // 重试打包用
+        zipName: fallbackName,
+        taskId: genTaskId(),
       };
       st.uploadQueue.push(item);
-      zipJobs.push({ ids, item, fallbackName });
       renderQueue();
-      pumpZip();
+      startZipPack(item);
     }
 
     async function downloadSelection() {
@@ -1088,7 +1146,10 @@
       if (!files.length) return;
       const dirId = st.dirId;   // 入队时固化目标目录(上传期间用户导航不影响已入队项)
       files.forEach((f) => {
-        st.uploadQueue.push({ uid: Date.now() + Math.random(), createTime: Date.now(), dirId, name: f.name, size: f.size, status: 'wait', loaded: 0, total: f.size, speed: 0, file: f });
+        const taskId = genTaskId();
+        st.uploadQueue.push({ uid: Date.now() + Math.random(), createTime: Date.now(), dirId, name: f.name, size: f.size, status: 'wait', loaded: 0, total: f.size, speed: 0, file: f, taskId });
+        // 预建行:关浏览器后任务留痕,重开队列可见"已中断"(失败静默,上传本身会报错)
+        A.api.filehubTaskCreate(taskId, f.name, f.size).catch(() => {});
       });
       renderQueue();
       pumpQueue();
@@ -1134,12 +1195,14 @@
       st.dirIdMap = Object.assign({}, map);
       flat.forEach((it) => {
         const parts = it.path.split('/');
+        const taskId = genTaskId();
         st.uploadQueue.push({
           uid: Date.now() + Math.random(), createTime: Date.now(), dirId: st.dirId, dirMap: map,
           name: it.file.name, size: it.file.size, status: 'wait',
-          loaded: 0, total: it.file.size, speed: 0, file: it.file,
+          loaded: 0, total: it.file.size, speed: 0, file: it.file, taskId,
           relDir: parts.length > 1 ? parts.slice(0, -1).join('/') : null,
         });
+        A.api.filehubTaskCreate(taskId, it.file.name, it.file.size).catch(() => {});
       });
       renderQueue();
       pumpQueue();
@@ -1147,9 +1210,9 @@
     }
 
     /* 队列进度百分比(0 字节文件 total=0:完成/上传中视为 100%,避免除零显示 0%;
-       zip 打包/dl 单文件下载无进度,显示 0% 空条) */
+       已触发下载视为 100%(下载已交付浏览器/IDM,无页面进度);zip 打包中显示 0% 空条) */
     function queuePct(it) {
-      if (it.status === 'done') return 100;
+      if (it.status === 'done' || it.status === 'triggered') return 100;
       if (it.kind === 'zip' || it.kind === 'dl') return 0;
       if (!it.total) return it.status === 'uploading' ? 100 : 0;
       return Math.round(it.loaded / it.total * 100);
@@ -1226,46 +1289,83 @@
       render();
     }
 
-    /* 队列状态文案(zip 打包/dl 下载与上传项区分) */
+    /* 队列状态文案(zip 打包/dl 下载与上传项区分;
+       历史项(status 为服务端原文)按映射展示) */
     function queueStatusText(it) {
+      const errText = (it.err || '').slice(0, 40);
+      if (it.hist) {
+        if (it.status === 'done') return '完成';
+        if (it.status === 'failed') return `失败:${errText || '未知原因'}`;
+        if (it.status === 'uploading') return '上传中(历史)';
+        if (it.status === 'packing') return '打包中(历史)';
+        if (it.status === 'triggered') return '已触发下载(历史)';
+        return it.status || '—';
+      }
       if (it.kind === 'zip' || it.kind === 'dl') {
         if (it.status === 'wait') return '等待中';
-        if (it.status === 'uploading') return it.kind === 'zip' ? '打包中…' : '下载中…';
-        if (it.status === 'err') return `失败:${(it.err || '').slice(0, 40)}`;
-        return '已完成';
+        if (it.status === 'packing') return '打包中…';
+        if (it.status === 'triggered') return '已触发下载';
+        if (it.status === 'err') return `失败:${errText}`;
+        return '完成';
       }
       if (it.status === 'wait') return '等待中';
       if (it.status === 'uploading') return `${queuePct(it)}% · ${fmtSize(it.speed)}/s`;
-      if (it.status === 'err') return `失败:${(it.err || '').slice(0, 40)}`;
+      if (it.status === 'err') return `失败:${errText}`;
       return '完成';
     }
 
-    /* 队列项操作:按类型分派重试
-       (下载/打包项绝不能进上传泵,否则会被当上传项执行并提示"上传完成") */
+    /* 队列项操作:按类型分派重试(每次重试生成新 task_id,旧行保留在历史) */
     function retryQueueItem(uid) {
       const item = st.uploadQueue.find((x) => x.uid === uid);
       if (!item || item.status !== 'err') return;
+      item.taskId = genTaskId();
       item.err = '';
       renderQueue();
 
       if (item.kind === 'dl') {
         startDownloadItem(item);            // 重试单文件下载
       } else if (item.kind === 'zip') {
-        zipJobs.push({ ids: item.zipIds, item, fallbackName: item.zipName });   // 重新入打包队列
-        pumpZip();
+        startZipPack(item);                 // 重试打包(直链 + 轮询)
       } else {
         item.status = 'wait';               // 上传项:重入上传泵
         pumpQueue();
       }
     }
 
+    /* 取消队列项:上传中/打包中可取消(行标 failed"已取消",服务端收尾);
+       其余状态只有删除,无取消按钮 */
+    function cancelQueueItem(uid) {
+      const item = st.uploadQueue.find((x) => x.uid === uid);
+      if (!item) return;
+      if (item.kind === 'zip' && item.status === 'packing') {
+        clearInterval(item.pollTimer);
+        A.api.filehubTaskCancel(item.taskId).catch(() => {});
+        st.uploadQueue = st.uploadQueue.filter((x) => x.uid !== uid);
+        renderQueue();
+      } else if (item.kind !== 'zip' && item.kind !== 'dl' && item.status === 'uploading') {
+        item.cancelRequested = true;        // 上传请求 abort 后由 catch 清理项
+        if (item.uploadHandle) item.uploadHandle.abort();
+        A.api.filehubTaskCancel(item.taskId).catch(() => {});
+      }
+    }
+
     function removeQueueItem(uid) {
-      const idx = st.uploadQueue.findIndex((x) => x.uid === uid);
-      if (idx < 0) return;
-      if (st.uploadQueue[idx].status === 'uploading') {
-        A.toast('上传中的项暂不能删除', 'err');
+      // 历史项(uid 为 'hist-<task_id>' 字符串,不在 uploadQueue):删服务端行 + 移除历史
+      if (typeof uid === 'string' && uid.startsWith('hist-')) {
+        const taskId = uid.slice(5);
+        A.api.filehubTaskDelete(taskId).catch(() => {});
+        st.history = (st.history || []).filter((h) => h.taskId !== taskId);
+        renderQueue();
         return;
       }
+      const idx = st.uploadQueue.findIndex((x) => x.uid === uid);
+      if (idx < 0) return;
+      const item = st.uploadQueue[idx];
+      if (item.status === 'uploading') {
+        A.toast('上传中的项请用"取消"', 'err');
+        return;
+      }
+      if (item.pollTimer) clearInterval(item.pollTimer);   // 单文件/zip 轮询一并清理
       st.uploadQueue.splice(idx, 1);
       renderQueue();
     }
@@ -1277,10 +1377,15 @@
         : st.uploadQueue.filter((it) => it.kind !== 'zip' && it.kind !== 'dl');
     }
 
-    /* 清除已完成/清空队列:仅作用于当前 tab */
+    /* 清除已完成/清空队列:仅作用于当前 tab(历史项同步删服务端行,防复活) */
     function clearDoneQueue() {
       const tabUids = new Set(tabQueue().map((x) => x.uid));
       st.uploadQueue = st.uploadQueue.filter((x) => !(tabUids.has(x.uid) && x.status === 'done'));
+      const doneIds = (st.history || [])
+        .filter((h) => h.tab === st.qTab && h.status === 'done')
+        .map((h) => h.taskId);
+      st.history = (st.history || []).filter((h) => !(h.tab === st.qTab && h.status === 'done'));
+      doneIds.forEach((id) => A.api.filehubTaskDelete(id).catch(() => {}));
       renderQueue();
     }
 
@@ -1291,6 +1396,9 @@
         return;
       }
       st.uploadQueue = st.uploadQueue.filter((x) => !tabUids.has(x.uid));
+      const histIds = (st.history || []).filter((h) => h.tab === st.qTab).map((h) => h.taskId);
+      st.history = (st.history || []).filter((h) => h.tab !== st.qTab);
+      histIds.forEach((id) => A.api.filehubTaskDelete(id).catch(() => {}));
       renderQueue();
     }
 
@@ -1351,6 +1459,27 @@
       mask.querySelector('#fhQdClose').addEventListener('click', close);
       mask.querySelector('#fhQdClearDone').addEventListener('click', () => clearDoneQueue());
       mask.querySelector('#fhQdClearAll').addEventListener('click', () => clearAllQueue());
+
+      // 历史加载(首次打开队列时拉取服务端任务记录,分 tab 合并渲染;失败静默)
+      if (!st.historyLoaded) {
+        A.api.filehubTasks(0).then((r) => {
+          st.historyLoaded = true;
+          st.history = (r.tasks || []).map((t) => ({
+            hist: true,
+            taskId: t.task_id,
+            uid: 'hist-' + t.task_id,     // 与内存项区分
+            kind: t.type === 'upload' ? null : (t.type === 'zip' ? 'zip' : 'dl'),
+            tab: t.type === 'upload' ? 'upload' : 'download',
+            typeLabel: t.type === 'upload' ? '上传' : (t.type === 'zip' ? '打包下载' : '单文件下载'),
+            name: t.name,
+            size: t.total_size,
+            status: t.status,             // 服务端原文(done/failed/uploading/packing/triggered)
+            err: t.err,
+            createTime: t.create_time * 1000,
+          }));
+          renderQueue();
+        }).catch(() => {});
+      }
     }
 
     /* 触发时间短格式(MM-DD HH:mm) */
@@ -1369,31 +1498,36 @@
         const failed = st.uploadQueue.filter((it) => it.status === 'err').length;
         qBtn.textContent = active ? `队列 ${active}${failed ? ' ⚠' : ''}` : '队列';
       }
-      // 按当前 tab 过滤:上传(无 kind)/下载(zip 打包 + dl 单文件)
-      const tabItems = st.qTab === 'download'
+      // 按当前 tab 过滤:上传(无 kind)/下载(zip 打包 + dl 单文件);历史(hist)追加在后
+      const tabItems = (st.qTab === 'download'
         ? st.uploadQueue.filter((it) => it.kind === 'zip' || it.kind === 'dl')
-        : st.uploadQueue.filter((it) => it.kind !== 'zip' && it.kind !== 'dl');
+        : st.uploadQueue.filter((it) => it.kind !== 'zip' && it.kind !== 'dl'))
+        .concat((st.history || []).filter((h) => h.tab === st.qTab));
       const emptyText = st.qTab === 'download' ? '下载队列为空' : '上传队列为空';
       // 渲染所有注册容器(队列窗体)
       const containers = [...st.queueContainers].filter(Boolean);
       containers.forEach((qc) => {
         qc.innerHTML = tabItems.length
           ? tabItems.map((it) => {
-            const stateCls = it.status === 'done' ? 'ok' : (it.status === 'err' ? 'err' : 'run');
+            const stateCls = it.status === 'done' ? 'ok' : (it.status === 'err' || it.status === 'failed' ? 'err' : 'run');
+            // 按钮矩阵:上传中/打包中=取消;失败=重试+删除;其余(含历史)=删除
+            let ops = '';
+            if (it.status === 'uploading') ops += `<button class="fh-op" data-qact="cancel" data-uid="${it.uid}">取消</button>`;
+            if (it.status === 'packing') ops += `<button class="fh-op" data-qact="cancel" data-uid="${it.uid}">取消</button>`;
+            if ((it.status === 'err' || it.status === 'failed') && !it.hist) ops += `<button class="fh-op" data-qact="retry" data-uid="${it.uid}">重试</button>`;
+            if (it.status !== 'uploading') ops += `<button class="fh-op" data-qact="remove" data-uid="${it.uid}">删除</button>`;
             return `
             <tr class="${stateCls}">
               <td class="fh-qd-td-dot"><span class="fh-q-dot"></span></td>
               <td class="fh-q-name-cell">
                 <div class="fh-q-name" title="${esc(it.name)}">${esc(it.name)}</div>
                 ${it.relDir ? `<div class="fh-q-dir">${esc(it.relDir)}</div>` : ''}
+                ${it.hist ? `<div class="fh-q-dir">${it.typeLabel}</div>` : ''}
               </td>
               <td class="fh-q-time fh-mono">${fmtTimeShort(it.createTime)}</td>
               <td class="fh-q-bar-cell"><div class="fh-q-bar"><div class="fh-q-fill" style="width:${queuePct(it)}%"></div></div></td>
               <td class="fh-q-meta fh-mono">${esc(queueStatusText(it))}</td>
-              <td class="fh-q-ops">
-                ${it.status === 'err' ? `<button class="fh-op" data-qact="retry" data-uid="${it.uid}">重试</button>` : ''}
-                ${it.status !== 'uploading' ? `<button class="fh-op" data-qact="remove" data-uid="${it.uid}">删除</button>` : ''}
-              </td>
+              <td class="fh-q-ops">${ops}</td>
             </tr>`;
           }).join('')
           : `<tr><td colspan="6" class="fh-qd-empty">${emptyText}</td></tr>`;
@@ -1401,8 +1535,11 @@
       containers.forEach((qc) => {
         qc.querySelectorAll('[data-qact]').forEach((b) => {
           b.addEventListener('click', () => {
-            const uid = Number(b.dataset.uid);
+            // 历史项 uid 是 'hist-<task_id>' 字符串,须原样保留(Number 会变 NaN 找不到项)
+            const raw = b.dataset.uid;
+            const uid = (typeof raw === 'string' && raw.startsWith('hist-')) ? raw : Number(raw);
             if (b.dataset.qact === 'retry') retryQueueItem(uid);
+            else if (b.dataset.qact === 'cancel') cancelQueueItem(uid);
             else if (b.dataset.qact === 'remove') removeQueueItem(uid);
           });
         });
@@ -1505,18 +1642,25 @@
               item.err = '无法定位目标目录:' + item.relDir;
               throw new Error(item.err);
             }
-            return A.api.filehubUpload(st.space, dirId, item.name, item.file, (loaded) => {
+            const handle = A.api.filehubUpload(st.space, dirId, item.name, item.file, (loaded) => {
               item.loaded = loaded;
               renderQueueThrottled();
-            });
+            }, item.taskId);
+            item.uploadHandle = handle;      // 队列"取消"按钮持 XHR 引用
+            return handle.promise;
           }).then(() => {
             clearInterval(speedTimer);
             item.status = 'done';
             done.add(item.name);
           }).catch((e) => {
             clearInterval(speedTimer);
-            item.status = 'err';
-            item.err = e instanceof Error ? e.message : String(e || '未知错误');
+            if (item.cancelRequested) {
+              // 用户取消:移除项(行已由 task_cancel 标"已取消"),不显示错误
+              st.uploadQueue = st.uploadQueue.filter((x) => x.uid !== item.uid);
+            } else {
+              item.status = 'err';
+              item.err = e instanceof Error ? e.message : String(e || '未知错误');
+            }
           }).finally(() => {
             running.delete(idx);
             try { renderQueue(); } catch (err) { console.error('[queue] render err', err); }

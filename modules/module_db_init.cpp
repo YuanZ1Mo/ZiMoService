@@ -198,11 +198,33 @@ static const ZmDbColumn kDownloadLogsCols[] = {
     {"create_time",       "INTEGER NOT NULL"},
 };
 
+/**
+ * 传输任务表(上传/单文件下载/zip 打包统一记录,前端队列历史与结果的数据源)
+ *  - 状态机:upload: uploading→done/failed;file: triggered→done/failed;
+ *    zip: packing→done/failed(流式打包,下载与打包并发);进度不做,仅记状态与结果
+ *  - 中断识别:上传预建行后关浏览器,行停在 uploading;加载 /tasks 时服务端把
+ *    超过 kTaskStaleSec(90s,客户端 60s 即超时放弃)仍 uploading 的行标 failed("已中断");
+ *    清理线程兜底:非终态超 30 分钟同样标记;done/failed 超 30 天删行
+ */
+static const ZmDbColumn kTransferTasksCols[] = {
+    {"id",          "INTEGER PRIMARY KEY AUTOINCREMENT"},
+    {"task_id",     "TEXT NOT NULL UNIQUE"},
+    {"user_id",     "INTEGER NOT NULL"},
+    {"type",        "TEXT NOT NULL"},
+    {"status",      "TEXT NOT NULL"},
+    {"name",        "TEXT NOT NULL"},
+    {"total_size",  "INTEGER NOT NULL DEFAULT 0"},
+    {"err",         "TEXT NOT NULL DEFAULT ''"},
+    {"create_time", "INTEGER NOT NULL"},
+    {"update_time", "INTEGER NOT NULL"},
+};
+
 static const ZmDbTable kFileHubTables[] = {
     {"dirs",               kDirsCols,          (int)std::size(kDirsCols),          "UNIQUE(space, parent_id, name)", kDirsPost},
     {"files",              kFilesCols,         (int)std::size(kFilesCols),         "UNIQUE(space, dir_id, name)", ""},
     {"shares",             kSharesCols,        (int)std::size(kSharesCols),        "", ""},
     {"share_download_logs",kDownloadLogsCols,  (int)std::size(kDownloadLogsCols),  "", ""},
+    {"transfer_tasks",     kTransferTasksCols, (int)std::size(kTransferTasksCols), "", ""},
 };
 
 static const char* kFileHubIndexes[] = {
@@ -214,6 +236,7 @@ static const char* kFileHubIndexes[] = {
     "CREATE INDEX IF NOT EXISTS idx_shares_target ON shares(target_type, target_id)",
     "CREATE INDEX IF NOT EXISTS idx_share_download_logs_share ON share_download_logs(share_id)",
     "CREATE INDEX IF NOT EXISTS idx_share_download_logs_create ON share_download_logs(create_time)",
+    "CREATE INDEX IF NOT EXISTS idx_transfer_tasks_user ON transfer_tasks(user_id, id DESC)",
 };
 
 } // namespace

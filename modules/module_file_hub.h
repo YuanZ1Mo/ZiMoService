@@ -176,11 +176,51 @@ private:
     int ReceiveFileStream(ZmHttpdTask* task, const std::string& physicalPath, uint64_t& outSize);
 
     // ========================================================================
+    // 传输任务(transfer_tasks 统一记录上传/单文件下载/zip 打包,前端队列历史数据源)
+    // ========================================================================
+
+    /** @brief 历史分页查询(加载时顺带标记超时仍 uploading 的行 failed"已中断") */
+    void HandleTasks(ZmReqLoop* loop, ZmHttpdTask* task, uint64_t opUid);
+
+    /** @brief 上传预建行(选文件即建,关浏览器后行留痕;参数 task_id/name/size) */
+    void HandleTaskCreate(ZmReqLoop* loop, const ZMJSON& body, uint64_t opUid);
+
+    /** @brief 取消任务(上传/打包):行置 failed"已取消";打包循环逐文件检测行状态中止 */
+    void HandleTaskCancel(ZmReqLoop* loop, const ZMJSON& body, uint64_t opUid);
+
+    /** @brief 删除任务行(队列"删除"按钮,校验归属) */
+    void HandleTaskDelete(ZmReqLoop* loop, const ZMJSON& body, uint64_t opUid);
+
+    /** @brief 任务状态查询(zip 打包轮询;行缺失返回 404,前端视为打包启动中) */
+    void HandleTaskStatus(ZmReqLoop* loop, ZmHttpdTask* task, uint64_t opUid);
+
+    // ========================================================================
     // zip 打包下载
     // ========================================================================
 
-    void HandleZip(ZmReqLoop* loop, ZmHttpdTask* task, const ZMJSON& body, int space,
-                   uint64_t opUid, const std::string& opAccount);
+    /**
+     * @brief 直链流式打包下载(导航请求即打包请求,边打边发,零临时文件)
+     *        query: task_id + ids(逗号分隔,前缀 f=文件/d=目录,如 "f12,d34")
+     *        建行(packing)→ 先响应头 → 流式打包;每文件检查行状态(取消/删除即中止);
+     *        完成置 done+total_size,失败置 failed+err
+     */
+    void HandleZipDownload(ZmReqLoop* loop, ZmHttpdTask* task, uint64_t opUid,
+                           const std::string& opAccount);
+
+    // ---- 传输任务行存取 helper(内部持锁) ----
+
+    /** @brief 建行(INSERT OR IGNORE,幂等);返回是否已存在/新建 */
+    bool CreateTransferTask(const std::string& taskId, uint64_t userUid, const std::string& type,
+                            const std::string& status, const std::string& name, int64_t totalSize);
+
+    /** @brief 更新行状态(totalSize<0 不更新大小;err 覆盖) */
+    bool UpdateTransferTask(const std::string& taskId, uint64_t userUid, const std::string& status,
+                            const std::string& err, int64_t totalSize);
+
+    /** @brief 读取行(归属校验合一);返回 false = 行不存在或非本用户 */
+    bool LoadTransferTask(const std::string& taskId, uint64_t userUid, std::string& type,
+                          std::string& status, std::string& name, int64_t& totalSize,
+                          std::string& err);
 
     /** @brief 单个文件入 zip(条目名 = prefix + 文件名);skipFileIds 命中跳过(去重防御) */
     bool ZipAddFile(ZipWriter& zip, int space, uint64_t fileId, const std::string& entryPrefix,
@@ -217,6 +257,12 @@ private:
 
     /** @brief 清理过期分享下载日志(保留期 kShareDownloadLogRetain,与审计一致) */
     void CleanShareDownloadLogs();
+
+    /**
+     * @brief 清理传输任务:done/failed 超 kTaskRetainDays 删行;
+     *        非终态(uploading/packing/triggered)超 kTaskStaleForceSec 标 failed"客户端中断"
+     */
+    void CleanTransferTasks();
 
     // ========================================================================
     // 数据

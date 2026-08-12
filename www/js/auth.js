@@ -89,99 +89,33 @@
     filehubUnshare: (shareId) =>
       restCall('POST', '/portal/filehub/unshare', { share_id: shareId }),
     filehubShares: () => restCall('GET', '/portal/filehub/shares'),
-    /** 单文件下载 URL(界面内已登录场景) */
-    filehubDownloadUrl: (space, fileId) =>
-      `//${window.location.hostname}:39441/zimo/api/portal/filehub/download?space=${space}&file_id=${fileId}`,
-    /** 单文件下载(fetch blob → 触发下载;用于队列跟踪,失去浏览器原生下载器接管) */
-    async filehubDownload(space, fileId) {
-      const r = await fetch(REST_URL + `/portal/filehub/download?space=${space}&file_id=${fileId}`, {
-        method: 'GET',
-        credentials: 'include',
-      });
-      if (!r.ok) {
-        let msg = `请求失败(${r.status})`;
-        try {
-          const j = await r.json();
-          if (j.error) msg = j.error.message || msg;
-        } catch (e) { /* 非 JSON */ }
-        const err = new Error(msg);
-        err.code = r.status;
-        throw err;
-      }
-      const blob = await r.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'file';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 30000);
+    /** 单文件下载直链 URL(导航即触发,浏览器/IDM 接管;task_id 供任务行记录) */
+    filehubDownloadUrl: (space, fileId, taskId) =>
+      `//${window.location.hostname}:39441/zimo/api/portal/filehub/download?space=${space}&file_id=${fileId}&task_id=${taskId}`,
+    /** zip 打包直链 URL(导航即打包,流式返回;ids 前缀 f=文件/d=目录) */
+    filehubZipDownloadUrl: (taskId, ids) => {
+      const enc = ids.map((it) => (it.type === 'dir' ? 'd' : 'f') + it.id).join(',');
+      return `//${window.location.hostname}:39441/zimo/api/portal/filehub/zip_download?task_id=${taskId}&ids=${enc}`;
     },
+    /** 传输任务管理(上传/下载/打包统一记录,队列历史与结果的数据源) */
+    filehubTaskCreate: (taskId, name, size) =>
+      restCall('POST', '/portal/filehub/task_create', { task_id: taskId, name, size }),
+    filehubTaskCancel: (taskId) =>
+      restCall('POST', '/portal/filehub/task_cancel', { task_id: taskId }),
+    filehubTaskDelete: (taskId) =>
+      restCall('POST', '/portal/filehub/task_delete', { task_id: taskId }),
+    filehubTaskStatus: (taskId) =>
+      restCall('GET', `/portal/filehub/task_status?task_id=${encodeURIComponent(taskId)}`),
+    filehubTasks: (page = 0) =>
+      restCall('GET', `/portal/filehub/tasks?page=${page}`),
     /** 分享链接(页面端口,免登录可达公共分享) */
     filehubShareUrl: (token) => `//${window.location.hostname}/share/${token}`,
-    /** zip 打包下载(多选/文件夹):流式 fetch → blob → 触发下载
-     *  @param fallbackName 本地构造的下载名(跨源 fetch 拿不到 Content-Disposition 头,
-     *                     需 CORS Expose-Headers;前端用列表数据构造兜底) */
-    async filehubZip(space, ids, fallbackName) {
-      // 超时保护:打包可能较慢,120s 无响应强制中止,队列标记失败继续下一个
-      const ctrl = new AbortController();
-      const zipTimer = setTimeout(() => ctrl.abort(), 120000);
-      let r;
-      try {
-        r = await fetch(REST_URL + `/portal/filehub/zip?space=${space}`, {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ids }),
-          signal: ctrl.signal,
-        });
-      } catch (e) {
-        clearTimeout(zipTimer);
-        if (e.name === 'AbortError') {
-          const err = new Error('打包超时');
-          err.code = 0;
-          throw err;
-        }
-        throw e;
-      }
-      clearTimeout(zipTimer);
-      if (!r.ok) {
-        let msg = `请求失败(${r.status})`;
-        try {
-          const j = await r.json();
-          if (j.error) msg = j.error.message || msg;
-        } catch (e) { /* 非 JSON */ }
-        const err = new Error(msg);
-        err.code = r.status;
-        throw err;
-      }
-      const blob = await r.blob();
-      const disp = r.headers.get('Content-Disposition') || '';
-      // 优先 RFC 5987 filename*(UTF-8 百分号编码,中文名可靠);
-      // 拿不到头(跨源 fetch 不暴露)时用本地构造的 fallbackName 兜底
-      let name = fallbackName || 'filehub.zip';
-      const star = disp.match(/filename\*=UTF-8''([^;]+)/i);
-      if (star) {
-        try { name = decodeURIComponent(star[1]); } catch (e) { name = star[1]; }
-      } else {
-        const m = disp.match(/filename="?([^";]+)"?/i);
-        if (m) name = m[1];
-      }
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = name;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 30000);
-      return { name };
-    },
-    /** 上传单个文件(流式;X-File-Size 声明供服务端完整性校验) */
-    async filehubUpload(space, dirId, name, file, onProgress) {
-      return new Promise((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
+    /** 上传单个文件(流式;X-File-Size 声明供服务端完整性校验;task_id 供任务行收尾)
+     *  @returns {{promise: Promise, abort: function}} 上传句柄(队列取消用 abort) */
+    filehubUpload(space, dirId, name, file, onProgress, taskId) {
+      const xhr = new XMLHttpRequest();
+      const handle = { abort() { try { xhr.abort(); } catch (e) { /* 忽略 */ } } };
+      handle.promise = new Promise((resolve, reject) => {
         // 超时保护:任何文件挂起(不触发 onload/onerror)时强制中止并报错,
         // 保证队列链不被单个卡住的文件阻断。
         // 超时按文件大小缩放:小文件(含 0 字节)10s 内必须收尾——否则立即失败
@@ -193,7 +127,7 @@
           err.code = 0;
           reject(err);
         }, timeoutMs);
-        xhr.open('POST', REST_URL + `/portal/filehub/upload?space=${space}&dir_id=${dirId}&name=${encodeURIComponent(name)}`);
+        xhr.open('POST', REST_URL + `/portal/filehub/upload?space=${space}&dir_id=${dirId}&name=${encodeURIComponent(name)}${taskId ? `&task_id=${taskId}` : ''}`);
         xhr.withCredentials = true;
         xhr.setRequestHeader('X-File-Size', String(file.size));
         xhr.upload.onprogress = (e) => {
@@ -222,10 +156,17 @@
           err.network = true;
           reject(err);
         };
+        xhr.onabort = () => {
+          clearTimeout(timer);
+          const err = new Error('已取消');
+          err.code = 0;
+          reject(err);
+        };
         // 0 字节文件:send(file) 时 Chrome 不触发 onload/onerror(空 body 怪癖),
         // promise 永不 settle → 队列卡死、后续任务中断;改 send 空串
         xhr.send(file.size ? file : '');
       });
+      return handle;
     },
   };
 

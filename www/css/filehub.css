@@ -11,7 +11,10 @@
   padding: 10px 14px; border-bottom: 1px solid var(--line);
   flex-wrap: wrap;
 }
-.fh-seals { display: flex; gap: 8px; }
+.fh-seals {
+  display: flex; gap: 8px;
+  margin-right: 6px; padding-right: 12px; border-right: 1px solid var(--line);
+}
 .fh-seal {
   border: 1px solid var(--line-strong); background: var(--bg1); color: var(--fg2);
   border-radius: 4px; padding: 6px 14px; font-size: 13px; cursor: pointer;
@@ -20,6 +23,8 @@
 .fh-seal:hover { border-color: var(--ac); color: var(--fg0); }
 .fh-seal.on { background: var(--ac); border-color: var(--ac); color: #FFF; }
 .fh-tb-group { display: flex; gap: 6px; }
+/* 功能分组分隔:后续分组前加竖线,窄屏换行时分隔线随组走;组距 = 6px 外边距 + 12px 内边距 */
+.fh-tb-sep { margin-left: 6px; padding-left: 12px; border-left: 1px solid var(--line); }
 .fh-filters { display: flex; gap: 6px; align-items: center; }
 .fh-filter {
   background: var(--bg2); border: 1px solid var(--line-strong); color: var(--fg0);
@@ -294,13 +299,21 @@ tr.err .fh-q-name { color: var(--err); }
 }
 .fh-pick-close:hover { color: var(--err); }
 
-/* 更多菜单 */
-.fh-more-list { display: flex; flex-direction: column; gap: 2px; }
+/* 更多菜单:图标 + 文案,悬停主题色 + 轻微右移 */
+.fh-more-list { display: flex; flex-direction: column; gap: 4px; padding: 2px 0; }
 .fh-more-item {
+  display: flex; align-items: center; gap: 10px;
   background: none; border: none; color: var(--fg0); text-align: left; font-size: 14px;
-  padding: 8px 12px; border-radius: 6px; cursor: pointer;
+  padding: 9px 12px; border-radius: 8px; cursor: pointer;
+  transition: background .12s, color .12s, transform .12s;
 }
-.fh-more-item:hover { background: var(--bg2); color: var(--ac); }
+.fh-more-item:hover { background: var(--bg2); color: var(--ac); transform: translateX(2px); }
+.fh-more-ico {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; color: var(--fg3);
+  transition: color .12s;
+}
+.fh-more-item:hover .fh-more-ico { color: var(--ac); }
 
 /* 文件信息 */
 .fh-info { display: flex; flex-direction: column; gap: 8px; }
@@ -348,3 +361,20 @@ tr.err .fh-q-name { color: var(--err); }
   .fh-ops { opacity: 1; }
   .fh-q-name { width: 120px; }
 }
+
+/* ============================================================================
+   工具栏按钮语义色(描边 + 文字色,深色主题下克制着色)
+   ============================================================================ */
+
+/* 新建:蓝 */
+.fh-tb-blue { color: #60A5FA; border-color: rgba(96, 165, 250, 0.45); }
+.fh-tb-blue:hover:not(:disabled) { color: #93C5FD; border-color: rgba(96, 165, 250, 0.75); }
+/* 下载:绿 */
+.fh-tb-green { color: #34D399; border-color: rgba(52, 211, 153, 0.45); }
+.fh-tb-green:hover:not(:disabled) { color: #6EE7B7; border-color: rgba(52, 211, 153, 0.75); }
+/* 删除:红 */
+.fh-tb-red { color: #F87171; border-color: rgba(248, 113, 113, 0.45); }
+.fh-tb-red:hover:not(:disabled) { color: #FCA5A5; border-color: rgba(248, 113, 113, 0.75); }
+/* 分享/我的分享:紫 */
+.fh-tb-purple { color: #A78BFA; border-color: rgba(167, 139, 250, 0.45); }
+.fh-tb-purple:hover:not(:disabled) { color: #C4B5FD; border-color: rgba(167, 139, 250, 0.75); }
