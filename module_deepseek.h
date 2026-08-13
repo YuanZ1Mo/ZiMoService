@@ -2,7 +2,7 @@
 #define MODULE_DEEPSEEK_H
 
 #include "zm_net_http_client_pool.h"
-#include "../ZiMoPublic/json/zm_json.h"
+#include "zm_util_json.h"
 
 #include <atomic>
 #include <cstdint>

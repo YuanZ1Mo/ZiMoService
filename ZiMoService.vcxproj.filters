@@ -67,36 +67,6 @@
     <Filter Include="头文件\Public\util">
       <UniqueIdentifier>{33b081b1-cab4-41a0-84f3-7ff924f230b1}</UniqueIdentifier>
     </Filter>
-    <Filter Include="源文件\Public">
-      <UniqueIdentifier>{6a5d849b-d89b-4550-8819-e14f40889cc4}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="源文件\Public\net">
-      <UniqueIdentifier>{52da6f11-74ce-4944-81ac-16f2c9d30c38}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="源文件\Public\service">
-      <UniqueIdentifier>{e3dd906f-a91d-4bf9-a7d2-847c928eaefb}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="源文件\Public\spdlog">
-      <UniqueIdentifier>{5357950b-0183-4500-b38d-697d1ad7bac9}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="源文件\Public\ssl">
-      <UniqueIdentifier>{fd55641f-b33f-4610-a402-318d6d4ee3e7}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="源文件\Public\util">
-      <UniqueIdentifier>{0b43f544-023c-409c-9ff1-87002a6a2a61}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="源文件\Public\openssl">
-      <UniqueIdentifier>{94330814-e424-48d0-8f2e-a542cd6570cc}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="源文件\Public\openssl\include">
-      <UniqueIdentifier>{a24d4069-3995-47b0-8eeb-1b741f333c3e}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="源文件\Public\openssl\include\openssl">
-      <UniqueIdentifier>{f6ab1ff5-1069-4ff1-8f3e-acc521778a85}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="源文件\Public\json">
-      <UniqueIdentifier>{7f241e82-931f-4551-96eb-adc75d606a35}</UniqueIdentifier>
-    </Filter>
     <Filter Include="头文件\Public\zlib">
       <UniqueIdentifier>{b53fca63-f2f8-48d8-8461-45f655afa33d}</UniqueIdentifier>
     </Filter>
@@ -112,9 +82,6 @@
     <Filter Include="头文件\Public\sqllite">
       <UniqueIdentifier>{e9db2527-25da-4cce-8fb3-2ed4ef6fd566}</UniqueIdentifier>
     </Filter>
-    <Filter Include="源文件\Public\sqllite">
-      <UniqueIdentifier>{ff6ae1eb-3da9-48d2-9a44-8508cd5368d7}</UniqueIdentifier>
-    </Filter>
     <Filter Include="头文件\modules">
       <UniqueIdentifier>{de3413cd-d7ce-4c97-9605-4a90b8cc7822}</UniqueIdentifier>
     </Filter>
@@ -129,72 +96,6 @@
     <ClCompile Include="service_center.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_http.cpp">
-      <Filter>源文件\Public\net</Filter>
-    </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_http_client.cpp">
-      <Filter>源文件\Public\net</Filter>
-    </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_http_client_loop.cpp">
-      <Filter>源文件\Public\net</Filter>
-    </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_http_client_pool.cpp">
-      <Filter>源文件\Public\net</Filter>
-    </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_req_loop.cpp">
-      <Filter>源文件\Public\net</Filter>
-    </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_req_loop_pool.cpp">
-      <Filter>源文件\Public\net</Filter>
-    </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_req_loop_protocol.cpp">
-      <Filter>源文件\Public\net</Filter>
-    </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_socket.cpp">
-      <Filter>源文件\Public\net</Filter>
-    </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\service\zm_service_base.cpp">
-      <Filter>源文件\Public\service</Filter>
-    </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\spdlog\zm_logger.cpp">
-      <Filter>源文件\Public\spdlog</Filter>
-    </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\util\zm_util_container.cpp">
-      <Filter>源文件\Public\util</Filter>
-    </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\util\zm_util_file.cpp">
-      <Filter>源文件\Public\util</Filter>
-    </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\util\zm_util_str.cpp">
-      <Filter>源文件\Public\util</Filter>
-    </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\util\zm_util_sys.cpp">
-      <Filter>源文件\Public\util</Filter>
-    </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\util\zm_util_thread.cpp">
-      <Filter>源文件\Public\util</Filter>
-    </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\openssl\include\openssl\applink.c">
-      <Filter>源文件\Public\openssl\include\openssl</Filter>
-    </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\util\zm_util_libevent.cpp">
-      <Filter>源文件\Public\util</Filter>
-    </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\util\zm_util_win_os.cpp">
-      <Filter>源文件\Public\util</Filter>
-    </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_ip.cpp">
-      <Filter>源文件\Public\net</Filter>
-    </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_dns.cpp">
-      <Filter>源文件\Public\net</Filter>
-    </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\ssl\zm_ssl_ctx.cpp">
-      <Filter>源文件\Public\ssl</Filter>
-    </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\ssl\zm_ssl_fingerprint.cpp">
-      <Filter>源文件\Public\ssl</Filter>
-    </ClCompile>
     <ClCompile Include="service_portal.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
@@ -207,35 +108,14 @@
     <ClCompile Include="net_dock.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_runloop.cpp">
-      <Filter>源文件\Public\net</Filter>
-    </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_http_router.cpp">
-      <Filter>源文件\Public\net</Filter>
-    </ClCompile>
     <ClCompile Include="http_server_manager.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="broadcast_manager.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_broadcast_server.cpp">
-      <Filter>源文件\Public\net</Filter>
-    </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_broadcast_client.cpp">
-      <Filter>源文件\Public\net</Filter>
-    </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_broadcast_base.cpp">
-      <Filter>源文件\Public\net</Filter>
-    </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\json\zm_json.cpp">
-      <Filter>源文件\Public\json</Filter>
-    </ClCompile>
     <ClCompile Include="module_deepseek.cpp">
       <Filter>源文件</Filter>
-    </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\sqllite\sqlite3.c">
-      <Filter>源文件\Public\sqllite</Filter>
     </ClCompile>
     <ClCompile Include="modules\module_db_init.cpp">
       <Filter>源文件\modules</Filter>
@@ -248,12 +128,6 @@
     </ClCompile>
     <ClCompile Include="modules\module_server_audio_stream.cpp">
       <Filter>源文件\modules</Filter>
-    </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\util\zm_util_sqlite.cpp">
-      <Filter>源文件\Public\util</Filter>
-    </ClCompile>
-    <ClCompile Include="..\ZiMoPublic\util\zm_util_zlib.cpp">
-      <Filter>源文件\Public\util</Filter>
     </ClCompile>
     <ClCompile Include="modules\module_file_hub.cpp">
       <Filter>源文件\modules</Filter>

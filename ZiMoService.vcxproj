@@ -1,18 +1,6 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
-    <ProjectConfiguration Include="Debug|Win32">
-      <Configuration>Debug</Configuration>
-      <Platform>Win32</Platform>
-    </ProjectConfiguration>
-    <ProjectConfiguration Include="Release|Win32">
-      <Configuration>Release</Configuration>
-      <Platform>Win32</Platform>
-    </ProjectConfiguration>
-    <ProjectConfiguration Include="Debug|x64">
-      <Configuration>Debug</Configuration>
-      <Platform>x64</Platform>
-    </ProjectConfiguration>
     <ProjectConfiguration Include="Release|x64">
       <Configuration>Release</Configuration>
       <Platform>x64</Platform>
@@ -27,26 +15,6 @@
     <ProjectName>ZiMoService</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
-    <ConfigurationType>Application</ConfigurationType>
-    <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
-    <CharacterSet>Unicode</CharacterSet>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
-    <ConfigurationType>Application</ConfigurationType>
-    <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v142</PlatformToolset>
-    <WholeProgramOptimization>true</WholeProgramOptimization>
-    <CharacterSet>Unicode</CharacterSet>
-    <UseOfMfc>false</UseOfMfc>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
-    <ConfigurationType>Application</ConfigurationType>
-    <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
-    <CharacterSet>Unicode</CharacterSet>
-  </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
@@ -59,89 +27,15 @@
   </ImportGroup>
   <ImportGroup Label="Shared">
   </ImportGroup>
-  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
-    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-  </ImportGroup>
-  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
-    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-  </ImportGroup>
-  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-  </ImportGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
-    <LinkIncremental>true</LinkIncremental>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
-    <LinkIncremental>false</LinkIncremental>
-    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath)</IncludePath>
-    <IntDir>temp</IntDir>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <LinkIncremental>true</LinkIncremental>
-  </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>false</LinkIncremental>
-    <IntDir>temp\</IntDir>
-    <OutDir>$(SolutionDir)$(Configuration)\</OutDir>
+    <IntDir>$(SolutionDir)$(Configuration)\temp\</IntDir>
+    <OutDir>$(SolutionDir)$(Configuration)\workspace\</OutDir>
   </PropertyGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
-    <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
-      <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <ConformanceMode>true</ConformanceMode>
-    </ClCompile>
-    <Link>
-      <SubSystem>Console</SubSystem>
-      <GenerateDebugInformation>true</GenerateDebugInformation>
-    </Link>
-  </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
-    <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
-      <FunctionLevelLinking>true</FunctionLevelLinking>
-      <IntrinsicFunctions>true</IntrinsicFunctions>
-      <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>NDEBUG;_CONSOLE;ZIMO_SERVICE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>.;$(ProjectDir)..\ZiMoPublic\libevent\include;$(ProjectDir)..\ZiMoPublic\openssl\include;$(ProjectDir)..\ZiMoPublic\define;$(ProjectDir)..\ZiMoPublic\dump;$(ProjectDir)..\ZiMoPublic\json;$(ProjectDir)..\ZiMoPublic\net;$(ProjectDir)..\ZiMoPublic\service;$(ProjectDir)..\ZiMoPublic\spdlog;$(ProjectDir)..\ZiMoPublic\ssl;$(ProjectDir)..\ZiMoPublic\util;$(ProjectDir)..\ZiMoPublic\websocket;$(ProjectDir)..\ZiMoPublic;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
-      <Optimization>Disabled</Optimization>
-      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
-      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
-      <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <PrecompiledHeader>NotUsing</PrecompiledHeader>
-      <ForcedIncludeFiles>stdafx.h</ForcedIncludeFiles>
-      <LanguageStandard>stdcpp17</LanguageStandard>
-    </ClCompile>
-    <Link>
-      <SubSystem>Console</SubSystem>
-      <EnableCOMDATFolding>true</EnableCOMDATFolding>
-      <OptimizeReferences>true</OptimizeReferences>
-      <GenerateDebugInformation>true</GenerateDebugInformation>
-      <UACExecutionLevel>RequireAdministrator</UACExecutionLevel>
-      <MinimumRequiredVersion>
-      </MinimumRequiredVersion>
-      <AdditionalDependencies>Iphlpapi.lib;ws2_32.lib;wsock32.lib;event.lib;event_core.lib;event_extra.lib;libcrypto.lib;libssl.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>$(ProjectDir)..\ZiMoPublic\libevent\lib;$(ProjectDir)..\ZiMoPublic\openssl\lib\VC\x86\MT</AdditionalLibraryDirectories>
-    </Link>
-  </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
-      <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <ConformanceMode>true</ConformanceMode>
-    </ClCompile>
-    <Link>
-      <SubSystem>Console</SubSystem>
-      <GenerateDebugInformation>true</GenerateDebugInformation>
-    </Link>
-  </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
@@ -150,12 +44,13 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;ZIMO_SERVICE;OPENSSL_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>.;$(ProjectDir)..\ZiMoPublic;$(ProjectDir)..\ZiMoPublic\libevent\include;$(ProjectDir)..\ZiMoPublic\openssl\include;$(ProjectDir)..\ZiMoPublic\define;$(ProjectDir)..\ZiMoPublic\dump;$(ProjectDir)..\ZiMoPublic\json;$(ProjectDir)..\ZiMoPublic\net;$(ProjectDir)..\ZiMoPublic\service;$(ProjectDir)..\ZiMoPublic\spdlog;$(ProjectDir)..\ZiMoPublic\ssl;$(ProjectDir)..\ZiMoPublic\util;$(ProjectDir)..\ZiMoPublic\websocket;$(ProjectDir)..\ZiMoPublic\libopus\include;$(ProjectDir)..\ZiMoPublic\zlib\include;$(ProjectDir)..\ZiMoPublic\sqllite;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>.;$(ProjectDir)..\ZiMoPublic;$(ProjectDir)..\ZiMoPublic\libevent\include;$(ProjectDir)..\ZiMoPublic\openssl\include;$(ProjectDir)..\ZiMoPublic\define;$(ProjectDir)..\ZiMoPublic\json;$(ProjectDir)..\ZiMoPublic\net;$(ProjectDir)..\ZiMoPublic\service;$(ProjectDir)..\ZiMoPublic\spdlog;$(ProjectDir)..\ZiMoPublic\ssl;$(ProjectDir)..\ZiMoPublic\util;$(ProjectDir)..\ZiMoPublic\libopus\include;$(ProjectDir)..\ZiMoPublic\zlib\include;$(ProjectDir)..\ZiMoPublic\sqllite;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <Optimization>Disabled</Optimization>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <LanguageStandard>stdcpp20</LanguageStandard>
+      <LanguageStandard_C>stdc17</LanguageStandard_C>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -517,37 +412,6 @@
     <ClInclude Include="modules\module_portal.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\ZiMoPublic\json\zm_json.cpp" />
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_dns.cpp" />
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_http.cpp" />
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_http_client.cpp" />
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_http_client_loop.cpp" />
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_http_client_pool.cpp" />
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_http_router.cpp" />
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_req_loop.cpp" />
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_req_loop_pool.cpp" />
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_req_loop_protocol.cpp" />
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_ip.cpp" />
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_runloop.cpp" />
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_socket.cpp" />
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_broadcast_base.cpp" />
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_broadcast_client.cpp" />
-    <ClCompile Include="..\ZiMoPublic\net\zm_net_broadcast_server.cpp" />
-    <ClCompile Include="..\ZiMoPublic\openssl\include\openssl\applink.c" />
-    <ClCompile Include="..\ZiMoPublic\service\zm_service_base.cpp" />
-    <ClCompile Include="..\ZiMoPublic\spdlog\zm_logger.cpp" />
-    <ClCompile Include="..\ZiMoPublic\sqllite\sqlite3.c" />
-    <ClCompile Include="..\ZiMoPublic\ssl\zm_ssl_ctx.cpp" />
-    <ClCompile Include="..\ZiMoPublic\ssl\zm_ssl_fingerprint.cpp" />
-    <ClCompile Include="..\ZiMoPublic\util\zm_util_container.cpp" />
-    <ClCompile Include="..\ZiMoPublic\util\zm_util_file.cpp" />
-    <ClCompile Include="..\ZiMoPublic\util\zm_util_libevent.cpp" />
-    <ClCompile Include="..\ZiMoPublic\util\zm_util_str.cpp" />
-    <ClCompile Include="..\ZiMoPublic\util\zm_util_sys.cpp" />
-    <ClCompile Include="..\ZiMoPublic\util\zm_util_thread.cpp" />
-    <ClCompile Include="..\ZiMoPublic\util\zm_util_win_os.cpp" />
-    <ClCompile Include="..\ZiMoPublic\util\zm_util_sqlite.cpp" />
-    <ClCompile Include="..\ZiMoPublic\util\zm_util_zlib.cpp" />
     <ClCompile Include="broadcast_manager.cpp" />
     <ClCompile Include="http_jsonrpc_manager.cpp" />
     <ClCompile Include="http_restful_manager.cpp" />
@@ -570,8 +434,9 @@
     <Image Include="resource\images\icon\haro_icon.ico" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\ZiMoPublic\spdlog\README.md" />
-    <None Include="..\ZiMoPublic\spdlog\spdlog_guide.md" />
+    <ProjectReference Include="..\ZiMoPublic\LibZiMoPublic.vcxproj">
+      <Project>{7ed28ad9-6ccd-40e9-a1cb-41f9350626aa}</Project>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

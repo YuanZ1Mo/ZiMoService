@@ -3,8 +3,8 @@
 #include "http_server_manager.h"
 #include "module_user.h"
 
-#include "zm_json.h"
-#include "zm_logger.h"
+#include "zm_util_json.h"
+#include "zm_util_logger.h"
 
 #include <algorithm>
 #include <string>

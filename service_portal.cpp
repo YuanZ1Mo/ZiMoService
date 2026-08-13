@@ -15,8 +15,8 @@
 #include "zm_net_req_loop_protocol.h"   // ZmReqLoopRest(回复 helper 静态调用)+ ZmReqLoopPool
 #include "zm_net_http.h"   // ZmHttpdTask/evhttp_cmd_type/ZmHttpUtil + ZmJsonRpcServer(直通回复与路由用)
 #include "zm_net_socket.h" // ZmWinSockHelper(池预创建客户端前先完成 WSAStartup,防启动竞态)
-#include "zm_logger.h"
-#include "zm_json.h"
+#include "zm_util_logger.h"
+#include "zm_util_json.h"
 #include "zm_util_sys.h"
 #include "zm_util_file.h"
 #include "zm_util_str.h"

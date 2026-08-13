@@ -3,7 +3,7 @@
 #include "http_server_manager.h"
 #include "zm_net_runloop.h"   // ZmEvBaseRunLoop(每日清理事件循环线程)
 
-#include "zm_logger.h"
+#include "zm_util_logger.h"
 
 #include <sqlite3.h>
 #include <openssl/crypto.h>

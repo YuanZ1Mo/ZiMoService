@@ -3,8 +3,8 @@
 
 #include "zm_net_http.h"
 #include "zm_net_runloop.h"
-#include "zm_logger.h"
-#include "zm_json.h"
+#include "zm_util_logger.h"
+#include "zm_util_json.h"
 #include "zm_util_sys.h"
 #include "zm_util_str.h"
 

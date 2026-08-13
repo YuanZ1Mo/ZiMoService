@@ -3,7 +3,7 @@
 #include "service_define.h"
 
 #include "zm_net_runloop.h"
-#include "zm_logger.h"
+#include "zm_util_logger.h"
 #include "zm_util_sys.h"
 
 #include <windows.h>

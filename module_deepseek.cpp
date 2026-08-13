@@ -4,7 +4,7 @@
 #include "zm_net_http.h"              // ZmHttpdTask(Task()->GetQueryValue/ConnClosedFlag 需完整类型)
 #include "zm_net_req_loop.h"
 #include "zm_net_req_loop_protocol.h" // ZmReqLoopRest(ResponseJson/ResponseError 静态调用)
-#include "zm_logger.h"
+#include "zm_util_logger.h"
 #include "zm_util_sys.h"              // ZmSystem::GetModuleDir
 
 #include <cstdio>   // fopen_s/fread/fclose(FILE;项目未开 _CRT_SECURE_NO_WARNINGS,同 zm_net_http_client.cpp 惯例)

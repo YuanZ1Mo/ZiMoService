@@ -5,7 +5,7 @@
 #include "service_portal.h"
 #include "service_define.h"
 
-#include "zm_logger.h"
+#include "zm_util_logger.h"
 
 #include <Wtsapi32.h>
 #pragma comment(lib, "Wtsapi32.lib")

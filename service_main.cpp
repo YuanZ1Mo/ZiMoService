@@ -1,6 +1,6 @@
 #include "service_center.h"
 
-#include "zm_logger.h"
+#include "zm_util_logger.h"
 #include "zm_util_str.h"
 
 #define WIN32_LEAN_AND_MEAN

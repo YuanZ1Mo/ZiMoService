@@ -1,6 +1,6 @@
 #include "module_db_init.h"
 
-#include "zm_logger.h"
+#include "zm_util_logger.h"
 #include "zm_util_sys.h"
 
 #include <direct.h>
