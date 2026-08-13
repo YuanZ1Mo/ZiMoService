@@ -112,6 +112,8 @@ void NetDock::OpenHttpRESTfulServer()
         m_httpRestfulMgr = new HttpRestfulManager();
         // 业务回调须在 Open() 前注入（Open 内部经 ZmReqLoopPool投递后才会被调用）
         m_httpRestfulMgr->SetRESTfulRequestCB(m_restfulRequestCB);
+        // WebSocket 业务回调(HTTP 与 RESTful 服务器共用,同上 Open 前注入)
+        m_httpRestfulMgr->SetWebSocketCallbacks(m_websocketCallbacks);
         if (!m_httpRestfulMgr->Open())
         {
             DEFAULT_LOG_ERROR("OpenHttpRESTfulServer failed: HttpRestfulManager::Open() returned false");
@@ -251,6 +253,11 @@ void NetDock::SetJrpcRequestReadCB(ZmReqLoopJrpcRequestCB cb)
 void NetDock::SetRESTfulRequestCB(ZmReqLoopRestfulRequestCB cb)
 {
     m_restfulRequestCB = cb;
+}
+
+void NetDock::SetWebSocketCallbacks(ZmWebSocketCallbacks cb)
+{
+    m_websocketCallbacks = std::move(cb);
 }
 
 void NetDock::OpenBroadcastServer()

@@ -7,6 +7,7 @@
 #include "zm_util_json.h"
 #include "zm_util_str.h"
 #include "zm_net_req_loop.h"
+#include "zm_net_websocket_server.h"   // ZmWebSocketCallbacks(WS 业务回调,Open 前注入)
 
 // 前向声明（头文件中仅通过指针/引用使用）
 class HttpJsonRpcManager;
@@ -141,6 +142,12 @@ public:
     void SetJrpcRequestReadCB(ZmReqLoopJrpcRequestCB cb);
     void SetRESTfulRequestCB(ZmReqLoopRestfulRequestCB cb);
 
+    /**
+     * @brief 设置 WebSocket 业务回调(RESTful 服务器,仿 SetRESTfulRequestCB)
+     * @note 需在 OpenHttpRESTfulServer 之前调用;未设置则服务器不接受升级
+     */
+    void SetWebSocketCallbacks(ZmWebSocketCallbacks cb);
+
 private:
     // --- 成员变量 ---
     HttpJsonRpcManager*    m_httpJsonRpcMgr;      ///< HTTP JSON-RPC 前端（含私有 ZmReqLoopPool）
@@ -150,6 +157,7 @@ private:
     ZmTicketKeyRotator*    m_ticketRotator;       ///< TLS ticket 密钥轮换器(懒创建,UnInit 释放)
     ZmReqLoopJrpcRequestCB m_jrpcRequestReadCB;   ///< JRPC 业务回调(Open 前注入)
     ZmReqLoopRestfulRequestCB m_restfulRequestCB; ///< RESTful 业务回调(Open 前注入)
+    ZmWebSocketCallbacks    m_websocketCallbacks; ///< WebSocket 业务回调(Open 前注入)
     bool                   m_unInited;            ///< 防止 UnInit 重复执行
 };
 

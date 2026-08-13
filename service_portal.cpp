@@ -14,6 +14,8 @@
 
 #include "zm_net_req_loop_protocol.h"   // ZmReqLoopRest(回复 helper 静态调用)+ ZmReqLoopPool
 #include "zm_net_http.h"   // ZmHttpdTask/evhttp_cmd_type/ZmHttpUtil + ZmJsonRpcServer(直通回复与路由用)
+#include "zm_net_websocket_server.h"   // ZmWebSocketSession/ZmWebSocketCallbacks(WS 业务回调)
+
 #include "zm_net_socket.h" // ZmWinSockHelper(池预创建客户端前先完成 WSAStartup,防启动竞态)
 #include "zm_util_logger.h"
 #include "zm_util_json.h"
@@ -163,6 +165,36 @@ void ServicePortal::RegisterHttpRoutes(HttpServerManager* httpMgr)
 	// 门户模块:自注册 /portal 与 /portal/* SPA fallback
 	if (m_portalModule)
 		m_portalModule->RegisterHttpRoutes(httpMgr);
+}
+
+// ============================================================================
+// WebSocket 业务回调(ServiceCenter 经 NetDock 注入,Open 前设置)
+// 当前为占位实现(回声/日志/放行);真实业务接入时在此实现并接入模块
+// ============================================================================
+
+void ServicePortal::WebSocketOpenCB(ZmWebSocketSession* session)
+{
+	DEFAULT_LOG_INFO("[WsServer] 连接建立 path={}", session->Path());
+}
+
+void ServicePortal::WebSocketCloseCB(ZmWebSocketSession* session)
+{
+	DEFAULT_LOG_INFO("[WsServer] 连接关闭 path={}", session->Path());
+}
+
+bool ServicePortal::WebSocketAuthCB(const std::string& uri)
+{
+	// TODO: 接入用户模块 token 校验(uri 可携带 ?token= 或握手头 Sec-WebSocket-Protocol)
+	(void)uri;
+	return true;   // 当前放行
+}
+
+void ServicePortal::WebSocketMessageCB(ZmWebSocketSession* session, int type,
+                                       const BYTE* data, size_t len)
+{
+	// 占位:回声文本帧(便于自测);真实业务按 type 分发 JSON 信封
+	if (type == WS_TEXT_FRAME && len > 0)
+		session->PostSendText(std::string((const char*)data, len));
 }
 
 // ============================================================================

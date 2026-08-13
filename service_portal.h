@@ -15,6 +15,7 @@ class HttpServerManager;
 class FileHubModule;
 class ServerAudioStreamModule;   // 业务层自有模块:构造时自建,析构时自删
 class DbInitModule;              // 数据库初始化:先于业务模块构造,连接归其所有
+class ZmWebSocketSession;        // WebSocket 会话(业务回调形参,完整定义在 cpp)
 
 /**
  * @brief JRPC 请求处理门户，接收 ZmReqLoopPool 分发来的 JRPC 请求并按 method 分发
@@ -51,6 +52,17 @@ public:
 	 * @brief 注册 HTTP 80 端口路由（供 ServiceCenter 在启动时调用）
 	 */
 	void RegisterHttpRoutes(HttpServerManager* httpMgr);
+
+	// ── WebSocket 业务回调(ServiceCenter 经 NetDock 注入,Open 前设置)──
+	/** @brief 连接建立(事件循环线程,轻逻辑) */
+	void WebSocketOpenCB(ZmWebSocketSession* session);
+	/** @brief 连接关闭(事件循环线程) */
+	void WebSocketCloseCB(ZmWebSocketSession* session);
+	/** @brief 握手鉴权(事件循环线程;返回 false → 400 不建会话) */
+	bool WebSocketAuthCB(const std::string& uri);
+	/** @brief 业务消息(ZmReqLoop 线程;回包经 session->PostSendText) */
+	void WebSocketMessageCB(ZmWebSocketSession* session, int type,
+	                        const BYTE* data, size_t len);
 
 public:
 	/** @brief ZmReqLoopPool入口：JRPC 请求回调（在 ZmReqLoop 线程执行） */

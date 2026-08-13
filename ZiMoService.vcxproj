@@ -127,6 +127,7 @@
     <ClInclude Include="..\ZiMoPublic\net\zm_net_broadcast_base.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_broadcast_client.h" />
     <ClInclude Include="..\ZiMoPublic\net\zm_net_broadcast_server.h" />
+    <ClInclude Include="..\ZiMoPublic\net\zm_net_websocket_server.h" />
     <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\aes.h" />
     <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\asn1.h" />
     <ClInclude Include="..\ZiMoPublic\openssl\include\openssl\asn1err.h" />

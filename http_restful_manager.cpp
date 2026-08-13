@@ -75,6 +75,10 @@ bool HttpRestfulManager::Open()
         m_httpServerRESTful = new ZmRESTfulServer(
             m_evLoopHttpServer->GetEventBase(), ZM_HTTP_RESTFUL_SERVER_ROOT_URI, ZM_RESTFUL_SERVER_PORT, pCert, pKey,
             4096, "REST");
+
+        // WebSocket 业务回调(NetDock 注入,须在 Init 前透传)
+        m_httpServerRESTful->SetWebSocketCallbacks(m_websocketCallbacks);
+
         if (!m_httpServerRESTful->Init())
         {
             DEFAULT_LOG_ERROR("[RESTful] HTTP 服务器初始化失败，端口: {}", ZM_RESTFUL_SERVER_PORT);

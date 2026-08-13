@@ -3,6 +3,7 @@
 
 #include "zm_net_http.h"
 #include "zm_net_req_loop.h"   // ZmReqLoopRestfulRequestCB(业务回调类型)
+#include "zm_net_websocket_server.h"   // ZmWebSocketCallbacks(WS 业务回调,Open 前注入)
 
 // 前向声明（头文件中仅通过指针使用）
 class ZmEvBaseRunLoop;
@@ -41,6 +42,10 @@ public:
     /** @brief 设置 RESTful 业务回调(NetDock 在 Open 前调用,Open 时透传到服务器) */
     void SetRESTfulRequestCB(ZmReqLoopRestfulRequestCB cb) { m_restfulRequestCB = cb; }
 
+    /** @brief 设置 WebSocket 业务回调(NetDock 在 Open 前调用,Open 时透传到服务器;
+     *         未设置则服务器不接受升级) */
+    void SetWebSocketCallbacks(ZmWebSocketCallbacks cb) { m_websocketCallbacks = std::move(cb); }
+
     /** @brief 查询服务器是否正常运行 */
     bool IsOpen() const { return m_httpServerRESTful != nullptr && m_httpServerRESTful->IsOpen(); }
 
@@ -60,6 +65,7 @@ private:
     ZmEvBaseRunLoop*            m_evLoopHttpServer;   ///< 自有事件循环线程(供 ZmRESTfulServer 使用)
     ZmRESTfulServer*            m_httpServerRESTful;  ///< RESTful 服务器实例(含内部 ZmReqLoopPool)
     ZmReqLoopRestfulRequestCB   m_restfulRequestCB;   ///< 业务回调(NetDock 注入,Open 前设置)
+    ZmWebSocketCallbacks        m_websocketCallbacks; ///< WebSocket 业务回调(NetDock 注入,Open 前设置)
 };
 
 #endif // HTTP_RESTFUL_MANAGER_H

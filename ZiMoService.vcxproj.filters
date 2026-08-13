@@ -1151,6 +1151,9 @@
     <ClInclude Include="modules\module_file_hub.h">
       <Filter>头文件\modules</Filter>
     </ClInclude>
+    <ClInclude Include="..\ZiMoPublic\net\zm_net_websocket_server.h">
+      <Filter>头文件\Public\net</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="resource.rc">
@@ -1161,13 +1164,5 @@
     <Image Include="resource\images\icon\haro_icon.ico">
       <Filter>资源文件</Filter>
     </Image>
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="..\ZiMoPublic\spdlog\README.md">
-      <Filter>头文件\Public\spdlog</Filter>
-    </None>
-    <None Include="..\ZiMoPublic\spdlog\spdlog_guide.md">
-      <Filter>头文件\Public\spdlog</Filter>
-    </None>
   </ItemGroup>
 </Project>

@@ -4,6 +4,7 @@
 #include "service_global.h"
 #include "service_portal.h"
 #include "service_define.h"
+#include "zm_net_websocket_server.h"   // ZmWebSocketSession(WS 业务回调接线)
 
 #include "zm_util_logger.h"
 
@@ -33,6 +34,16 @@ void ServiceCenter::OnStart(DWORD /*argc*/, TCHAR** /*argv[]*/)
     m_netDock->SetRESTfulRequestCB(std::bind(&ServicePortal::RestfulRequestCB, m_servicePortal,
         std::placeholders::_1, std::placeholders::_2,
         std::placeholders::_3));
+
+    // WebSocket 业务回调(RESTful 服务器,仿 SetRESTfulRequestCB;须在 Open* 之前注入)
+    ZmWebSocketCallbacks wsCallbacks;
+    wsCallbacks.onOpen    = std::bind(&ServicePortal::WebSocketOpenCB, m_servicePortal, std::placeholders::_1);
+    wsCallbacks.onClose   = std::bind(&ServicePortal::WebSocketCloseCB, m_servicePortal, std::placeholders::_1);
+    wsCallbacks.onAuth    = std::bind(&ServicePortal::WebSocketAuthCB, m_servicePortal, std::placeholders::_1);
+    wsCallbacks.onMessage = std::bind(&ServicePortal::WebSocketMessageCB, m_servicePortal,
+                                      std::placeholders::_1, std::placeholders::_2,
+                                      std::placeholders::_3, std::placeholders::_4);
+    m_netDock->SetWebSocketCallbacks(std::move(wsCallbacks));
 
     m_netDock->OpenHttpJsonRpcServer();
     m_netDock->OpenHttpRESTfulServer();
