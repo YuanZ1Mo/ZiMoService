@@ -25,9 +25,6 @@
 /** 广播服务端监听端口 */
 #define ZM_BROADCAST_SERVER_PORT 39640
 
-/** SOCKS5 服务器监听端口 */
-#define ZM_SOCKS5_SERVER_PORT   39540
-
 
 /** 文件中心 HMAC 密钥（用于密码哈希） */
 #define ZM_FILE_HUB_HMAC_KEY    "ZiMoFileHub2024"

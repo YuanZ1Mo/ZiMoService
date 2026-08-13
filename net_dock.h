@@ -92,11 +92,6 @@ public:
     /** @brief ticket 密钥轮换完成回调:投递到各 HTTPS 服务器事件循环 */
     void OnTicketRotated();
 
-    /** @brief 预留 SOCKS5 入口 */
-    void OpenSocks5Server();
-    /** @brief 预留 停止 SOCKS5 */
-    void CloseSocks5Server();
-
     // --- 广播服务端 ---
 
     /**

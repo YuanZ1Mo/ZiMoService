@@ -98,6 +98,7 @@ bool HttpServerManager::Open()
 		m_evLoop = nullptr;
 		return false;
 	}
+	m_evLoop->StartTimer();   // 定时器手动触发(默认 60s 心跳)
 
 	// redirect_from_port: HTTPS 模式下从端口 80 做 301 重定向（SSL_CTX 由 ZmHttpServer 内部管理）
 	uint16_t redirectPort = useHttps ? ZM_HTTP_SERVER_PORT : 0;

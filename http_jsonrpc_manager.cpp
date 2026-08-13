@@ -62,6 +62,7 @@ bool HttpJsonRpcManager::Open()
             m_evLoopHttpServerJRPC = nullptr;
             return false;
         }
+        m_evLoopHttpServerJRPC->StartTimer();   // 定时器手动触发(默认 60s 心跳)
     }
 
     // 2. 创建 HTTP JSON-RPC 服务器（绑定到自有事件循环，内部含自治 ZmReqLoopPool）

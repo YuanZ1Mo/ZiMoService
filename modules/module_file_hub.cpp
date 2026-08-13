@@ -3,6 +3,7 @@
 #include "module_user.h"
 #include "service_define.h"
 #include "http_server_manager.h"
+#include "zm_net_runloop.h"
 
 #include "zm_net_req_loop_protocol.h"   // ZmReqLoopRest
 #include "zm_logger.h"
@@ -222,18 +223,31 @@ bool FileHubModule::Open()
     m_openOk.store(true);
     DEFAULT_LOG_INFO("[FileHub] 文件中心初始化完成,仓库 {}", m_hubRoot);
 
-    // 启动一致性校验线程(启动即执行一次)
-    m_verifyThread = std::thread(&FileHubModule::VerifyLoop, this);
+    // 后台周期维护:独立事件循环线程 + 60s 周期定时器(替代原 for+sleep 轮询线程;
+    // 启动后首个周期完成首轮维护,之后每日 03:00 窗口;回调内 m_gone 短路)
+    m_bgLoop = new ZmEvBaseRunLoop("FileHubBgLoop");
+    if (!m_bgLoop->Loop())
+    {
+        DEFAULT_LOG_ERROR("[FileHub] 后台维护事件循环启动失败(维护功能不可用)");
+        delete m_bgLoop;
+        m_bgLoop = nullptr;
+    }
+    else
+    {
+        m_bgLoop->SetTimerCallback([this]() { MaintainTick(); });
+        m_bgLoop->StartTimer(60);
+    }
     return true;
 }
 
 void FileHubModule::Shutdown()
 {
     m_gone.store(true);
-    if (m_verifyThread.joinable())
+    if (m_bgLoop)
     {
-        m_verifyThread.join();
-        m_verifyThread = std::thread();
+        m_bgLoop->Stop();   // 优雅退出:等待当前定时器回调完成(回调入口查 m_gone 短路)
+        delete m_bgLoop;
+        m_bgLoop = nullptr;
     }
     // 库连接由 DbInitializer 统一关闭
 }
@@ -3503,32 +3517,42 @@ void FileHubModule::RemoveSharesOf(const std::string& targetType, uint64_t targe
 }
 
 // ============================================================================
-// 启动一致性校验(独立线程:以文件系统为准重建/删行,记 restore 日志)
+// 后台周期维护(独立事件循环线程:一致性校验 + 分享下载日志清理 + 传输任务清理)
 // ============================================================================
 
-void FileHubModule::VerifyLoop()
+void FileHubModule::MaintainTick()
 {
-    // 启动即校验一次,之后每日 03:00 窗口校验(修复长运行期文件系统/DB 漂移),
-    // 顺带清理过期分享下载日志;轮询 60s,可被 Shutdown 打断
-    int lastVerifyDay = 0;
-    while (!m_gone.load())
+    // Shutdown 短路;窗口去重状态 m_lastTickDay 由事件循环线程独占。
+    // 启动后首个周期即维护一次,之后每日 03:00 窗口(修复长运行期文件系统/DB 漂移,
+    // 顺带清理过期分享下载日志与传输任务)
+    if (m_gone.load())
+        return;
+
+    time_t now = time(nullptr);
+    if (now > 0)
     {
-        time_t now = time(nullptr);
-        if (now > 0)
+        struct tm tmv;
+        localtime_s(&tmv, &now);
+        bool inWindow = (tmv.tm_hour >= kVerifyCleanHour && tmv.tm_hour < kVerifyCleanHour + 1);
+        if ((m_lastTickDay == 0) || (inWindow && m_lastTickDay != tmv.tm_mday))
         {
-            struct tm tmv;
-            localtime_s(&tmv, &now);
-            bool inWindow = (tmv.tm_hour >= kVerifyCleanHour && tmv.tm_hour < kVerifyCleanHour + 1);
-            if ((lastVerifyDay == 0) || (inWindow && lastVerifyDay != tmv.tm_mday))
+            // 异常隔离:回调异常会击穿 event_base_loop 栈致定时器失效(替代原裸线程直接 terminate)
+            try
             {
                 VerifyOnce();
                 CleanShareDownloadLogs();
                 CleanTransferTasks();
-                lastVerifyDay = tmv.tm_mday;
             }
+            catch (const std::exception& e)
+            {
+                DEFAULT_LOG_ERROR("[FileHub] 一致性校验异常(已隔离): {}", e.what());
+            }
+            catch (...)
+            {
+                DEFAULT_LOG_ERROR("[FileHub] 一致性校验未知异常(已隔离)");
+            }
+            m_lastTickDay = tmv.tm_mday;
         }
-        for (int i = 0; i < 60 && !m_gone.load(); ++i)
-            std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 }
 

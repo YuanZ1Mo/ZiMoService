@@ -66,6 +66,7 @@ bool HttpRestfulManager::Open()
             m_evLoopHttpServer = nullptr;
             return false;
         }
+        m_evLoopHttpServer->StartTimer();   // 定时器手动触发(默认 60s 心跳)
     }
 
     // 2. 创建 ZmRESTfulServer（绑定到自有事件循环，内部含自治 ZmReqLoopPool）

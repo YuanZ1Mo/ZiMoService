@@ -243,16 +243,6 @@ bool NetDock::IsJrpcHttpOpen() const
     return m_httpJsonRpcMgr && m_httpJsonRpcMgr->IsOpen();
 }
 
-void NetDock::OpenSocks5Server()
-{
-    // TODO: 后续实现 SOCKS5 前端
-}
-
-void NetDock::CloseSocks5Server()
-{
-    // TODO: 后续实现
-}
-
 void NetDock::SetJrpcRequestReadCB(ZmReqLoopJrpcRequestCB cb)
 {
     m_jrpcRequestReadCB = cb;

@@ -1,6 +1,7 @@
 #include "module_user.h"
 
 #include "http_server_manager.h"
+#include "zm_net_runloop.h"   // ZmEvBaseRunLoop(每日清理事件循环线程)
 
 #include "zm_logger.h"
 
@@ -62,18 +63,31 @@ bool UserModule::Open()
     m_openOk.store(true);
     DEFAULT_LOG_INFO("[User] 用户系统初始化完成");
 
-    // 每日清理线程(启动即执行一次 + 每日 03:00 窗口)
-    m_cleanThread = std::thread(&UserModule::CleanLoop, this);
+    // 后台周期维护:独立事件循环线程 + 60s 周期定时器(替代原 for+sleep 轮询线程;
+    // 启动后首个周期完成首轮清理,之后每日 03:00 窗口;回调内 m_gone 短路)
+    m_bgLoop = new ZmEvBaseRunLoop("UserBgLoop");
+    if (!m_bgLoop->Loop())
+    {
+        DEFAULT_LOG_ERROR("[User] 后台维护事件循环启动失败(维护功能不可用)");
+        delete m_bgLoop;
+        m_bgLoop = nullptr;
+    }
+    else
+    {
+        m_bgLoop->SetTimerCallback([this]() { MaintainTick(); });
+        m_bgLoop->StartTimer(kUserCleanPollSec);
+    }
     return true;
 }
 
 void UserModule::Shutdown()
 {
     m_gone.store(true);
-    if (m_cleanThread.joinable())
+    if (m_bgLoop)
     {
-        m_cleanThread.join();
-        m_cleanThread = std::thread();
+        m_bgLoop->Stop();   // 优雅退出:等待当前定时器回调完成(回调入口查 m_gone 短路)
+        delete m_bgLoop;
+        m_bgLoop = nullptr;
     }
     // 库连接由 DbInitializer 统一关闭
 }
@@ -2024,26 +2038,35 @@ bool UserModule::SetUserRole(uint64_t userId, const std::string& role)
 // 每日清理(独立线程:启动即执行一次 + 每日 03:00 窗口)
 // ============================================================================
 
-void UserModule::CleanLoop()
+void UserModule::MaintainTick()
 {
-    int lastCleanDay = 0;
-    while (!m_gone.load())
+    // Shutdown 短路;窗口去重状态 m_lastTickDay 由事件循环线程独占
+    if (m_gone.load())
+        return;
+
+    time_t now = time(nullptr);
+    if (now > 0)
     {
-        time_t now = time(nullptr);
-        if (now > 0)
+        struct tm tmv;
+        localtime_s(&tmv, &now);
+        bool inWindow = (tmv.tm_hour >= kUserCleanHour && tmv.tm_hour < kUserCleanHour + 1);
+        if ((m_lastTickDay == 0) || (inWindow && m_lastTickDay != tmv.tm_mday))
         {
-            struct tm tmv;
-            localtime_s(&tmv, &now);
-            bool inWindow = (tmv.tm_hour >= kUserCleanHour && tmv.tm_hour < kUserCleanHour + 1);
-            if ((lastCleanDay == 0) || (inWindow && lastCleanDay != tmv.tm_mday))
+            // 异常隔离:回调异常会击穿 event_base_loop 栈致定时器失效(替代原裸线程直接 terminate)
+            try
             {
                 DoCleanup();
-                lastCleanDay = tmv.tm_mday;
             }
+            catch (const std::exception& e)
+            {
+                DEFAULT_LOG_ERROR("[User] 每日清理异常(已隔离): {}", e.what());
+            }
+            catch (...)
+            {
+                DEFAULT_LOG_ERROR("[User] 每日清理未知异常(已隔离)");
+            }
+            m_lastTickDay = tmv.tm_mday;
         }
-        // 轮询间隔(可被 Shutdown 打断)
-        for (int i = 0; i < kUserCleanPollSec && !m_gone.load(); ++i)
-            std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 }
 

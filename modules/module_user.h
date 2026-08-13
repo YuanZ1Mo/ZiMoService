@@ -9,12 +9,12 @@
 #include <map>
 #include <mutex>
 #include <string>
-#include <thread>
 #include <vector>
 
 #include "zm_util_sqlite.h"
 
 class HttpServerManager;
+class ZmEvBaseRunLoop;   // 后台周期维护事件循环(成员指针,前向声明)
 
 // ============================================================================
 // 用户系统常量(设计文档 2.9;联调测试期可临时改短,验收后复原)
@@ -349,10 +349,11 @@ private:
     void HandleHeartbeat(ZmReqLoop* loop, ZmHttpdTask* task);
 
     // ========================================================================
-    // 每日清理(独立线程)
+    // 后台周期维护(独立事件循环线程:过期会话/锁定/限流/操作日志清理)
     // ========================================================================
 
-    void CleanLoop();
+    /** @brief 定时器到期处理(事件循环线程):每日窗口检查 + 清理,异常隔离 */
+    void MaintainTick();
     void DoCleanup();
 
 private:
@@ -360,8 +361,9 @@ private:
     zm::ZmSqliteConn& m_rateDb;       ///< 通用限流库(register/reset_rate_limits)
     zm::ZmSqliteConn& m_auditDb;      ///< 业务日志库(用户管理 user_manage_logs;文件中心 filehub_logs 复用本库)
 
-    std::thread m_cleanThread;        ///< 每日清理线程(Open 启动,Shutdown join)
-    std::atomic<bool> m_gone {false}; ///< Shutdown 已开始:清理线程退出 + handler 短路
+    ZmEvBaseRunLoop* m_bgLoop = nullptr;   ///< 后台周期维护事件循环(Open 创建,Shutdown 停止)
+    int m_lastTickDay = 0;                 ///< 上次维护日(窗口去重,事件循环线程独占)
+    std::atomic<bool> m_gone {false};        ///< Shutdown 已开始:清理回调短路 + handler 短路
     std::atomic<bool> m_openOk {false};
 };
 

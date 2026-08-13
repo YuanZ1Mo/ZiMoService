@@ -30,6 +30,7 @@ bool BroadcastManager::Open()
         m_evLoop = nullptr;
         return false;
     }
+    m_evLoop->StartTimer();   // 定时器手动触发(默认 60s 心跳)
 
     m_config.listenIp = "0.0.0.0";
     m_config.listenPort = ZM_BROADCAST_SERVER_PORT;

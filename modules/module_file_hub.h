@@ -10,7 +10,6 @@
 #include <mutex>
 #include <set>
 #include <string>
-#include <thread>
 #include <vector>
 
 #include "zm_util_sqlite.h"
@@ -18,6 +17,7 @@
 class UserModule;
 class HttpServerManager;
 class ZipWriter;
+class ZmEvBaseRunLoop;
 
 /**
  * @brief 文件中心模块(业务层,数据库驱动)
@@ -246,11 +246,12 @@ private:
     void RemoveSharesOf(const std::string& targetType, uint64_t targetId);
 
     // ========================================================================
-    // 启动一致性校验(独立线程)
+    // 后台周期维护(独立事件循环线程:一致性校验 + 分享下载日志清理 + 传输任务清理)
     // ========================================================================
 
-    void VerifyLoop();
-    /** @brief 单轮全空间校验(启动即执行一次 + 每日 03:00 窗口) */
+    /** @brief 定时器到期处理(事件循环线程):每日窗口检查 + 校验/清理整批,异常隔离 */
+    void MaintainTick();
+    /** @brief 单轮全空间校验(启动首个周期执行一次 + 每日 03:00 窗口) */
     void VerifyOnce();
     /** @brief 校验单个空间目录树与 DB 比对,漂移以文件系统为准修复并记日志 */
     void VerifySpaceTree(int space, const std::string& spaceAbs);
@@ -271,7 +272,8 @@ private:
     zm::ZmSqliteConn& m_db;           ///< filehub.db 连接引用(归 DbInitializer 所有,锁经 m_db.Mutex())
     std::atomic<bool> m_openOk {false};
     std::atomic<bool> m_gone {false};
-    std::thread m_verifyThread;       ///< 一致性校验线程(Open 启动,Shutdown join)
+    ZmEvBaseRunLoop* m_bgLoop = nullptr;   ///< 后台周期维护事件循环(Open 创建,Shutdown 停止)
+    int m_lastTickDay = 0;                 ///< 上次维护日(窗口去重,事件循环线程独占)
     UserModule* m_userModule = nullptr;  ///< 注入:鉴权/角色/模块权限/业务日志(不拥有)
     std::string m_hubRoot;            ///< 文件仓库根(exe 同级 modules\filehub)
 };
