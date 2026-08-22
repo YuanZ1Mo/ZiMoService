@@ -378,3 +378,36 @@ tr.err .fh-q-name { color: var(--err); }
 /* 分享/我的分享:紫 */
 .fh-tb-purple { color: #A78BFA; border-color: rgba(167, 139, 250, 0.45); }
 .fh-tb-purple:hover:not(:disabled) { color: #C4B5FD; border-color: rgba(167, 139, 250, 0.75); }
+
+/* ============================================================================
+   文件中心管理(fha)
+   说明卡 + 同步操作 + 结果统计卡(复用 home 的 stat-grid/stat-card)
+   ============================================================================ */
+
+.fha-wrap {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  overflow: auto;
+}
+.fha-card {
+  background: var(--bg1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+}
+.fha-card-head { display: flex; align-items: baseline; gap: 10px; }
+.fha-card-title { font-size: 15px; font-weight: 600; color: var(--fg0); }
+.fha-sub { font-size: 12px; color: var(--fg3); }
+.fha-desc {
+  margin-top: 10px;
+  font-size: 12.5px;
+  line-height: 1.8;
+  color: var(--fg2);
+}
+.fha-actions { margin-top: 14px; display: flex; align-items: center; gap: 14px; }
+.fha-status { font-size: 12.5px; color: var(--fg3); }
+.fha-status.busy { color: var(--warn); }
+.fha-status.err { color: var(--err); }

@@ -23,7 +23,7 @@
    *  ready:首次渲染 Promise(模板懒加载完成),激活等待其就绪后回调 onActivate。 */
   const viewCache = {};
 
-  const ICONS = { home: '⌂', filehub: '▤', serverAudioStream: '♫', userManager: '◈' };
+  const ICONS = { home: '⌂', filehub: '▤', serverAudioStream: '♫', userManager: '◈', fileHubAdmin: '⚙' };
 
   /* ========================================================================
      401 统一拦截:记录回跳地址 → 登录页

@@ -19,6 +19,16 @@ class HttpServerManager;
 class ZipWriter;
 class ZmEvBaseRunLoop;
 
+/** @brief 一致性校验修复统计(ran=false = 本轮被跳过,另一轮校验已在运行) */
+struct VerifyStats
+{
+    bool ran = false;
+    int64_t dirsAdded = 0;    ///< 物理有目录而库无 → 补建行
+    int64_t dirsRemoved = 0;  ///< 库有而物理缺失 → 删行(级联子树)
+    int64_t filesAdded = 0;   ///< 物理有文件而库无 → 补建行
+    int64_t filesRemoved = 0; ///< 库有而物理缺失 → 删行
+};
+
 /**
  * @brief 文件中心模块(业务层,数据库驱动)
  *
@@ -62,12 +72,20 @@ public:
     /** @brief 文件仓库根(exe 同级 modules\filehub) */
     std::string GetHubRoot() const;
 
-    /** @brief 通用单文件下载(带 Range 断点续传;零拷贝 SetReplyFile) */
-    int SendFile(ZmHttpdTask* task, const std::string& physicalPath);
-
-    /** @brief Range 断点续传回复(单段 range);非 Range 请求返回 -1 */
-    int ServeFileWithRange(ZmHttpdTask* task, const std::string& path,
-                           const std::string& rangeStr, int64_t fileSize);
+    /**
+     * @brief 通用单文件下载:分块流式发送(1MB 块,支持单段 Range 断点续传)
+     *
+     * 背景:原实现 SetReplyFile → evbuffer_file_segment → Windows 下 MapViewOfFile
+     * 单视图承载长度受 DWORD 限制,>4GB 文件整段映射失败 → 500"无法下载"
+     * (IDM 分段 Range 正常)。改为与 zip 打包同模式的分块流式,任意大小文件可用。
+     *
+     * @param rangeHeader 请求 headers 里可取,传 nullptr/空 = 全文件 200
+     * @return 200/206 已启动流式响应(调用方不得再回复);
+     *         404 = 文件不存在(未回复,调用方响应);
+     *         416 = Range 不满足(已回复 416)
+     */
+    int SendFileStream(ZmReqLoop* loop, ZmHttpdTask* task, const std::string& physicalPath,
+                       const char* rangeHeader);
 
 private:
     // ========================================================================
@@ -251,10 +269,13 @@ private:
 
     /** @brief 定时器到期处理(事件循环线程):每日窗口检查 + 校验/清理整批,异常隔离 */
     void MaintainTick();
-    /** @brief 单轮全空间校验(启动首个周期执行一次 + 每日 03:00 窗口) */
-    void VerifyOnce();
+    /**
+     * @brief 单轮全空间校验(启动首个周期执行一次 + 每日 03:00 窗口 + 手动同步)
+     * @return 修复统计;ran=false 表示另一轮校验正在进行(已跳过本轮)
+     */
+    VerifyStats VerifyOnce();
     /** @brief 校验单个空间目录树与 DB 比对,漂移以文件系统为准修复并记日志 */
-    void VerifySpaceTree(int space, const std::string& spaceAbs);
+    void VerifySpaceTree(int space, const std::string& spaceAbs, VerifyStats& stats);
 
     /** @brief 清理过期分享下载日志(保留期 kShareDownloadLogRetain,与审计一致) */
     void CleanShareDownloadLogs();
@@ -266,12 +287,21 @@ private:
     void CleanTransferTasks();
 
     // ========================================================================
+    // 文件中心管理(管理模块接口:手动触发一致性同步)
+    // ========================================================================
+
+    /** @brief POST /portal/filehubAdmin/sync:手动触发全空间同步(响应含修复统计);
+     *          长任务经 PostToLoop 执行并取消请求死线,防超时误杀 */
+    void HandleAdminSync(ZmReqLoop* loop);
+
+    // ========================================================================
     // 数据
     // ========================================================================
 
     zm::ZmSqliteConn& m_db;           ///< filehub.db 连接引用(归 DbInitializer 所有,锁经 m_db.Mutex())
     std::atomic<bool> m_openOk {false};
     std::atomic<bool> m_gone {false};
+    std::atomic<bool> m_verifyRunning {false};  ///< 一致性校验运行中(手动/周期互斥)
     ZmEvBaseRunLoop* m_bgLoop = nullptr;   ///< 后台周期维护事件循环(Open 创建,Shutdown 停止)
     int m_lastTickDay = 0;                 ///< 上次维护日(窗口去重,事件循环线程独占)
     UserModule* m_userModule = nullptr;  ///< 注入:鉴权/角色/模块权限/业务日志(不拥有)

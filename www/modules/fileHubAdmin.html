@@ -1,0 +1,27 @@
+      <div class="fha-wrap">
+        <div class="fha-card">
+          <div class="fha-card-head">
+            <span class="fha-card-title">文件与数据库一致性</span>
+            <span class="fha-sub">以磁盘文件为基准修复漂移</span>
+          </div>
+          <div class="fha-desc">
+            核对文件仓库(公共文件夹与各用户个人文件夹)与数据库记录的差异,以磁盘为准修复:
+            磁盘存在但库无记录 → 补建记录;库有记录但磁盘缺失 → 清理记录(目录连同子树级联清理)。
+            与每日 03:00 自动校验为同一套逻辑,执行后差异即被纠正,不受每日窗口限制。
+          </div>
+          <div class="fha-actions">
+            <button class="btn-primary" id="fhaSyncBtn">同步所有文件</button>
+            <span class="fha-status" id="fhaStatus"></span>
+          </div>
+        </div>
+        <section class="ws-section" id="fhaStats" hidden>
+          <h3 class="ws-section-title" id="fhaStatsTitle">上次同步结果</h3>
+          <div class="stat-grid">
+            <div class="stat-card"><div class="stat-num" id="fhaDirsAdded">0</div><div class="stat-label">补建目录</div></div>
+            <div class="stat-card"><div class="stat-num" id="fhaFilesAdded">0</div><div class="stat-label">补建文件</div></div>
+            <div class="stat-card"><div class="stat-num" id="fhaDirsRemoved">0</div><div class="stat-label">清理目录</div></div>
+            <div class="stat-card"><div class="stat-num" id="fhaFilesRemoved">0</div><div class="stat-label">清理文件</div></div>
+            <div class="stat-card"><div class="stat-num" id="fhaElapsed">—</div><div class="stat-label">耗时</div></div>
+          </div>
+        </section>
+      </div>

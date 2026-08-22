@@ -2009,8 +2009,8 @@ bool UserModule::SetUserRole(uint64_t userId, const std::string& role)
     if (m_userDb.Changes() == 0)
         return false;
 
-    // 授权制配套:提升为 admin 时自动授予「用户管理」(管理职能保证);
-    // 降级(不再是 admin)时回收「用户管理」授权
+    // 授权制配套:提升为 admin 时自动授予「用户管理」「文件中心管理」(管理职能保证);
+    // 降级(不再是 admin)时回收管理类授权
     if (role == "admin")
     {
         Stmt grant(m_userDb,
@@ -2020,11 +2020,18 @@ bool UserModule::SetUserRole(uint64_t userId, const std::string& role)
             BindInt(grant.p, 1, (int64_t)userId);
             sqlite3_step(grant.p);
         }
+        Stmt grantAdmin(m_userDb,
+            "INSERT OR IGNORE INTO user_modules(user_id,module_code) VALUES(?,'filehubAdmin')");
+        if (grantAdmin.p)
+        {
+            BindInt(grantAdmin.p, 1, (int64_t)userId);
+            sqlite3_step(grantAdmin.p);
+        }
     }
     else
     {
         Stmt revoke(m_userDb,
-            "DELETE FROM user_modules WHERE user_id=? AND module_code='userManager'");
+            "DELETE FROM user_modules WHERE user_id=? AND module_code IN ('userManager','filehubAdmin')");
         if (revoke.p)
         {
             BindInt(revoke.p, 1, (int64_t)userId);

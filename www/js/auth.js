@@ -97,6 +97,8 @@
       const enc = ids.map((it) => (it.type === 'dir' ? 'd' : 'f') + it.id).join(',');
       return `//${window.location.hostname}:39441/zimo/api/portal/filehub/zip_download?task_id=${taskId}&ids=${enc}`;
     },
+    /** 文件中心管理:手动触发全空间一致性同步(磁盘为准补建/清理库记录;响应含修复统计) */
+    filehubAdminSync: () => restCall('POST', '/portal/filehubAdmin/sync'),
     /** 传输任务管理(上传/下载/打包统一记录,队列历史与结果的数据源) */
     filehubTaskCreate: (taskId, name, size) =>
       restCall('POST', '/portal/filehub/task_create', { task_id: taskId, name, size }),

@@ -61,6 +61,10 @@ static constexpr int64_t kTaskRetainDays = 30LL * 24 * 3600;
 /** 历史分页页大小 */
 static constexpr int kTaskPageSize = 50;
 
+// ── 文件下载流式常量 ────────────────────────────────────────────────────────
+/** 分块读-发块大小(1MB;与 zip 打包发送粒度一致) */
+static constexpr size_t kFileStreamChunkSize = 1024 * 1024;
+
 /** @brief 安全读 int64(字段缺失/类型不匹配返回默认值) */
 int64_t JsonInt(const ZMJSON& j, std::string_view key, int64_t def = 0)
 {
@@ -567,6 +571,58 @@ bool FileHubModule::DispatchRest(ZmReqLoop* loop, evhttp_cmd_type verb, const st
             return true;
         }
         HandleShareAccess(loop, task, path.substr(7));
+        return true;
+    }
+
+    // /portal/filehubAdmin/sync:文件中心管理(管理模块)。
+    // 注意须先于下方 "/portal/filehub" 前缀分支判定——"/portal/filehubAdmin"
+    // 同样以 "/portal/filehub" 开头,后置会被普通文件中心分支吞入。
+    if (path == "/portal/filehubAdmin/sync")
+    {
+        if (verb != EVHTTP_REQ_POST)
+        {
+            ZmReqLoopRest::ResponseError(loop, 405, "Method Not Allowed");
+            return true;
+        }
+        if (!m_openOk.load())
+        {
+            ZmReqLoopRest::ResponseError(loop, 503, "文件中心未初始化");
+            return true;
+        }
+        // 鉴权 + 权限:可见模块须含 filehubAdmin(admin 提升自动授权;未授权 403,防接口直调绕过前端目录隐藏)
+        if (m_userModule)
+        {
+            UserModule::UserInfo ui;
+            uint64_t uid = m_userModule->AuthAndTouch(task, &ui);
+            if (!uid)
+            {
+                ZmReqLoopRest::ResponseError(loop, 401, "会话已失效");
+                return true;
+            }
+            std::string role;
+            m_userModule->GetUserRole(uid, role);
+            std::vector<ZMJSON> mods;
+            if (!m_userModule->GetUserModules(uid, role, mods))
+            {
+                ZmReqLoopRest::ResponseError(loop, 500, "服务器内部错误");
+                return true;
+            }
+            bool has = false;
+            for (auto& m : mods)
+            {
+                if (zm_json_get_str(m, "code") == "filehubAdmin")
+                {
+                    has = true;
+                    break;
+                }
+            }
+            if (!has)
+            {
+                ZmReqLoopRest::ResponseError(loop, 403, "无文件中心管理模块权限");
+                return true;
+            }
+        }
+        HandleAdminSync(loop);
         return true;
     }
 
@@ -2387,19 +2443,28 @@ std::string ExtractFilename(const std::string& uri)
 }
 } // namespace
 
-int FileHubModule::ServeFileWithRange(ZmHttpdTask* task, const std::string& path,
-                                      const std::string& rangeStr, int64_t fileSize)
-{
-    if (rangeStr.size() < 7 || _strnicmp(rangeStr.c_str(), "bytes=", 6) != 0)
-        return -1;
+// ============================================================================
+// Range 解析(单段 bytes=;严格 strtoll 校验)
+// 返回:1 = 合法单段(start/end 输出);0 = 按全文件处理(未知前缀/多段/无 Range);
+//       -1 = 非法(→ 416)。与旧实现语义对齐:无法识别的 Range 头回全文件,bytes= 非法回 416
+// ============================================================================
 
-    std::string rangeVal = rangeStr.substr(6);
-    if (rangeVal.find(',') != std::string::npos) return -1;
+static int ParseFileRange(const char* rangeHeader, int64_t fileSize,
+                          int64_t& start, int64_t& end)
+{
+    if (!rangeHeader || fileSize <= 0)
+        return 0;   // 无/空文件不解析 Range,按全文件处理
+    if (strlen(rangeHeader) < 7 || _strnicmp(rangeHeader, "bytes=", 6) != 0)
+        return 0;   // 非 bytes 单位:按全文件(兼容旧实现)
+    std::string rangeVal(rangeHeader + 6);
+    if (rangeVal.find(',') != std::string::npos)
+        return 0;   // 多段 range:回全文件(兼容旧实现)
 
     size_t dashPos = rangeVal.find('-');
-    if (dashPos == std::string::npos) return -1;
+    if (dashPos == std::string::npos)
+        return -1;
 
-    // stoll 无防护(非法/溢出输入抛异常穿透请求线程):改 strtoll + 严格校验,非法回 416
+    // stoll 无防护(非法/溢出输入抛异常穿透请求线程):strtoll + 严格校验
     auto parseNum = [](const std::string& s, int64_t* out) -> bool {
         if (s.empty())
             return false;
@@ -2412,89 +2477,113 @@ int FileHubModule::ServeFileWithRange(ZmHttpdTask* task, const std::string& path
         *out = (int64_t)v;
         return true;
     };
-    auto badRange = [&]() -> int {
-        task->SetReply(ZM_HTTP_STATUS_CODE_RANGE_NOT_SATISFIABLE, "Range Not Satisfiable");
-        task->PutReplyHeader("Content-Range", ("bytes */" + std::to_string(fileSize)).c_str());
-        return ZM_HTTP_STATUS_CODE_RANGE_NOT_SATISFIABLE;
-    };
 
-    int64_t start = 0, end = fileSize - 1;
     std::string startStr = rangeVal.substr(0, dashPos);
     std::string endStr = rangeVal.substr(dashPos + 1);
-
     if (startStr.empty() && !endStr.empty()) {
+        // 后缀范围:bytes=-N(最后 N 字节)
         int64_t suffixLen = 0;
         if (!parseNum(endStr, &suffixLen))
-            return badRange();
-        if (suffixLen >= fileSize) start = 0;
-        else start = fileSize - suffixLen;
+            return -1;
+        start = (suffixLen >= fileSize) ? 0 : fileSize - suffixLen;
         end = fileSize - 1;
     } else if (!startStr.empty() && endStr.empty()) {
         if (!parseNum(startStr, &start))
-            return badRange();
+            return -1;
         end = fileSize - 1;
     } else {
         if (!parseNum(startStr, &start) || !parseNum(endStr, &end))
-            return badRange();
+            return -1;
     }
 
     if (start < 0 || end >= fileSize || start > end)
-        return badRange();
-
-    int64_t rangeLength = end - start + 1;
-    int fd = -1;
-    if (_wsopen_s(&fd, ZmString::UTF8_To_Unicode(path).c_str(), _O_RDONLY | _O_BINARY, _SH_DENYNO, 0) != 0 || fd == -1)
-        return ZM_HTTP_STATUS_CODE_NOT_FOUND;
-
-    task->PutReplyHeader("Content-type", ZmHttpUtil::GetMimeType(path));
-    task->PutReplyHeader("Content-Disposition",
-        ("attachment; filename=\"" + ExtractFilename(path) + "\"").c_str());
-    task->PutReplyHeader("Accept-Ranges", "bytes");
-    task->PutReplyHeader("Content-Range",
-        ("bytes " + std::to_string(start) + "-" + std::to_string(end) + "/" + std::to_string(fileSize)).c_str());
-    task->SetReply(ZM_HTTP_STATUS_CODE_PARTIAL_CONTENT, "Partial Content");
-
-    if (task->SetReplyFile(fd, start, rangeLength) != 0) { _close(fd); return ZM_HTTP_STATUS_CODE_INTERNAL_ERROR; }
-    return ZM_HTTP_STATUS_CODE_PARTIAL_CONTENT;
+        return -1;
+    return 1;
 }
 
-int FileHubModule::SendFile(ZmHttpdTask* task, const std::string& physicalPath)
+// ============================================================================
+// 通用文件下载:分块流式(替代 SetReplyFile 零拷贝)
+// 背景见头文件注释:Windows 下 evbuffer_file_segment 的 MapViewOfFile 单视图
+// 承载长度受 DWORD 限制,>4GB 整段失败 → 500"无法下载"(IDM 分段 Range 正常)。
+// ============================================================================
+
+int FileHubModule::SendFileStream(ZmReqLoop* loop, ZmHttpdTask* task,
+                                  const std::string& physicalPath, const char* rangeHeader)
 {
     int fd = -1;
     if (_wsopen_s(&fd, ZmString::UTF8_To_Unicode(physicalPath).c_str(), _O_RDONLY | _O_BINARY, _SH_DENYNO, 0) != 0 || fd == -1)
         return ZM_HTTP_STATUS_CODE_NOT_FOUND;
-
     int64_t fileSize = _filelengthi64(fd);
     if (fileSize < 0) { _close(fd); return ZM_HTTP_STATUS_CODE_NOT_FOUND; }
 
-    // 0 字节文件:允许下载,返回 200 空响应(不再视为 404)
-    if (fileSize == 0)
+    // Range 解析:合法单段 → 206;未知前缀/多段 → 全文件 200;bytes= 非法 → 416
+    int64_t start = 0, end = fileSize - 1;
+    bool isRange = false;
+    if (rangeHeader && rangeHeader[0])
     {
-        _close(fd);
-        task->PutReplyHeader("Content-type", ZmHttpUtil::GetMimeType(physicalPath));
-        task->PutReplyHeader("Content-Disposition",
-            ("attachment; filename=\"" + ExtractFilename(physicalPath) + "\"").c_str());
-        task->SetReply(ZM_HTTP_STATUS_CODE_OK);
-        return ZM_HTTP_STATUS_CODE_OK;   // 调用方负责 TriggerReply
+        int pr = ParseFileRange(rangeHeader, fileSize, start, end);
+        if (pr < 0)
+        {
+            _close(fd);
+            ZmReqLoopRest::ResponseError(loop, ZM_HTTP_STATUS_CODE_RANGE_NOT_SATISFIABLE, "Range Not Satisfiable");
+            return ZM_HTTP_STATUS_CODE_RANGE_NOT_SATISFIABLE;
+        }
+        isRange = (pr == 1);
+    }
+    int64_t chunkTotal = end - start + 1;
+
+    std::string mime = ZmHttpUtil::GetMimeType(physicalPath);
+    std::string disp = "attachment; filename=\"" + ExtractFilename(physicalPath) + "\"";
+    std::string clStr = std::to_string(chunkTotal);
+
+    // 显式 Content-Length → evhttp 固定长度传输(非 chunked),浏览器/IDM 校验与进度正常;
+    // 206 另带 Content-Range。Accept-Ranges 恒带,便于续传探测。
+    if (isRange)
+    {
+        std::string crStr = "bytes " + std::to_string(start) + "-" + std::to_string(end) +
+                            "/" + std::to_string(fileSize);
+        ZmReqLoopRest::ResponseStreamStart(loop, ZM_HTTP_STATUS_CODE_PARTIAL_CONTENT, {
+            {"Content-Type", mime.c_str()},
+            {"Content-Disposition", disp.c_str()},
+            {"Accept-Ranges", "bytes"},
+            {"Content-Length", clStr.c_str()},
+            {"Content-Range", crStr.c_str()},
+        });
+    }
+    else
+    {
+        ZmReqLoopRest::ResponseStreamStart(loop, ZM_HTTP_STATUS_CODE_OK, {
+            {"Content-Type", mime.c_str()},
+            {"Content-Disposition", disp.c_str()},
+            {"Accept-Ranges", "bytes"},
+            {"Content-Length", clStr.c_str()},
+        });
     }
 
-    const char* rangeHeader = task->GetRequestHeader("Range");
-    if (rangeHeader && rangeHeader[0]) {
+    // 分块流式发送(与 zip 打包同模式):1MB 块读-发;连接关闭即中止;结束无条件 EndStreamReply
+    loop->PostToLoop([task, fd, start, chunkTotal, isRange](ZmReqLoop* l) {
+        if (l->IsClosing())
+        {
+            _close(fd);
+            return;   // 头也可能未发出(关闭窗口),后续收尾由默认路径处理
+        }
+        std::vector<unsigned char> buf(kFileStreamChunkSize);
+        _lseeki64(fd, start, SEEK_SET);
+        int64_t remaining = chunkTotal;
+        while (remaining > 0 && !task->IsConnClosed())
+        {
+            size_t toRead = remaining > (int64_t)buf.size() ? buf.size() : (size_t)remaining;
+            int n = _read(fd, buf.data(), (unsigned int)toRead);
+            if (n <= 0)
+                break;
+            task->SendReplyChunk(buf.data(), (size_t)n);
+            remaining -= n;
+        }
         _close(fd);
-        int rangeResult = ServeFileWithRange(task, physicalPath, rangeHeader, fileSize);
-        if (rangeResult > 0) return rangeResult;
-        if (_wsopen_s(&fd, ZmString::UTF8_To_Unicode(physicalPath).c_str(), _O_RDONLY | _O_BINARY, _SH_DENYNO, 0) != 0 || fd == -1)
-            return ZM_HTTP_STATUS_CODE_NOT_FOUND;
-    }
-
-    task->PutReplyHeader("Content-type", ZmHttpUtil::GetMimeType(physicalPath));
-    task->PutReplyHeader("Content-Disposition",
-        ("attachment; filename=\"" + ExtractFilename(physicalPath) + "\"").c_str());
-    task->PutReplyHeader("Accept-Ranges", "bytes");
-    task->SetReply(200);
-
-    if (task->SetReplyFile(fd, 0, fileSize) != 0) { _close(fd); return ZM_HTTP_STATUS_CODE_INTERNAL_ERROR; }
-    return ZM_HTTP_STATUS_CODE_OK;
+        // ★ 无条件结束流:即使连接已关闭,EndStreamReply 也安全(驱动 doer 回收,同 zip)
+        task->EndStreamReply();
+    });
+    return isRange ? ZM_HTTP_STATUS_CODE_PARTIAL_CONTENT : ZM_HTTP_STATUS_CODE_OK;
 }
 
 void FileHubModule::HandleDownload(ZmReqLoop* loop, ZmHttpdTask* task, uint64_t opUid,
@@ -2545,7 +2634,7 @@ void FileHubModule::HandleDownload(ZmReqLoop* loop, ZmHttpdTask* task, uint64_t 
         CreateTransferTask(taskId, opUid, "file", kTaskStatusTriggered, name, fileSize);
 
     std::string absPath = EntryAbsPath(space, dirId, name);
-    int rc = SendFile(task, absPath);
+    int rc = SendFileStream(loop, task, absPath, task->GetRequestHeader("Range"));
     if (rc == ZM_HTTP_STATUS_CODE_NOT_FOUND)
     {
         if (!taskId.empty())
@@ -2553,7 +2642,13 @@ void FileHubModule::HandleDownload(ZmReqLoop* loop, ZmHttpdTask* task, uint64_t 
         ZmReqLoopRest::ResponseError(loop, 404, "文件不存在");
         return;
     }
-    task->TriggerReply();   // RESTful 异步路径:SetReply 后须显式触发,否则 deadline 504
+    if (rc == ZM_HTTP_STATUS_CODE_RANGE_NOT_SATISFIABLE)
+    {
+        if (!taskId.empty())
+            UpdateTransferTask(taskId, opUid, kTaskStatusFailed, "Range 请求不合法", -1);
+        return;   // 416 已回复
+    }
+    // 流式响应已接管回复(头/分块/收尾在 SendFileStream 内完成),不再 TriggerReply
     if (!taskId.empty())
         UpdateTransferTask(taskId, opUid, kTaskStatusDone, "", -1);
     Log(opUid, opAccount, "download", "file", fileId, "{\"name\":\"" + name + "\"}");
@@ -3322,12 +3417,15 @@ void FileHubModule::HandleShareAccess(ZmReqLoop* loop, ZmHttpdTask* task, const 
             name = n ? n : "";
         }
         std::string absPath = EntryAbsPath(space, dirId, name);
-        if (SendFile(task, absPath) == ZM_HTTP_STATUS_CODE_NOT_FOUND)
+        int rc = SendFileStream(loop, task, absPath, task->GetRequestHeader("Range"));
+        if (rc == ZM_HTTP_STATUS_CODE_NOT_FOUND)
         {
             ZmReqLoopRest::ResponseError(loop, 404, "分享已失效");
             return;
         }
-        task->TriggerReply();   // RESTful 异步路径:SetReply 后须显式触发
+        if (rc == ZM_HTTP_STATUS_CODE_RANGE_NOT_SATISFIABLE)
+            return;   // 416 已回复
+        // 流式响应已接管回复,不再 TriggerReply
     }
     else
     {
@@ -3517,6 +3615,54 @@ void FileHubModule::RemoveSharesOf(const std::string& targetType, uint64_t targe
 }
 
 // ============================================================================
+// 文件中心管理(手动一致性同步)
+// ============================================================================
+
+void FileHubModule::HandleAdminSync(ZmReqLoop* loop)
+{
+    // 长任务调度:移入 PostToLoop 续体执行(与 zip 流式同模式),先取消请求死线防超时误杀。
+    // 请求域访问(IsClosing/CancelDeadline/回复)收敛到 loop 线程,外部只触碰 m_db(自持锁)。
+    loop->PostToLoop([this](ZmReqLoop* l) {
+        if (l->IsClosing() || m_gone.load())
+            return;
+        l->CancelDeadline();   // 同步扫描可能远超请求超时:取消后按需等待,不再受 504 兜底干扰
+
+        int64_t beginMs = GetTickCount64();
+        VerifyStats stats;
+        try
+        {
+            stats = VerifyOnce();
+        }
+        catch (const std::exception& e)
+        {
+            DEFAULT_LOG_ERROR("[FileHub] 手动一致性同步异常(已隔离): {}", e.what());
+            ZmReqLoopRest::ResponseError(l, 500, "同步失败,请查看服务日志");
+            return;
+        }
+        catch (...)
+        {
+            DEFAULT_LOG_ERROR("[FileHub] 手动一致性同步未知异常(已隔离)");
+            ZmReqLoopRest::ResponseError(l, 500, "同步失败,请查看服务日志");
+            return;
+        }
+        if (!stats.ran)
+        {
+            ZmReqLoopRest::ResponseError(l, 409, "已有同步正在进行,请稍后重试");
+            return;
+        }
+
+        ZMJSON rsp;
+        rsp["result"]["ok"] = true;
+        rsp["result"]["elapsedMs"] = (int64_t)(GetTickCount64() - beginMs);
+        rsp["result"]["stats"]["dirsAdded"] = (int64_t)stats.dirsAdded;
+        rsp["result"]["stats"]["filesAdded"] = (int64_t)stats.filesAdded;
+        rsp["result"]["stats"]["dirsRemoved"] = (int64_t)stats.dirsRemoved;
+        rsp["result"]["stats"]["filesRemoved"] = (int64_t)stats.filesRemoved;
+        ZmReqLoopRest::ResponseJson(l, 200, rsp);
+    });
+}
+
+// ============================================================================
 // 后台周期维护(独立事件循环线程:一致性校验 + 分享下载日志清理 + 传输任务清理)
 // ============================================================================
 
@@ -3556,8 +3702,24 @@ void FileHubModule::MaintainTick()
     }
 }
 
-void FileHubModule::VerifyOnce()
+VerifyStats FileHubModule::VerifyOnce()
 {
+    VerifyStats stats;
+    // 手动同步与周期校验互斥:已在运行则跳过本轮(周期场景 m_lastTickDay 仍推进,当日不再重试;
+    // 手动场景由 HandleAdminSync 以 ran=false 告知 "已有同步在进行")
+    bool expect = false;
+    if (!m_verifyRunning.compare_exchange_strong(expect, true))
+    {
+        DEFAULT_LOG_WARN("[FileHub] 一致性校验已在运行,跳过本轮");
+        return stats;
+    }
+    // RAII 释放:异常传播(调用方 try/catch 隔离)或正常返回前复位,防标志永久占用
+    struct VerifyRunningGuard
+    {
+        std::atomic<bool>& flag;
+        ~VerifyRunningGuard() { flag.store(false); }
+    } runningGuard{m_verifyRunning};
+
     // 等待 Open 完成(线程在 Open 尾部启动,已就绪);遍历各空间
     // 公共空间(0)+ 个人空间(以文件系统目录为准)
     std::vector<int> spaces;
@@ -3587,11 +3749,16 @@ void FileHubModule::VerifyOnce()
     for (int space : spaces)
     {
         if (m_gone.load())
-            return;
+        {
+            stats.ran = true;
+            return stats;
+        }
         std::string spaceAbs = m_hubRoot + "\\" + std::to_string(space);
-        VerifySpaceTree(space, spaceAbs);
+        VerifySpaceTree(space, spaceAbs, stats);
     }
     DEFAULT_LOG_INFO("[FileHub] 一致性校验完成");
+    stats.ran = true;
+    return stats;
 }
 
 void FileHubModule::CleanShareDownloadLogs()
@@ -3637,7 +3804,7 @@ void FileHubModule::CleanTransferTasks()
     }
 }
 
-void FileHubModule::VerifySpaceTree(int space, const std::string& spaceAbs)
+void FileHubModule::VerifySpaceTree(int space, const std::string& spaceAbs, VerifyStats& stats)
 {
     // DFS 物理目录树,与 DB 比对
     struct Node
@@ -3710,7 +3877,10 @@ void FileHubModule::VerifySpaceTree(int space, const std::string& spaceAbs)
                 BindText(ins.p, 3, nm);
                 sqlite3_step(ins.p);
                 if (m_db.Changes() > 0)
+                {
+                    stats.dirsAdded++;
                     DEFAULT_LOG_INFO("[FileHub] 校验补建目录: space={} {}", space, nm);
+                }
             }
         }
         // 删 DB 有而物理无的目录行(级联清其子树:物理目录整体丢失 → 子树 dirs/files 行全为孤儿;
@@ -3758,6 +3928,7 @@ void FileHubModule::VerifySpaceTree(int space, const std::string& spaceAbs)
                                 sqlite3_step(del.p);
                             }
                         }
+                        stats.dirsRemoved++;
                         DEFAULT_LOG_INFO("[FileHub] 校验删除孤儿目录: space={} {} (级联子树 {} 个目录)",
                                          space, dbName, subs.size());
                     }
@@ -3812,7 +3983,10 @@ void FileHubModule::VerifySpaceTree(int space, const std::string& spaceAbs)
                 BindInt(ins.p, 5, (int64_t)time(nullptr));
                 sqlite3_step(ins.p);
                 if (m_db.Changes() > 0)
+                {
+                    stats.filesAdded++;
                     DEFAULT_LOG_INFO("[FileHub] 校验补建文件: space={} {}", space, fileNames[i]);
+                }
             }
         }
         for (const auto& dbName : dbFileNames)
@@ -3826,7 +4000,11 @@ void FileHubModule::VerifySpaceTree(int space, const std::string& spaceAbs)
                     BindInt(del.p, 2, (int64_t)node.dbDirId);
                     BindText(del.p, 3, dbName);
                     sqlite3_step(del.p);
-                    DEFAULT_LOG_INFO("[FileHub] 校验删除孤儿文件: space={} {}", space, dbName);
+                    if (m_db.Changes() > 0)
+                    {
+                        stats.filesRemoved++;
+                        DEFAULT_LOG_INFO("[FileHub] 校验删除孤儿文件: space={} {}", space, dbName);
+                    }
                 }
             }
         }

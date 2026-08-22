@@ -368,12 +368,15 @@ void PortalModule::HandleUserAction(ZmReqLoop* loop, const std::string& action, 
             return;
         }
         std::vector<std::string> codes = zm_json_get_array<std::string>(body, "modules");
-        // admin 强制保留「用户管理」授权(角色配套,提升时自动授予,不可取消)
+        // admin 强制保留管理型授权(角色配套,提升时自动授予,不可取消)
         if (target.role == "admin")
         {
-            bool hasUsers = std::find(codes.begin(), codes.end(), "userManager") != codes.end();
-            if (!hasUsers)
-                codes.push_back("userManager");
+            auto force = [&codes](const char* code) {
+                if (std::find(codes.begin(), codes.end(), code) == codes.end())
+                    codes.push_back(code);
+            };
+            force("userManager");
+            force("filehubAdmin");
         }
         if (!m_userModule->SetUserModules(targetId, codes))
         {

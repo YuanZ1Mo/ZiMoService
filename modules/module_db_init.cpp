@@ -69,7 +69,7 @@ static const ZmDbColumn kModulesCols[] = {
     {"enabled", "INTEGER NOT NULL DEFAULT 1"},
 };
 /**
- * 模块种子数据(幂等):主页/文件中心/服务器音频传输/用户管理
+ * 模块种子数据(幂等):主页/文件中心/服务器音频传输/用户管理/文件中心管理
  * 2026-08-11 迁移:模块 code 正式命名 audio→serverAudioStream、users→userManager,
  * 路由 URL 同步 /portal/audio→/portal/serverAudioStream、/portal/users→/portal/userManager
  * (先 UPDATE 存量行再 INSERT OR IGNORE 新 code/url,二次执行幂等)
@@ -85,7 +85,8 @@ static const char* kModulesPost =
     " ('home','主页','/portal',0),"
     " ('filehub','文件中心','/portal/filehub',1),"
     " ('serverAudioStream','服务器音频传输','/portal/serverAudioStream',2),"
-    " ('userManager','用户管理','/portal/userManager',3)";
+    " ('userManager','用户管理','/portal/userManager',3),"
+    " ('filehubAdmin','文件中心管理','/portal/filehubAdmin',4)";
 
 static const ZmDbColumn kUserModulesCols[] = {
     {"user_id",     "INTEGER NOT NULL"},

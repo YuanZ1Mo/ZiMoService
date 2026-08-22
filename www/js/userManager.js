@@ -144,7 +144,8 @@
         const allMods = info.modules || [];
         const owned = new Set((detail.modules || []).map((m) => m.code));
         const checks = allMods.map((m) => {
-          const forced = m.code === 'users' && detail.role === 'admin';   // 管理员必备
+          // 管理员必备:管理型模块(角色提升时自动授予,后端强制保留,此处仅展示态)
+          const forced = (m.code === 'userManager' || m.code === 'filehubAdmin') && detail.role === 'admin';
           return `<label><input type="checkbox" data-modal-value="${escapeHtml(m.code)}"
             ${owned.has(m.code) || forced ? 'checked' : ''} ${forced ? 'disabled' : ''}>
             ${escapeHtml(m.name)}
