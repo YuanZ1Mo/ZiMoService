@@ -2580,8 +2580,12 @@ int FileHubModule::SendFileStream(ZmReqLoop* loop, ZmHttpdTask* task,
             remaining -= n;
         }
         _close(fd);
-        // ★ 无条件结束流:即使连接已关闭,EndStreamReply 也安全(驱动 doer 回收,同 zip)
+        // ★ 收尾遵循公共库流式约定(参照音频模块):先取回复门 → EndStreamReply 驱动
+        //   doer 回收 → 投 DONE 回池。缺任一步:成功路径 ZmReqLoop(独立线程)永不回池,
+        //   池耗尽后请求排队超时;close 竞态下 ProcessClose 会对已回收 doer TriggerReply
+        l->TryReply();
         task->EndStreamReply();
+        l->PostToLoop(ZmReqLoop::REQ_LOOP_SIG_DONE, task);
     });
     return isRange ? ZM_HTTP_STATUS_CODE_PARTIAL_CONTENT : ZM_HTTP_STATUS_CODE_OK;
 }
@@ -2663,7 +2667,7 @@ bool FileHubModule::ZipAddFile(ZipWriter& zip, int space, uint64_t fileId,
                                const std::set<uint64_t>& skipFileIds)
 {
     if (skipFileIds.count(fileId))
-        return true;   // 已被文件夹展开覆盖,跳过(文件优先规则下不应发生,防御)
+        return true;   // 已被显式选中的顶层文件登记,跳过(文件优先规则:显式文件优先,目录展开不重复入包)
 
     int fSpace = -1;
     uint64_t dirId = 0;
@@ -2918,7 +2922,15 @@ void FileHubModule::HandleZipDownload(ZmReqLoop* loop, ZmHttpdTask* task, uint64
         {
             ZipWriter zip;
             std::vector<unsigned char> chunk;
+            // 文件优先规则:先登记显式选中的文件 id,目录展开遇到相同文件时
+            // 经 ZipAddFile 的 skip 检查跳过 → 显式文件只入包一次
+            // (旧实现集合从未填充:文件+其父目录同选时同一文件被打包两次,名字不同内容重复)
             std::set<uint64_t> skipFileIds;
+            for (const auto& it : ids)
+            {
+                if (it.first == "file")
+                    skipFileIds.insert(it.second);
+            }
             bool ok = true;
             bool cancelled = false;
             int64_t zipTotal = 0;
@@ -2965,8 +2977,10 @@ void FileHubModule::HandleZipDownload(ZmReqLoop* loop, ZmHttpdTask* task, uint64
                     zipTotal += (int64_t)chunk.size();
                 }
             }
-            // ★ 无条件结束流:即使连接已关闭,EndStreamReply 也安全(驱动 doer 回收)
+            // ★ 收尾遵循公共库流式约定(同 SendFileStream):取门 → EndStreamReply → 投 DONE 回池
+            l->TryReply();
             task->EndStreamReply();
+            l->PostToLoop(ZmReqLoop::REQ_LOOP_SIG_DONE, task);
 
             if (ok)
             {
@@ -2995,9 +3009,11 @@ void FileHubModule::HandleZipDownload(ZmReqLoop* loop, ZmHttpdTask* task, uint64
         }
         catch (...)
         {
-            // 打包异常兜底:无条件结束流;行落 failed
+            // 打包异常兜底:按流式约定收尾(取门→结束流→投 DONE);行落 failed
             DEFAULT_LOG_ERROR("[FileHub] zip_download 打包异常");
+            l->TryReply();
             task->EndStreamReply();
+            l->PostToLoop(ZmReqLoop::REQ_LOOP_SIG_DONE, task);
             UpdateTransferTask(taskId, opUid, kTaskStatusFailed, "打包异常", -1);
         }
     });
@@ -3491,7 +3507,10 @@ void FileHubModule::HandleShareAccess(ZmReqLoop* loop, ZmHttpdTask* task, const 
             zip.Drain(chunk);
             if (ok && !chunk.empty())
                 task->SendReplyChunk(chunk.data(), chunk.size());
+            // 收尾遵循公共库流式约定(同 SendFileStream):取门 → EndStreamReply → 投 DONE 回池
+            l->TryReply();
             task->EndStreamReply();
+            l->PostToLoop(ZmReqLoop::REQ_LOOP_SIG_DONE, task);
             Log(downloaderId, downloaderAccount, "download_share", "dir", targetId,
                 "{\"share_id\":" + std::to_string(shareId) + "}");
         });
