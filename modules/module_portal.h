@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <string>
 
-class HttpServerManager;
+class HttpFrontendManager;
 class UserModule;
 
 /**
@@ -28,7 +28,7 @@ public:
     ~PortalModule() = default;
 
     /** @brief 自注册 /portal 与 /portal/* 静态路由(service_portal.cpp 调用一行) */
-    void RegisterHttpRoutes(HttpServerManager* httpMgr);
+    void RegisterHttpRoutes(HttpFrontendManager* httpMgr);
 
     /**
      * @brief REST 分发入口(service_portal.cpp 的 else 链调用)

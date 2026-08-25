@@ -732,45 +732,54 @@
       startDownloadItem(item);
     }
 
-    /* zip 打包执行:导航直链(服务端流式打包,浏览器下载与打包并发);
-       1s 轮询 task_status:打包中→完成(服务端流结束即标 done,下载随之完成;
-       404(行未建)=继续等,120s 封顶) */
-    function startZipPack(item) {
+    /* zip 打包执行:POST 发起(服务端后台打包)→ 1s 轮询 task_status →
+       完成后导航产物直链(浏览器/IDM 接管,Range 续传)。
+       分享场景(onDone)不导航,改调 share_commit 生成分享链接 */
+    function startZipPack(item, onDone) {
       item.status = 'packing';
       item.err = '';
       renderQueue();
-      window.location.href = A.api.filehubZipDownloadUrl(item.taskId, item.zipIds);
       let tries = 0;
+      let launched = false;
       item.pollTimer = setInterval(async () => {
         if (item.status !== 'packing') { clearInterval(item.pollTimer); return; }
         tries++;
         try {
+          if (!launched) {
+            await A.api.filehubZipStart(item.taskId, item.zipIds);   // 发起失败 → catch 立即可见
+            launched = true;
+          }
           const r = await A.api.filehubTaskStatus(item.taskId);
           if (r.status === 'done') {
             clearInterval(item.pollTimer);
-            item.status = 'done';        // 打包完成,下载已交付浏览器/IDM
+            item.status = 'done';
             renderQueue();
+            if (onDone) onDone(r);                                  // 分享:回调生成链接
+            else window.location.href = A.api.filehubZipTaskUrl(item.taskId);
           } else if (r.status === 'failed') {
             clearInterval(item.pollTimer);
             item.status = 'err';
             item.err = r.err || '打包失败';
             renderQueue();
+            if (onDone) onDone(null);
           }
         } catch (e) {
-          if (e.code === 404) {
-            if (tries > 120) {   // 行迟迟未建/已删除:按超时失败
-              clearInterval(item.pollTimer);
-              item.status = 'err';
-              item.err = '打包超时';
-              renderQueue();
-            }
-            return;              // 404 且未超时:等下一轮
-          }
-          if (tries > 120) {
+          if (!launched) {
+            // 发起失败(路由/参数/鉴权):立即失败可见,不静默重试
             clearInterval(item.pollTimer);
             item.status = 'err';
-            item.err = e.message || '打包失败';
+            item.err = e.message || '打包发起失败';
             renderQueue();
+            if (onDone) onDone(null);
+            return;
+          }
+          if (e.code === 404 && tries <= 600) return;   // 行未建:等下一轮
+          if (tries > 600) {   // 10 分钟兜底:转伸手柄(打包可能仍在进行)
+            clearInterval(item.pollTimer);
+            item.status = 'err';
+            item.err = '打包较久,请前往「传输任务」页查看';
+            renderQueue();
+            if (onDone) onDone(null);
           }
         }
       }, 1000);
@@ -1027,50 +1036,78 @@
 
     /* ---- 分享 ---- */
 
+    /** 分享链接弹窗(二维码 + 链接 + 复制) */
+    async function openShareModal(url) {
+      const token = url.split('/').pop();
+      const full = A.api.filehubShareUrl(token);
+      const note = st.space === 'personal' ? '<div class="fh-share-note">个人空间分享:仅登录用户可下载</div>' : '';
+      const res = await fhModal({
+        title: '分享',
+        modalClass: 'fh-share-modal',
+        content: `<div class="fh-share">
+          <div class="fh-share-qr" id="fhShareQr"></div>
+          <div class="fh-share-url fh-mono">${esc(full)}</div>
+          ${note}
+        </div>`,
+        buttons: [
+          { label: '复制链接', value: 'copy', primary: true },
+          { label: '关闭', value: 'cancel' },
+        ],
+        afterRender: (mask) => {
+          const qrEl = mask.querySelector('#fhShareQr');
+          if (qrEl && window.QRCode) {
+            // 二维码:墨色模块 + 朱砂角点(主题延续)
+            new window.QRCode(qrEl, {
+              text: full, width: 168, height: 168,
+              colorDark: '#E9ECF0', colorLight: '#14181E',
+              correctLevel: window.QRCode.CorrectLevel.M,
+            });
+          } else if (qrEl) {
+            qrEl.textContent = '二维码组件未加载';
+          }
+        },
+      });
+      if (res.action === 'copy') {
+        try {
+          await navigator.clipboard.writeText(full);
+          A.toast('链接已生成,已复制');
+        } catch (e) {
+          A.toast('链接已生成');
+        }
+      }
+    }
+
+    /** 分享:单文件直传分享;多目标/含文件夹 → 打包快照(队列等待) → share_commit → 分享框 */
     async function shareSelection() {
       const ids = selIds();
       if (!ids.length) return;
-      if (ids.length > 1) { A.toast('分享仅支持单项', 'err'); return; }
-      const it = ids[0];
+      const singleFile = ids.length === 1 && ids[0].type === 'file';
       try {
-        const r = await A.api.filehubShare(it.type, it.id);
-        const token = r.url.split('/').pop();
-        const url = A.api.filehubShareUrl(token);
-        const note = st.space === 'personal' ? '<div class="fh-share-note">个人空间分享:仅登录用户可下载</div>' : '';
-        const res = await fhModal({
-          title: '分享',
-          modalClass: 'fh-share-modal',
-          content: `<div class="fh-share">
-            <div class="fh-share-qr" id="fhShareQr"></div>
-            <div class="fh-share-url fh-mono">${esc(url)}</div>
-            ${note}
-          </div>`,
-          buttons: [
-            { label: '复制链接', value: 'copy', primary: true },
-            { label: '关闭', value: 'cancel' },
-          ],
-          afterRender: (mask) => {
-            const qrEl = mask.querySelector('#fhShareQr');
-            if (qrEl && window.QRCode) {
-              // 二维码:墨色模块 + 朱砂角点(主题延续)
-              new window.QRCode(qrEl, {
-                text: url, width: 168, height: 168,
-                colorDark: '#E9ECF0', colorLight: '#14181E',
-                correctLevel: window.QRCode.CorrectLevel.M,
-              });
-            } else if (qrEl) {
-              qrEl.textContent = '二维码组件未加载';
-            }
-          },
-        });
-        if (res.action === 'copy') {
-          try {
-            await navigator.clipboard.writeText(url);
-            A.toast('链接已生成,已复制');
-          } catch (e) {
-            A.toast('链接已生成');
-          }
+        if (singleFile) {
+          const r = await A.api.filehubShare(ids[0].type, ids[0].id);
+          await openShareModal(r.url);
+          return;
         }
+        const item = {
+          uid: Date.now() + Math.random(), createTime: Date.now(),
+          kind: 'zip', name: '分享打包准备中', size: 0,
+          status: 'wait', file: null,
+          zipIds: ids, taskId: genTaskId(), forShare: true,
+        };
+        st.uploadQueue.push(item);
+        renderQueue();
+        A.toast('正在打包分享内容,完成后自动生成链接');
+        let shareUrl = null;
+        startZipPack(item, async (r) => {
+          if (!r) { A.toast('分享打包失败', 'err'); return; }
+          try {
+            const r2 = await A.api.filehubShareCommit(item.taskId);
+            shareUrl = r2.url;
+            await openShareModal(shareUrl);
+          } catch (e) {
+            A.toast(e.message || '生成分享链接失败', 'err');
+          }
+        });
       } catch (e) {
         if (e.code !== 401) A.toast(e.message, 'err');
       }

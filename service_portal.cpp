@@ -1,287 +1,327 @@
 #include "service_portal.h"
 
-#include "service_define.h"
 #include "net_dock.h"
-#include "broadcast_manager.h"
-#include "http_server_manager.h"
-#include "modules/module_file_hub.h"
 
-#include "module_deepseek.h"
-#include "modules/module_db_init.h"
-#include "modules/module_user.h"
-#include "modules/module_portal.h"
-#include "modules/module_server_audio_stream.h"
+#include "zm_net_http_frontend_server.h"
+#include "zm_net_http_jsonrpc_server.h"
+#include "zm_net_http_restful_server.h"
 
-#include "zm_net_req_loop_protocol.h"   // ZmReqLoopRest(回复 helper 静态调用)+ ZmReqLoopPool
-#include "zm_net_http.h"   // ZmHttpdTask/evhttp_cmd_type/ZmHttpUtil + ZmJsonRpcServer(直通回复与路由用)
-#include "zm_net_websocket_server.h"   // ZmWebSocketSession/ZmWebSocketCallbacks(WS 业务回调)
+#include <drogon/HttpRequest.h>
+#include <drogon/HttpResponse.h>
 
-#include "zm_net_socket.h" // ZmWinSockHelper(池预创建客户端前先完成 WSAStartup,防启动竞态)
+#include "zm_util_json.h"   // ZMJSON
+
+#include <chrono>
+#include <thread>
+
 #include "zm_util_logger.h"
-#include "zm_util_json.h"
-#include "zm_util_sys.h"
-#include "zm_util_file.h"
-#include "zm_util_str.h"
+
+using namespace drogon;
+using std::string;
 
 // ============================================================================
-// 构造 / 析构
+// 构造 / 析构 / Init
 // ============================================================================
 
-ServicePortal::ServicePortal()
+ServicePortal::ServicePortal(NetDock* netDock)
+    : m_netDock(netDock)
 {
-	// Winsock 先行初始化(幂等):池预创建客户端循环线程时 libevent 需已 WSAStartup,
-	// 否则 event_base_new 失败(实测:池 init 报 client start failed,预创建全部落空)
-	ZmWinSockHelper::Init();
-
-	// 数据库初始化先行:业务模块构造前打开全部 SQLite 库(建目录/建表/补列/种子)
-	m_dbInit = new DbInitModule();
-	if (!m_dbInit->Open())
-		DEFAULT_LOG_ERROR("ServicePortal: DbInitModule init failed");
-
-	// 用户系统:注入已初始化连接(鉴权/角色/模块权限查询)
-	m_userModule = new UserModule(m_dbInit->UserDb(), m_dbInit->RateDb(), m_dbInit->AuditDb());
-	if (!m_userModule->Open())
-		DEFAULT_LOG_ERROR("ServicePortal: UserModule init failed");
-
-	// 文件中心:注入 UserModule(鉴权/角色/模块权限/业务日志)+ 已初始化 filehub.db 连接
-	m_fileHubModule = new FileHubModule(m_userModule, m_dbInit->FileHubDb());
-	if (!m_fileHubModule->Open())
-		DEFAULT_LOG_ERROR("ServicePortal: FileHubModule init failed");
-
-	m_audioModule = new ServerAudioStreamModule(m_userModule);
-
-	// 通用外呼请求池(全门户共用;预创建4,上限80)
-	m_httpClientPool = new ZmHttpClientPool();
-	if (!m_httpClientPool->Init(4, 80))
-		DEFAULT_LOG_ERROR("ServicePortal: ZmHttpClientPool init failed");
-	// DeepSeek 模块:池创建后注入(配置/缓存/usage 处理全部在模块内)
-	m_deepseekModule = new DeepSeekModule(m_httpClientPool);
-	// 门户模块:注入 UserModule(鉴权/角色/模块权限查询)
-	m_portalModule = new PortalModule(m_userModule);
 }
 
 ServicePortal::~ServicePortal()
 {
-	Shutdown();   // 幂等兜底:OnStop 路径被绕过时,业务线程 join 与连接关闭仍按序收尾
-
-	delete m_audioModule;
-	m_audioModule = nullptr;
-	delete m_fileHubModule;
-	m_fileHubModule = nullptr;
-
-	if (m_httpClientPool)
-	{
-		delete m_httpClientPool;   // 先停客户端循环线程(join):在飞回调此时仍可安全查模块 gone 标志
-		m_httpClientPool = nullptr;
-	}
-	// 池删后无新回调,模块方可安全释放(Shutdown 已置 gone;池 join 期间回调见 gone → 删 st 不投递)
-	delete m_deepseekModule;
-	m_deepseekModule = nullptr;
-
-	delete m_portalModule;
-	m_portalModule = nullptr;
-
-	delete m_userModule;
-	m_userModule = nullptr;
-
-	// 数据库连接最后销毁:必须晚于所有持连接引用的模块
-	delete m_dbInit;
-	m_dbInit = nullptr;
 }
 
-// ============================================================================
-// 门户停止准备
-// ============================================================================
+void ServicePortal::Init()
+{
+    if (!m_netDock)
+    {
+        DEFAULT_LOG_ERROR("ServicePortal::Init: NetDock 为空");
+        return;
+    }
+    m_frontend = m_netDock->GetFrontendServer();
+    m_jrpc = m_netDock->GetJsonRpcServer();
+    m_restful = m_netDock->GetRestfulServer();
+
+    DEFAULT_LOG_INFO("Portal::Init 前端");
+    RegisterFrontendRoutes(m_frontend);
+    DEFAULT_LOG_INFO("Portal::Init JRPC");
+    RegisterJsonRpcRoutes(m_jrpc);
+    DEFAULT_LOG_INFO("Portal::Init REST");
+    RegisterRestfulTestRoutes(m_restful);
+    // 预检+CORS 挂在 RESTful 面(业务层显式,FR-21;设计 §11.4)
+    DEFAULT_LOG_INFO("Portal::Init CORS");
+    RegisterRestfulCors(m_restful);
+    DEFAULT_LOG_INFO("Portal::Init 完成");
+}
 
 void ServicePortal::Shutdown()
 {
-	// 业务层停止钩子:NetDock 析构前标记音频模块 task/loop 与 SSE 测试线程 loop 即将失效
-	// (NetDock 析构触发 closecb,发送线程提前退出时须跳过流收尾投递,防 UAF)
-	if (m_audioModule)
-		m_audioModule->SetTasksGone();
-	// DeepSeek 模块:回调经 m_gone 跳过续体投递(防 loop 已销毁)
-	if (m_deepseekModule)
-		m_deepseekModule->Shutdown();
-	// 用户系统:停清理线程(join;库连接由 DbInitModule 统一关闭)
-	if (m_userModule)
-		m_userModule->Shutdown();
-	// 文件中心:停一致性校验线程(join;原仅析构时 join,统一纳入 Shutdown)
-	if (m_fileHubModule)
-		m_fileHubModule->Shutdown();
-	// 数据库:关闭全部连接(必须晚于所有持连接引用的模块线程 join)
-	if (m_dbInit)
-		m_dbInit->Shutdown();
-	m_sseGone.store(true);
+    // 本期无业务线程;业务期在此先 join 业务线程(FR-04)
 }
 
-
-// ============================================================================
-// 广播消息便捷方法
-// ============================================================================
-
-bool ServicePortal::BroadcastMessage(const std::string& topic, const std::string& content, const std::string& tag)
+bool ServicePortal::BroadcastMessage(const string& topic, const string& content,
+                                     const string& tag)
 {
-	if (!m_netDock)
-		return false;
-
-	auto* mgr = m_netDock->GetBroadcastManager();
-	if (!mgr)
-		return false;
-
-	return mgr->Broadcast(topic, content, tag);
+    (void)topic; (void)content; (void)tag;
+    DEFAULT_LOG_INFO("BroadcastMessage: 广播服务(39640)本期未接入");
+    return false;
 }
 
 // ============================================================================
-// HTTP 80 端口路由注册
+// 前端页面路由(80/443;页面别名按旧迁移表,设计 §11.2)
 // ============================================================================
-
-void ServicePortal::RegisterHttpRoutes(HttpServerManager* httpMgr)
+namespace
 {
-	if (!httpMgr)
-		return;
+/// 由文档根 + 相对路径构造静态页响应
+ZmHttpCoroHandler MakePageHandler(const string& www, const string& relPath)
+{
+    return [www, relPath](HttpRequestPtr req) -> Task<HttpResponsePtr> {
+        string full = www;
+        if (!full.empty() && full.back() != '\\' && full.back() != '/')
+            full += "\\";
+        full += relPath;
+        co_return HttpResponse::newFileResponse(full);
+    };
+}
+}  // namespace
 
-	auto& router = httpMgr->GetRouter();
+void ServicePortal::RegisterFrontendRoutes(ZmHttpFrontendServer* fe)
+{
+    if (!fe)
+        return;
+    const string& www = fe->GetDocumentRoot();
 
-	router.Get("/", [httpMgr](ZmHttpdTask* task, const BYTE*, size_t) {
-		return httpMgr->ServeStaticFile(task, "/html/index.html");
-	});
+    // 逐条页面别名(旧前端路由表)
+    fe->RegisterCoro("/", Get, MakePageHandler(www, "html\\index.html"));
+    fe->RegisterCoro("/login", Get, MakePageHandler(www, "html\\login.html"));
+    fe->RegisterCoro("/register", Get, MakePageHandler(www, "html\\register.html"));
+    fe->RegisterCoro("/reset", Get, MakePageHandler(www, "html\\reset.html"));
+    fe->RegisterCoro("/force-reset", Get, MakePageHandler(www, "html\\force-reset.html"));
+    fe->RegisterCoro("/404", Get, MakePageHandler(www, "html\\404.html"));
 
-	router.Get("/404", [httpMgr](ZmHttpdTask* task, const BYTE*, size_t) {
-		return httpMgr->ServeStaticFile(task, "/html/404.html");
-	});
+    // /share/{token} 302 → RESTful 端口分享页(设计 §11.2;目标 URL 业务期再核定)
+    const bool httpsMode = fe->IsHttps();   // 39441 已随全局证书升级 HTTPS
+    fe->RegisterCoro("/share/{1}", Get,
+        [this, httpsMode](HttpRequestPtr req) -> Task<HttpResponsePtr> {
+            // via-regex 路由:捕获组经 getRoutingParameters() 获取
+            const auto& params = req->getRoutingParameters();
+            string token = params.empty() ? "" : params[0];
+            string host = req->getHeader("Host");
+            size_t colon = host.rfind(':');
+            if (colon != string::npos && host.find(']') == string::npos)
+                host = host.substr(0, colon);
+            // 分享目标:rest 面根路径 + /share/{token}
+            string target = m_restful->GetRootPath() + "/share/" + token;
+            string loc = (httpsMode ? "https://" : "http://") + host + ":39441" + target;
+            co_return HttpResponse::newRedirectionResponse(loc);
+        });
 
-	// 兜底路由：未匹配的请求统一走 ServeStaticFile（文件不存在则展示 404 页面）
-	router.Any("*", [httpMgr](ZmHttpdTask* task, const BYTE*, size_t) {
-		std::string uri(task->Uri() ? task->Uri() : "/");
-		return httpMgr->ServeStaticFile(task, uri);
-	});
-
-	// 用户系统:模块自注册 /login /register /reset 静态页路由
-	if (m_userModule)
-		m_userModule->RegisterHttpRoutes(httpMgr);
-	// 文件中心:自注册 /share/* 分享链接转发(302 → REST 端口)
-	if (m_fileHubModule)
-		m_fileHubModule->RegisterHttpRoutes(httpMgr);
-	// 门户模块:自注册 /portal 与 /portal/* SPA fallback
-	if (m_portalModule)
-		m_portalModule->RegisterHttpRoutes(httpMgr);
+    // ── 前端面可配置结构(业务层提供具体路径;平台层只给机制,见 zm_net_http_frontend_server) ──
+    // SPA 回落:当前 www 下无物理 /portal 目录,全部回落 portal.html(与旧 PortalModule 语义等价)
+    fe->AddSpaFallback("/portal", "html/portal.html");
+    // /doc 目录物理存在于 www 下,显式封禁(验收:不可达)
+    fe->AddDeniedPath("/doc");
 }
 
 // ============================================================================
-// WebSocket 业务回调(ServiceCenter 经 NetDock 注入,Open 前设置)
-// 当前为占位实现(回声/日志/放行);真实业务接入时在此实现并接入模块
+// JSON-RPC(39440):协议校验与信封由平台面内建(zm_net_http_jsonrpc_server),
+// 业务层只注册 method 处理器;ping 为平台内建,无需注册。
 // ============================================================================
-
-void ServicePortal::WebSocketOpenCB(ZmWebSocketSession* session)
+void ServicePortal::RegisterJsonRpcRoutes(ZmHttpJsonRpcServer* jrpc)
 {
-	DEFAULT_LOG_INFO("[WsServer] 连接建立 path={}", session->Path());
-}
+    if (!jrpc)
+        return;
 
-void ServicePortal::WebSocketCloseCB(ZmWebSocketSession* session)
-{
-	DEFAULT_LOG_INFO("[WsServer] 连接关闭 path={}", session->Path());
-}
-
-bool ServicePortal::WebSocketAuthCB(const std::string& uri)
-{
-	// TODO: 接入用户模块 token 校验(uri 可携带 ?token= 或握手头 Sec-WebSocket-Protocol)
-	(void)uri;
-	return true;   // 当前放行
-}
-
-void ServicePortal::WebSocketMessageCB(ZmWebSocketSession* session, int type,
-                                       const BYTE* data, size_t len)
-{
-	// 占位:回声文本帧(便于自测);真实业务按 type 分发 JSON 信封
-	if (type == WS_TEXT_FRAME && len > 0)
-		session->PostSendText(std::string((const char*)data, len));
+    // 演示业务注册形态:echo(原样回显 params;非平台内建)
+    jrpc->RegisterMethod("echo",
+        [](const ZMJSON& params, ZMJSON& result, ZMJSON& error) {
+            (void)error;
+            result["params"] = params;
+            return true;
+        });
 }
 
 // ============================================================================
-// JRPC 请求回调
+// RESTful 测试接口(39441 /zimo/api;本期仅测试,不对接业务)
 // ============================================================================
-
-void ServicePortal::JrpcRequestReadCB(ZmReqLoop* loop, const char* reqData)
+void ServicePortal::RegisterRestfulTestRoutes(ZmHttpRestfulServer* rest)
 {
-	ZMJSON rsp_result;
-	ZMJSON rsp_error;
-	std::string err;
+    if (!rest)
+        return;
 
-	ZMJSON reqJson = zm_json_parse(reqData, err);
-	if (!err.empty())
-	{
-		ZMJSON rsp;
-		rsp["error"]["code"]    = -32700;
-		rsp["error"]["message"] = "Parse error: " + err;
-		ZmReqLoopJrpc::ResponseJson(loop, rsp);
-		return;
-	}
+    // 根路径可自定义(service_define.h 宏默认);测试路由统一以根前缀注册
+    const string& rpcRoot = rest->GetRootPath();
+    const string rpcPing = rpcRoot + "/ping";
 
-	std::string req_method = zm_json_get_str(reqJson, "method");
-	ZMJSON req_params = reqJson["params"];
+    // 系统 ping(与旧版 RESTful 系统路由一致;基类默认 /ping 为 FR-23 全局健康检查)
+    rest->RegisterCoro(rpcPing, Get,
+        [](HttpRequestPtr req) -> Task<HttpResponsePtr> {
+            ZMJSON d;
+            d["pong"] = true;
+            co_return ZmHttpServer::JsonResponse(200, d);
+        });
 
-	if (req_method == "ping")
-	{
-		rsp_result["pong"] = true;
-	}
-	else
-	{
-		rsp_error["code"]    = -32601;
-		rsp_error["message"] = "Method not found: " + req_method;
-	}
+    // 基本 JSON / 错误包
+    rest->RegisterCoro(rpcRoot + "/test/json", Get,
+        [](HttpRequestPtr req) -> Task<HttpResponsePtr> {
+            ZMJSON d;
+            d["name"] = "ZmHttpServer";
+            d["test"] = true;
+            co_return ZmHttpServer::JsonResponse(200, d);
+        });
 
-	ZMJSON rsp;
-	if (!rsp_error.empty())
-		rsp["error"] = rsp_error;
-	else
-		rsp["result"] = rsp_result;
-	ZmReqLoopJrpc::ResponseJson(loop, rsp);
+    rest->RegisterCoro(rpcRoot + "/test/error", Get,
+        [](HttpRequestPtr req) -> Task<HttpResponsePtr> {
+            co_return ZmHttpServer::ErrorResponse(500, "internal server error");
+        });
+
+    // 路径参数 / query 参数
+    rest->RegisterCoro(rpcRoot + "/test/echo/{1}", Get,
+        [](HttpRequestPtr req) -> Task<HttpResponsePtr> {
+            const auto& params = req->getRoutingParameters();
+            ZMJSON d;
+            d["path"] = params.empty() ? "" : ZMJSON(params[0]);
+            d["q"] = req->getParameter("q");
+            d["method"] = req->getMethodString();
+            co_return ZmHttpServer::JsonResponse(200, d);
+        });
+
+    // JSONP(FR-24)
+    rest->RegisterCoro(rpcRoot + "/test/jsonp", Get,
+        [](HttpRequestPtr req) -> Task<HttpResponsePtr> {
+            ZMJSON d;
+            d["pong"] = true;
+            co_return ZmHttpServer::JsonpResponse(req, d);
+        });
+
+    // 文件传输(FR-12 方案甲 + Range;取 www/html/portal.html 作为样本)
+    rest->RegisterCoro(rpcRoot + "/test/download", Get,
+        [this](HttpRequestPtr req) -> Task<HttpResponsePtr> {
+            string www = m_netDock->GetFrontendServer()->GetDocumentRoot();
+            string full = www;
+            if (!full.empty() && full.back() != '\\' && full.back() != '/')
+                full += "\\";
+            full += "html\\portal.html";
+            co_return co_await m_restful->SendFileHybridCoro(req, full, "portal.html");
+        });
+
+    // 业务 deadline(FR-14):睡眠 3s > deadline 1s → 504 且只回一次
+    rest->RegisterCoroWithDeadline(rpcRoot + "/test/slow", Get,
+        [](HttpRequestPtr req) -> Task<HttpResponsePtr> {
+            co_await ZmHttpServer::RunOnPool<int>([]() -> int {
+                std::this_thread::sleep_for(std::chrono::seconds(3));
+                return 0;
+            });
+            ZMJSON d;
+            d["slow"] = false;
+            co_return ZmHttpServer::JsonResponse(200, d);
+        }, 1000);
+
+    // 阻塞离核演示(FR-19):PBKDF2 模拟(实质为 sleep,返回计时结果)
+    rest->RegisterCoro(rpcRoot + "/test/pool", Get,
+        [](HttpRequestPtr req) -> Task<HttpResponsePtr> {
+            auto started = std::chrono::steady_clock::now();
+            int r = co_await ZmHttpServer::RunOnPool<int>([]() -> int {
+                std::this_thread::sleep_for(std::chrono::milliseconds(300));
+                return 42;
+            });
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::steady_clock::now() - started).count();
+            ZMJSON d;
+            d["value"] = r;
+            d["usedPool"] = static_cast<int64_t>(ms) >= 0;
+            co_return ZmHttpServer::JsonResponse(200, d);
+        });
+
+    // 流式上传演示(FR-15 路径 B):路由级 10GB 上限经注册参数 maxBytes(基类自动
+    // X-File-Size 早拒);块到即写系统临时目录;上限经 attributes 取出做落盘兜底
+    rest->RegisterStreamCoro(rpcRoot + "/test/upload-stream", Post,
+        [](HttpRequestPtr req, RequestStreamPtr stream) -> Task<HttpResponsePtr> {
+            // 上限由注册参数内置(基类已做早拒);经 attributes 取出,用于落盘兜底
+            uint64_t kUploadMax = 10ULL * 1024 * 1024 * 1024;
+            try { kUploadMax = req->getAttributes()->get<uint64_t>("ZmStreamMaxBytes"); }
+            catch (...) {}
+
+            std::error_code ec;
+            string dest = (std::filesystem::temp_directory_path() /
+                           "zmsvc_upload_received.bin").string();
+            bool tooLarge = false;
+            ZmHttpUploadFileOptions opts;
+            opts.maxBytes = kUploadMax;
+            bool ok = co_await ZmHttpServer::SaveStreamToFile(
+                std::move(stream), dest, opts, &tooLarge);
+
+            ZMJSON d;
+            if (!ok)
+            {
+                d["ok"] = false;
+                d["tooLarge"] = tooLarge;
+                d["dest"] = dest;
+                co_return ZmHttpServer::JsonResponse(tooLarge ? 413 : 400, d);
+            }
+            d["ok"] = true;
+            d["size"] = static_cast<uint64_t>(std::filesystem::file_size(dest, ec));
+            co_return ZmHttpServer::JsonResponse(200, d);
+        },
+        {}, 10ULL * 1024 * 1024 * 1024);   // 路由级上限:10GB
+
+    // WebSocket echo(FR-16)
+    ZmHttpServer::WsCallbacks wsCb;
+    wsCb.onAuth = [](HttpRequestPtr req) {
+        // 本期测试:放行(业务期在此接 AuthAndTouch 会话校验)
+        return true;
+    };
+    wsCb.onOpen = [](const WebSocketConnectionPtr& conn, const HttpRequestPtr& req) {
+        conn->send("welcome");
+    };
+    wsCb.onMessage = [](const WebSocketConnectionPtr& conn, string&& msg, WebSocketMessageType type) {
+        conn->send("echo:" + msg, type);
+    };
+    wsCb.onClose = [](const WebSocketConnectionPtr& conn) {
+        DEFAULT_LOG_INFO("ws 连接关闭");
+    };
+    rest->RegisterWebSocket(rpcRoot + "/test/ws", wsCb);
 }
 
-// ============================================================================
-// RESTful 请求回调
-// ============================================================================
-
-void ServicePortal::RestfulRequestCB(ZmReqLoop* loop,
-	const BYTE* body, size_t body_len)
+void ServicePortal::RegisterRestfulCors(ZmHttpRestfulServer* rest)
 {
-	auto* task = loop->Task();
-	evhttp_cmd_type verb = task->Method();
+    if (!rest)
+        return;
 
-	std::string path(task->Path() ? task->Path() : "/");
+    // OPTIONS 预检(FR-21)
+    rest->RegisterPreRouting([](const HttpRequestPtr& req, AdviceCallback&& cb,
+                                AdviceChainCallback&& cc) {
+        if (req->method() != Options)
+        {
+            cc();
+            return;
+        }
+        ZMJSON d;
+        auto resp = ZmHttpServer::JsonResponse(200, d);
+        string origin = req->getHeader("Origin");
+        if (!origin.empty())
+        {
+            resp->addHeader("Access-Control-Allow-Origin", origin);
+            resp->addHeader("Access-Control-Allow-Credentials", "true");
+        }
+        resp->addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        resp->addHeader("Access-Control-Allow-Headers",
+                        "Origin, Content-Type, Accept, X-File-Size");
+        cb(resp);
+    });
 
-	// 剥掉根 URI 前缀（如 /zimo/api/ping → /ping），保持后续路由匹配不变
-	{
-		const char* root = ZM_HTTP_RESTFUL_SERVER_ROOT_URI;
-		size_t rootLen = strlen(root);
-		if (path.size() >= rootLen && path.compare(0, rootLen, root) == 0)
-			path = path.substr(rootLen);
-		if (path.empty()) path = "/";
-	}
-
-	auto qv = [&](const char* key, const char* def = "") {
-		return std::string(task->GetQueryValue(key, def));
-	};
-
-	// ── 用户系统:auth 分发(命中即返回)────────────────────
-	if (m_userModule && m_userModule->DispatchRest(loop, verb, path, task, body, body_len))
-		return;
-	// ── 文件中心:/portal/filehub/* 与 /share/* 分发(命中即返回;
-	//    先于门户模块,避免被 portal 404 吞掉)────────────────
-	if (m_fileHubModule && m_fileHubModule->DispatchRest(loop, verb, path, task, body, body_len))
-		return;
-	// ── 音频模块:/portal/serverAudioStream/* 分发(命中即返回;先于门户模块,
-	//    避免 /portal/serverAudioStream/* 被门户 404 吞掉)────────────────
-	if (m_audioModule && m_audioModule->DispatchRest(loop, verb, path, task, body, body_len))
-		return;
-	// ── 门户模块:/portal/* 分发(命中即返回)──────────────
-	if (m_portalModule && m_portalModule->DispatchRest(loop, verb, path, task, body, body_len))
-		return;
-
-	// ── GET /ping ────────────────────────────────────────
-	if (verb == EVHTTP_REQ_GET && path == "/ping")
-	{
-		ZmReqLoopRest::ResponseJson(loop, 200, {{"pong", true}});
-	}
-	else { ZmReqLoopRest::ResponseError(loop, 404, "Not found: " + std::string(ZmHttpUtil::VerbToString(verb)) + " " + path); }
+    // 响应附加 CORS 头(回显 Origin + 凭据)
+    rest->RegisterPreSending([](const HttpRequestPtr& req, const HttpResponsePtr& resp) {
+        if (req->method() == Options)
+            return;   // 预检响应已带
+        string origin = req->getHeader("Origin");
+        if (!origin.empty() &&
+            (req->getHeader("cookie").find("zm_session") != string::npos ||
+             resp->getStatusCode() >= k200OK))
+        {
+            resp->addHeader("Access-Control-Allow-Origin", origin);
+            resp->addHeader("Access-Control-Allow-Credentials", "true");
+        }
+    });
 }

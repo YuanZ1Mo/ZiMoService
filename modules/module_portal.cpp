@@ -1,6 +1,6 @@
 #include "module_portal.h"
 
-#include "http_server_manager.h"
+#include "http_frontend_manager.h"
 #include "module_user.h"
 
 #include "zm_util_json.h"
@@ -23,7 +23,7 @@ PortalModule::PortalModule(UserModule* userModule)
 // 路由注册:SPA history fallback(静态分支优先于 Any("*") 兜底,与注册顺序无关)
 // ============================================================================
 
-void PortalModule::RegisterHttpRoutes(HttpServerManager* httpMgr)
+void PortalModule::RegisterHttpRoutes(HttpFrontendManager* httpMgr)
 {
     if (!httpMgr)
         return;

@@ -1,6 +1,6 @@
 #include "module_user.h"
 
-#include "http_server_manager.h"
+#include "http_frontend_manager.h"
 #include "zm_net_runloop.h"   // ZmEvBaseRunLoop(每日清理事件循环线程)
 
 #include "zm_util_logger.h"
@@ -96,7 +96,7 @@ void UserModule::Shutdown()
 // 路由注册(REST 分发在 DispatchRest)
 // ============================================================================
 
-void UserModule::RegisterHttpRoutes(HttpServerManager* httpMgr)
+void UserModule::RegisterHttpRoutes(HttpFrontendManager* httpMgr)
 {
     if (!httpMgr)
         return;

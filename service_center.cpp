@@ -4,7 +4,6 @@
 #include "service_global.h"
 #include "service_portal.h"
 #include "service_define.h"
-#include "zm_net_websocket_server.h"   // ZmWebSocketSession(WS 业务回调接线)
 
 #include "zm_util_logger.h"
 
@@ -12,77 +11,53 @@
 #pragma comment(lib, "Wtsapi32.lib")
 
 // ============================================================================
-// 生命周期回调
+// 生命周期回调(相位契约,设计 §2.2/§2.4)
+//   OnStart(Phase1/2):NetDock::Init(配置三面+全局参数) → Portal::Init(注册路由) → NetDock::Open
+//   OnStop (Phase3):  Portal::Shutdown(业务收尾) → NetDock::Close(quit+join) → 释放
 // ============================================================================
 
 void ServiceCenter::OnStart(DWORD /*argc*/, TCHAR** /*argv[]*/)
 {
-    //initMessageServer();
-    //initHttpServer();
-
-    m_servicePortal = new ServicePortal();
-
+    // Phase1:构造/配置网络层(ZmHttpServer::Init 全局一次 + 三面配置)
     m_netDock = new NetDock();
-    m_netDock->Init();
+    if (!m_netDock->Init())
+    {
+        DEFAULT_LOG_ERROR("ServiceCenter::OnStart: NetDock::Init 失败");
+        return;
+    }
+    DEFAULT_LOG_INFO("OnStart: NetDock::Init 完成");
 
-    // 将 NetDock 注入 ServicePortal，供状态查询等用途
-    // 业务层在 ZmReqLoop 线程处理完成后，通过 ZmReqLoopJrpc::ResponseJson / ZmReqLoopRest 回复 helper 安全回写响应
-    m_servicePortal->SetNetDock(m_netDock);
+    // Phase1:业务层注册全部路由(测试接口)
+    m_servicePortal = new ServicePortal(m_netDock);
+    m_servicePortal->Init();
+    DEFAULT_LOG_INFO("OnStart: ServicePortal::Init(注册路由)完成");
 
-    m_netDock->SetJrpcRequestReadCB(std::bind(&ServicePortal::JrpcRequestReadCB, m_servicePortal,
-        std::placeholders::_1, std::placeholders::_2));
-    m_netDock->SetRESTfulRequestCB(std::bind(&ServicePortal::RestfulRequestCB, m_servicePortal,
-        std::placeholders::_1, std::placeholders::_2,
-        std::placeholders::_3));
-
-    // WebSocket 业务回调(RESTful 服务器,仿 SetRESTfulRequestCB;须在 Open* 之前注入)
-    ZmWebSocketCallbacks wsCallbacks;
-    wsCallbacks.onOpen    = std::bind(&ServicePortal::WebSocketOpenCB, m_servicePortal, std::placeholders::_1);
-    wsCallbacks.onClose   = std::bind(&ServicePortal::WebSocketCloseCB, m_servicePortal, std::placeholders::_1);
-    wsCallbacks.onAuth    = std::bind(&ServicePortal::WebSocketAuthCB, m_servicePortal, std::placeholders::_1);
-    wsCallbacks.onMessage = std::bind(&ServicePortal::WebSocketMessageCB, m_servicePortal,
-                                      std::placeholders::_1, std::placeholders::_2,
-                                      std::placeholders::_3, std::placeholders::_4);
-    m_netDock->SetWebSocketCallbacks(std::move(wsCallbacks));
-
-    m_netDock->OpenHttpJsonRpcServer();
-    m_netDock->OpenHttpRESTfulServer();
-    m_netDock->OpenHttpServer();
-    m_netDock->OpenBroadcastServer();
-
-    // 注册 HTTP 80 端口路由（/control → 控制中心 SPA）
-    m_servicePortal->RegisterHttpRoutes(m_netDock->GetHttpServerManager());
+    // Phase2:启动(ZmHttpServer::Open 后台跑 app().run)
+    if (!m_netDock->Open())
+    {
+        DEFAULT_LOG_ERROR("ServiceCenter::OnStart: NetDock 启动失败");
+    }
+    else
+    {
+        DEFAULT_LOG_INFO("ServiceCenter::OnStart: 三端口服务器已启动(前端{}{} / JRPC 39440 / RESTful 39441)",
+                         m_netDock->GetFrontendServer()->IsHttps() ? " 80+443 HTTPS" : " 80 HTTP", "");
+    }
 }
 
 void ServiceCenter::OnStop()
 {
-    // ★ 关闭顺序:
-    //   ① 先清除 ServicePortal 的 NetDock 引用 — 防止 NetDock 析构后
-    //      ServicePortal 通过悬空指针访问已释放的 NetDock
-    //   ② NetDock 释放 — 内部先停各 HTTP 前端(停服务器+排空 worker+停 ZmReqLoopPool),
-    //      排空在飞请求后业务回调不再被调用
-    //   ③ ServicePortal 释放 — 此时无新回调进入;远程音频发送线程通过
-    //      m_tasksGone 标记跳过已失效的 task/loop 访问
-    if (m_servicePortal)
-        m_servicePortal->SetNetDock(nullptr);
+    DEFAULT_LOG_INFO("ServiceCenter::OnStop");
 
-    // 业务层停止钩子(内部处理音频模块 task/loop 失效标记):须在 NetDock 析构前调用。
-    // NetDock 析构期间连接关闭触发 closecb,发送线程可能提前退出——标志未置位时
-    // EndStreamReply/PostToLoop 会访问正在销毁的 task/loop(实测 0xc0000005)
+    // Phase3:业务收尾先于框架关闭(FR-04:业务线程 join → 再 quit+join)
     if (m_servicePortal)
         m_servicePortal->Shutdown();
-
     if (m_netDock)
-    {
-        delete m_netDock;
-        m_netDock = nullptr;
-    }
+        m_netDock->Close();
 
-    if (m_servicePortal)
-    {
-        delete m_servicePortal;
-        m_servicePortal = nullptr;
-    }
+    delete m_servicePortal;
+    m_servicePortal = nullptr;
+    delete m_netDock;
+    m_netDock = nullptr;
 }
 
 void ServiceCenter::OnShutdown(DWORD /*evtType*/, WTSSESSION_NOTIFICATION* /*notification*/)

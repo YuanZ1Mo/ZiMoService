@@ -8,7 +8,7 @@ class ZmEvBaseRunLoop;
 /**
  * @brief 广播服务端管理器
  *
- * 包装 ZmBroadcastServer，遵循 HttpServerManager 模式。
+ * 包装 ZmBroadcastServer，遵循 HttpFrontendManager 模式。
  * 提供生命周期管理和对外的状态查询 / 消息推送接口。
  */
 class BroadcastManager

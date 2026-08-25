@@ -206,6 +206,9 @@ static const ZmDbColumn kDownloadLogsCols[] = {
  *  - 中断识别:上传预建行后关浏览器,行停在 uploading;加载 /tasks 时服务端把
  *    超过 kTaskStaleSec(90s,客户端 60s 即超时放弃)仍 uploading 的行标 failed("已中断");
  *    清理线程兜底:非终态超 30 分钟同样标记;done/failed 超 30 天删行
+ *  - pack_id:打包任务完成(打包完成/复用命中)时回填的产物行 id。打包中心产物行
+ *    task_id 是单槽(§4.1 复用/接管可覆盖),同一产物被 N 个任务下载时旧任务查不到;
+ *    每任务独立 pack_id 绑定后 zip_task_download/share_commit 永远按本任务定位
  */
 static const ZmDbColumn kTransferTasksCols[] = {
     {"id",          "INTEGER PRIMARY KEY AUTOINCREMENT"},
@@ -218,6 +221,29 @@ static const ZmDbColumn kTransferTasksCols[] = {
     {"err",         "TEXT NOT NULL DEFAULT ''"},
     {"create_time", "INTEGER NOT NULL"},
     {"update_time", "INTEGER NOT NULL"},
+    {"pack_id",     "INTEGER NOT NULL DEFAULT 0"},
+};
+
+/**
+ * 打包中心产物表(打包下载/分享打包统一记录;指纹复用,见 filehub-zip-task-design §4.1)
+ *  - 唯一约束 UNIQUE(fingerprint, user_id):同一用户同一快照唯一(并发互斥原子点);
+ *    公共空间包 user_id=0(跨用户复用),个人空间包 user_id=本人(仅本人复用)
+ */
+static const ZmDbColumn kFileHubPacksCols[] = {
+    {"id",           "INTEGER PRIMARY KEY AUTOINCREMENT"},
+    {"fingerprint",  "TEXT NOT NULL"},
+    {"user_id",      "INTEGER NOT NULL"},
+    {"task_id",      "TEXT NOT NULL"},
+    {"origin",       "TEXT NOT NULL"},
+    {"item_info",    "TEXT NOT NULL"},
+    {"name",         "TEXT NOT NULL"},
+    {"item_count",   "INTEGER NOT NULL DEFAULT 0"},
+    {"size",         "INTEGER NOT NULL DEFAULT 0"},
+    {"pack_path",    "TEXT NOT NULL"},
+    {"status",       "TEXT NOT NULL"},
+    {"create_time",  "INTEGER NOT NULL"},
+    {"access_time",  "INTEGER NOT NULL"},
+    {"err",          "TEXT NOT NULL DEFAULT ''"},
 };
 
 static const ZmDbTable kFileHubTables[] = {
@@ -226,6 +252,7 @@ static const ZmDbTable kFileHubTables[] = {
     {"shares",             kSharesCols,        (int)std::size(kSharesCols),        "", ""},
     {"share_download_logs",kDownloadLogsCols,  (int)std::size(kDownloadLogsCols),  "", ""},
     {"transfer_tasks",     kTransferTasksCols, (int)std::size(kTransferTasksCols), "", ""},
+    {"filehub_packs",      kFileHubPacksCols,  (int)std::size(kFileHubPacksCols),  "UNIQUE(fingerprint, user_id)", ""},
 };
 
 static const char* kFileHubIndexes[] = {
@@ -237,7 +264,16 @@ static const char* kFileHubIndexes[] = {
     "CREATE INDEX IF NOT EXISTS idx_shares_target ON shares(target_type, target_id)",
     "CREATE INDEX IF NOT EXISTS idx_share_download_logs_share ON share_download_logs(share_id)",
     "CREATE INDEX IF NOT EXISTS idx_share_download_logs_create ON share_download_logs(create_time)",
+    "CREATE INDEX IF NOT EXISTS idx_filehub_packs_task ON filehub_packs(task_id, user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_filehub_packs_access ON filehub_packs(access_time)",
     "CREATE INDEX IF NOT EXISTS idx_transfer_tasks_user ON transfer_tasks(user_id, id DESC)",
+    // 打包任务 pack_id 回填(存量迁移):打包中心产物行 task_id 单槽已被复用/接管覆盖的
+    // 老任务无法追溯,仅回填 task_id 匹配的 done 行;COALESCE 防子查询无匹配回填 NULL
+    // 触发 NOT NULL 约束(NOT NULL 列整体失败 → 本库初始化失败);此后每次打包完成/
+    // 复用命中实时写入
+    "UPDATE transfer_tasks SET pack_id=COALESCE((SELECT id FROM filehub_packs "
+    "WHERE task_id=transfer_tasks.task_id AND status='done'), 0) "
+    "WHERE type='zip' AND status='done' AND pack_id=0",
 };
 
 } // namespace

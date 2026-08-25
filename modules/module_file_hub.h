@@ -15,8 +15,8 @@
 #include "zm_util_sqlite.h"
 
 class UserModule;
-class HttpServerManager;
-class ZipWriter;
+class HttpFrontendManager;
+class ZipFileWriter;
 class ZmEvBaseRunLoop;
 
 /** @brief 一致性校验修复统计(ran=false = 本轮被跳过,另一轮校验已在运行) */
@@ -67,7 +67,7 @@ public:
      * @brief 自注册页面端口静态路由(service_portal.cpp 调用一行)
      *        /share/<token>:302 转发到 REST 端口 39441(分享链接免登录可达)
      */
-    void RegisterHttpRoutes(HttpServerManager* httpMgr);
+    void RegisterHttpRoutes(HttpFrontendManager* httpMgr);
 
     /** @brief 文件仓库根(exe 同级 modules\filehub) */
     std::string GetHubRoot() const;
@@ -86,6 +86,15 @@ public:
      */
     int SendFileStream(ZmReqLoop* loop, ZmHttpdTask* task, const std::string& physicalPath,
                        const char* rangeHeader);
+
+    /**
+     * @brief 混合策略发送(§3.2):文件 <2GB → 分段零拷贝(支持 Range 206 续传);
+     *        ≥2GB → SendFileStream 分块回退(SSL bev ≥2GB 实测限制)+ 水位节流。
+     * @return 200/206 已启动响应(调用方不得再回复);404 文件不存在(未回复);
+     *         416 Range 不满足(已回复)
+     */
+    int SendFileHybrid(ZmReqLoop* loop, ZmHttpdTask* task, const std::string& physicalPath,
+                       const std::string& dispName, const char* rangeHeader);
 
 private:
     // ========================================================================
@@ -213,17 +222,19 @@ private:
     void HandleTaskStatus(ZmReqLoop* loop, ZmHttpdTask* task, uint64_t opUid);
 
     // ========================================================================
-    // zip 打包下载
+    // 打包中心(后台预打包:下载打包/分享打包统一,指纹复用)
     // ========================================================================
 
     /**
-     * @brief 直链流式打包下载(导航请求即打包请求,边打边发,零临时文件)
+     * @brief POST /portal/filehub/zip_download:发起打包任务(下载)
      *        query: task_id + ids(逗号分隔,前缀 f=文件/d=目录,如 "f12,d34")
-     *        建行(packing)→ 先响应头 → 流式打包;每文件检查行状态(取消/删除即中止);
-     *        完成置 done+total_size,失败置 failed+err
+     *        校验(存在性/空间一致/个人仅本人)→ 建行(packing)→ 独立后台线程 → 立即返 {task_id}
      */
-    void HandleZipDownload(ZmReqLoop* loop, ZmHttpdTask* task, uint64_t opUid,
-                           const std::string& opAccount);
+    void HandleZipStart(ZmReqLoop* loop, ZmHttpdTask* task, uint64_t opUid,
+                        const std::string& opAccount);
+
+    /** @brief GET /portal/filehub/zip_task_download:任务 done → 产物 → 发送(Range/续传) */
+    void HandleZipTaskDownload(ZmReqLoop* loop, ZmHttpdTask* task, uint64_t opUid);
 
     // ---- 传输任务行存取 helper(内部持锁) ----
 
@@ -235,25 +246,128 @@ private:
     bool UpdateTransferTask(const std::string& taskId, uint64_t userUid, const std::string& status,
                             const std::string& err, int64_t totalSize);
 
+    /** @brief 回填任务行 pack_id(打包完成/复用命中时:本任务 → 产物行 id)。
+     *          产物行 task_id 单槽可被复用/接管覆盖(§4.1),回填后每个任务独立定位
+     *          产物,N 任务同产物互不覆盖 —— 否则 zip_task_download 按 task_id 查不到 */
+    bool SetTransferTaskPackId(const std::string& taskId, uint64_t userUid, int64_t packId);
+
     /** @brief 读取行(归属校验合一);返回 false = 行不存在或非本用户 */
     bool LoadTransferTask(const std::string& taskId, uint64_t userUid, std::string& type,
                           std::string& status, std::string& name, int64_t& totalSize,
                           std::string& err);
 
-    /** @brief 单个文件入 zip(条目名 = prefix + 文件名);skipFileIds 命中跳过(去重防御) */
-    bool ZipAddFile(ZipWriter& zip, int space, uint64_t fileId, const std::string& entryPrefix,
-                    const std::set<uint64_t>& skipFileIds);
+    // ---- 打包中心内部 ----
 
-    /** @brief 目录递归入 zip(顶层名保留);空目录写目录条目 */
-    bool ZipAddDirRecursive(ZipWriter& zip, int space, uint64_t dirId,
-                            const std::string& entryPrefix,
-                            const std::set<uint64_t>& skipFileIds);
+    /** @brief 打包任务快照(发起时构造,后台线程消费;线程自持) */
+    struct PackJob
+    {
+        std::string taskId;
+        uint64_t opUid = 0;
+        int space = -1;            ///< 0=公共(产出归属 user_id=0) / >0=个人(归属本人)
+        std::vector<std::pair<std::string, uint64_t>> ids;  ///< 顶层条目(type='file'|'dir')
+        std::string zipName;       ///< 下载/展示名(含 .zip)
+        std::string origin;        ///< 'download' | 'share'
+        std::string opAccount;
+    };
+
+    /** @brief 展开后的打包条目(清单与打包共用;relPath 为 zip 内条目路径) */
+    struct PackEntry
+    {
+        std::string type;          ///< 'file' | 'dir'
+        uint64_t id = 0;           ///< files.id / dirs.id
+        std::string relPath;       ///< zip 内路径(目录条目以 '/' 结尾)
+        int64_t size = 0;          ///< 文件字节数(dir 为 0)
+        std::string fileHash;      ///< 文件内容 SHA-256(hex64;dir 为空)
+    };
+
+    /**
+     * @brief 后台线程入口:展开 → 指纹 → 抢占/等待 → 打 zip → 行状态/产物入库
+     * @param cancelled 取消检查(每 64KB/每文件粒度);内部再补 DB 行状态检测
+     */
+    void RunPackThread(std::shared_ptr<PackJob> job);
+
+    /** @brief 展开:顶层文件优先登记,目录递归展开(文件在前、按名排序、空目录保留);
+     *          输出与旧实现一致的去重语义;取消/DB 错误返回 false */
+    bool ExpandPackItems(int space, const std::vector<std::pair<std::string, uint64_t>>& ids,
+                         std::vector<PackEntry>& out, const std::function<bool()>& cancelled);
+
+    /** @brief 内容指纹:逐文件流式 SHA-256(顺带算出 item_info JSON 与每文件哈希);
+     *          outFp = 排序后 (relPath,size,fileHash) 聚合摘要 */
+    bool ComputeFingerprint(int space, const std::vector<std::pair<std::string, uint64_t>>& ids,
+                            std::vector<PackEntry>& entries, std::string& outFp,
+                            std::string& outItemInfo, int64_t& outItemCount,
+                            const std::function<bool()>& cancelled);
+
+    /** @brief 将展开后的条目打包到 fd(取消检测;entries 内容哈希按打包期回填;
+     *          onProgress 每条目后回调已写字节,供任务行进度刷新) */
+    bool PackEntriesToFd(int fd, int space, std::vector<PackEntry>& entries,
+                         const std::function<bool()>& cancelled, uint64_t& outWritten,
+                         const std::function<void(uint64_t)>& onProgress = nullptr);
+
+    /** @brief 条目物理路径(db 实时查询);返回空 = 成功,非空 = 错误消息(条目缺失等) */
+    std::string EntryDiskPath(int space, const PackEntry& e, std::string& absPath);
+
+    // ---- 打包中心产物行 filehub_packs 存取(内部持锁) ----
+
+    /** @brief 原子抢占:INSERT(packing,含 item_info 清单/条目数);返回 1=主动作者 /
+     *          0=冲突(转等待) / -1=错误 */
+    int PacksInsert(const std::string& fp, int ownerUid, const std::string& taskId,
+                    const std::string& origin, const std::string& packPath,
+                    const std::string& itemInfo, int64_t itemCount);
+
+    /** @brief 读产物行状态(按 fp+owner 查);返回 false = 行不存在 */
+    bool PacksLoad(const std::string& fp, int ownerUid, std::string& status,
+                   std::string& packPath, std::string& name, int64_t& size,
+                   int64_t& packIdOut);
+
+    /** @brief 更新产物行状态/大小/路径/名称(终态转移;name 非空覆盖) */
+    bool PacksUpdate(const std::string& fp, int ownerUid, const std::string& status,
+                     int64_t size, const std::string& packPath, const std::string& err = "",
+                     const std::string& name = "");
+
+    /** @brief 复用命中:pack 行 task_id 重绑为本次触发任务(§4.1"可被覆盖"),
+     *          并刷新 access_time —— 否则新任务的 zip_task_download/share_commit
+     *          按 task_id 查不到产物;返回 false = 行不存在 */
+    bool PacksRebindTask(const std::string& fp, int ownerUid, const std::string& taskId);
+
+    /** @brief 原子接管 failed 行(仅 status='failed' 时生效,Changes() 判定):
+     *          多个等待者并发重试时只有一个成为主动作者;
+     *          行 task_id 同步改写为接管任务(§4.1 单槽归属跟随当前作者) */
+    bool PacksTryTakeOver(const std::string& fp, int ownerUid, const std::string& packPath,
+                          const std::string& taskId);
+
+    /** @brief 打包完成落库:以抢占期指纹定位行、回填打包期指纹(§4.3 一致性),
+     *          返回真实影响行数判定(防 0 行匹配假成功);输出完成行 id(packIdOut,
+     *          供任务行 pack_id 回填) */
+    bool PacksFinish(const std::string& fpClaimed, const std::string& fpFinal, int ownerUid,
+                     int64_t size, const std::string& packPath, const std::string& name,
+                     int64_t& packIdOut);
+
+    /** @brief 按任务行取产物:先经任务行 pack_id(① 主路径,N 任务同产物互不覆盖);
+     *          老行 pack_id=0 回退产物行 task_id 单槽定位(② 存量)。归属已由
+     *          transfer_tasks(task_id+user_id)校验;须 done;输出路径/大小/指纹/pack id */
+    bool PacksPathForTask(const std::string& taskId, uint64_t userUid, std::string& packPath,
+                          int64_t& size, std::string& fpOut, int64_t& packIdOut);
+
+    /** @brief 打包临时/产物目录(<hubRoot>\pack_temp;Open 时创建)+ 输出文件路径 */
+    std::string PackTempDir() const;
+    std::string PackTmpPath(const std::string& taskId) const;
+    std::string PackPathFromFp(int ownerUid, const std::string& fp32) const;
+
+    /** @brief 清理:过期产物(活跃分享引用除外)/.tmp 残留/孤儿产物;启动与周期调用 */
+    void PackCleanup();
+
+    /** @brief SHA-256(字符串一次性,hex64) */
+    static std::string HashHex(const std::string& in);
 
     // ========================================================================
     // 分享
     // ========================================================================
 
     void HandleShareCreate(ZmReqLoop* loop, const ZMJSON& body, uint64_t opUid,
+                           const std::string& opAccount);
+    /** @brief POST /portal/filehub/share_commit:打包完成后建分享(pack 引用),返 {url} */
+    void HandleShareCommit(ZmReqLoop* loop, const ZMJSON& body, uint64_t opUid,
                            const std::string& opAccount);
     void HandleShareAccess(ZmReqLoop* loop, ZmHttpdTask* task, const std::string& token);
     void HandleShareCancel(ZmReqLoop* loop, const ZMJSON& body, uint64_t opUid,

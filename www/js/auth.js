@@ -92,11 +92,17 @@
     /** 单文件下载直链 URL(导航即触发,浏览器/IDM 接管;task_id 供任务行记录) */
     filehubDownloadUrl: (space, fileId, taskId) =>
       `//${window.location.hostname}:39441/zimo/api/portal/filehub/download?space=${space}&file_id=${fileId}&task_id=${taskId}`,
-    /** zip 打包直链 URL(导航即打包,流式返回;ids 前缀 f=文件/d=目录) */
-    filehubZipDownloadUrl: (taskId, ids) => {
+    /** zip 打包发起(POST;服务端后台打包,立即返 {task_id,status};ids 前缀 f=文件/d=目录) */
+    filehubZipStart: (taskId, ids) => {
       const enc = ids.map((it) => (it.type === 'dir' ? 'd' : 'f') + it.id).join(',');
-      return `//${window.location.hostname}:39441/zimo/api/portal/filehub/zip_download?task_id=${taskId}&ids=${enc}`;
+      return restCall('POST', `/portal/filehub/zip_download?task_id=${taskId}&ids=${enc}`);
     },
+    /** 打包产物下载直链(任务 done 后导航;浏览器/IDM 接管,Range 续传) */
+    filehubZipTaskUrl: (taskId) =>
+      `//${window.location.hostname}:39441/zimo/api/portal/filehub/zip_task_download?task_id=${taskId}`,
+    /** 分享打包完成提交:建分享(pack 引用),返 {url} */
+    filehubShareCommit: (taskId) =>
+      restCall('POST', '/portal/filehub/share_commit', { task_id: taskId }),
     /** 文件中心管理:手动触发全空间一致性同步(磁盘为准补建/清理库记录;响应含修复统计) */
     filehubAdminSync: () => restCall('POST', '/portal/filehubAdmin/sync'),
     /** 传输任务管理(上传/下载/打包统一记录,队列历史与结果的数据源) */

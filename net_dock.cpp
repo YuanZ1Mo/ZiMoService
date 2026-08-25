@@ -1,291 +1,92 @@
 #include "net_dock.h"
 
-#include "http_jsonrpc_manager.h"
-#include "http_restful_manager.h"
-#include "http_server_manager.h"
-#include "broadcast_manager.h"
+#include <windows.h>
 
-#include "zm_net_socket.h"
-#include "zm_ssl_ctx.h"
-#include "zm_util_sys.h"
-#include "zm_util_logger.h"
-#include "zm_util_json.h"
+#include <filesystem>
 
-NetDock::NetDock()
-    : m_httpJsonRpcMgr(nullptr)
-    , m_httpRestfulMgr(nullptr)
-    , m_httpServerMgr(nullptr)
-    , m_broadcastMgr(nullptr)
-    , m_ticketRotator(nullptr)
-    , m_unInited(false)
+#include <zm_util_logger.h>
+
+using std::string;
+
+// ----------------------------------------------------------------------------
+/// exe 所在目录(www / certs 采用 exe 同级约定;服务加载 exe 同级 www)
+// ----------------------------------------------------------------------------
+string ZmExeDir()
 {
-}
-
-NetDock::~NetDock()
-{
-    UnInit();
-}
-
-void NetDock::Init()
-{
-    ZmWinSockHelper::Init();
-}
-
-void NetDock::UnInit()
-{
-    if (m_unInited)
-        return;
-    m_unInited = true;
-
-    // ① 先停 ticket 轮换器:关闭过程中不再投递密钥,避免访问正在关闭的 manager
-    if (m_ticketRotator)
+    wchar_t buf[MAX_PATH * 2] = {};
+    DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH * 2);
+    if (n == 0 || n >= MAX_PATH * 2)
     {
-        m_ticketRotator->Stop();
-        delete m_ticketRotator;
-        m_ticketRotator = nullptr;
+        DEFAULT_LOG_ERROR("GetModuleFileNameW 失败");
+        return {};
+    }
+    // ASCII 安装路径(A:\ZiMo\...);如遇非 ASCII 后续可换 UTF-8 转换
+    string path = std::filesystem::path(std::wstring(buf)).parent_path().string();
+    if (!path.empty() && path.back() != '\\' && path.back() != '/')
+        path += "\\";
+    return path;
+}
+
+bool NetDock::Init()
+{
+    // 资源路径遵循 exe 同级约定(www / certs,记忆:服务加载 exe 同级 www)
+    std::string baseDir = ZmExeDir();
+    DEFAULT_LOG_INFO("OnStart: 构造 NetDock baseDir={}", baseDir);
+
+    std::string wwwRoot = baseDir + "www";
+    std::string certFile = baseDir + "certs\\server.crt";
+    std::string keyFile = baseDir + "certs\\server.key";
+
+    // ── Phase1.1:进程级全局 Init(静态,一次):全局参数/证书/全局 advice ──
+    // 调参改这里,重启生效;每项含义/影响/特殊值见 zm_net_http_server.h Options 注释。
+    ZmHttpServer::Options opts;
+    opts.threadNum = 0;                    // 事件循环线程数:0 = 自动 = CPU 核数(吞吐核心)
+    opts.maxConnections = 8192;            // 最大连接数护栏,超限拒连;也是峰值内存上限之一
+    opts.clientMaxBodySize = 10ULL * 1024 * 1024 * 1024;  // 单请求体上限 10GB(文件上传兜底,FR-15),超限 413
+    opts.idleTimeoutSec = 90;              // keep-alive 空闲 90s 回收;调大可减少复用死连接型 NoHttpResponse
+    opts.keepaliveRequests = 0;            // 单连接累计请求上限:0 = 不限次数回收(压测不触发次数回收竞态)
+    opts.enableRequestStream = true;       // 上传流式落盘依赖,勿关
+    opts.workPoolSize = 8;                 // 业务阻塞工作池线程数(DB/磁盘/CPU 型 handler),高并发可调大
+    opts.gzip = false; opts.brotli = false;        // 动态压缩(CPU 换带宽):压测/延迟敏感保持关闭
+    opts.gzipStatic = false; opts.brotliStatic = false;  // 静态文件压缩开关(FR-18)
+    bool hasCert = std::filesystem::exists(certFile) && std::filesystem::exists(keyFile);
+    if (hasCert)
+    {
+        opts.certFile = certFile;        // 有全局证书 → 前端 443+80、JRPC/RESTful 同升 HTTPS
+        opts.keyFile = keyFile;
+    }
+    if (!ZmHttpServer::Init(opts))
+    {
+        DEFAULT_LOG_ERROR("NetDock::Init 失败:ZmHttpServer::Init 返回 false");
+        return false;
     }
 
-    // ① 独立组件先关
-    CloseBroadcastServer();
-    CloseHttpServer();
+    // ── Phase1.2:构造/配置三面(仅登记端口 + 文档根 + 根路径,不启动) ──
+    m_frontend = std::make_unique<HttpFrontendManager>();
+    m_jrpc = std::make_unique<HttpJsonRpcManager>();
+    m_restful = std::make_unique<HttpRestfulManager>();
 
-    // ② HTTP 前端软关闭（停 HTTP Server + 排空 worker + 停 ZmReqLoopPool）
-    CloseHttpJsonRpcServer();
-    CloseHttpRESTfulServer();
+    m_frontend->Init("0.0.0.0", hasCert, wwwRoot);
+    m_jrpc->Init(39440, "0.0.0.0", hasCert);
+    m_restful->Init(39441, "0.0.0.0", hasCert);
 
-    // ③ 最后 delete（析构兜底，幂等）
-    if (m_httpJsonRpcMgr)
-    {
-        delete m_httpJsonRpcMgr;
-        m_httpJsonRpcMgr = nullptr;
-    }
+    // 前端面门禁登记其他面业务根路径(自定义后仍正确拒绝外来前缀,设计 §4.4)
+    m_frontend->GetServer()->AddOtherRootPath(m_jrpc->GetServer()->GetRootPath());
+    m_frontend->GetServer()->AddOtherRootPath(m_restful->GetServer()->GetRootPath());
 
-    if (m_httpRestfulMgr)
-    {
-        delete m_httpRestfulMgr;
-        m_httpRestfulMgr = nullptr;
-    }
+    // ── Phase1.3:结构路由(门禁/SPA/重定向 advice;先于任何 Open) ──
+    m_frontend->Setup();
+    m_jrpc->Setup();
+    m_restful->Setup();
+
+    DEFAULT_LOG_INFO("NetDock::Init 完成:前端[{}{}] JRPC[39440 {}] RESTful[39441 {}]",
+                     hasCert ? "80+443 HTTPS" : "80 HTTP", "",
+                     hasCert ? "HTTPS" : "HTTP", hasCert ? "HTTPS" : "HTTP");
+    return true;
 }
 
-void NetDock::OpenHttpJsonRpcServer()
+bool NetDock::ReloadCertificates()
 {
-    if (!m_httpJsonRpcMgr)
-    {
-        m_httpJsonRpcMgr = new HttpJsonRpcManager();
-        // 业务回调须在 Open() 前注入（Open 内部经 ZmReqLoopPool投递后才会被调用）
-        m_httpJsonRpcMgr->SetJrpcRequestReadCB(m_jrpcRequestReadCB);
-        if (!m_httpJsonRpcMgr->Open())
-        {
-            DEFAULT_LOG_ERROR("OpenHttpJsonRpcServer failed: HttpJsonRpcManager::Open() returned false");
-            delete m_httpJsonRpcMgr;
-            m_httpJsonRpcMgr = nullptr;
-        }
-        else
-        {
-            // HTTPS 模式:注入共享 ticket 密钥,启动/轮换统一经事件循环线程投递
-            // (HTTP 模式零开销,不创建 rotator;避免主线程与 loop 线程并发写 SSL_CTX)
-            if (m_httpJsonRpcMgr->IsOpen() && m_httpJsonRpcMgr->IsHttps())
-            {
-                ZmTicketKeyRotator* rotator = EnsureTicketRotator();
-                if (rotator)
-                    m_httpJsonRpcMgr->PostSetTicketKeys(
-                        rotator->GetTicketManager().Key(), ZM_TICKET_KEYS_LEN);
-            }
-        }
-    }
+    // 证书为进程级全局,热重载是基类静态能力(不依赖任何服务器面实例)
+    return ZmHttpServer::ReloadCertificates();
 }
-
-void NetDock::CloseHttpJsonRpcServer()
-{
-    // ★ 仅执行软关闭（停 HTTP Server + 排空 worker + 停 ZmReqLoopPool），不 delete 对象
-    // delete 推迟到 UnInit() 统一执行
-    if (m_httpJsonRpcMgr)
-    {
-        m_httpJsonRpcMgr->Close();
-    }
-}
-
-void NetDock::OpenHttpRESTfulServer()
-{
-    if (!m_httpRestfulMgr)
-    {
-        m_httpRestfulMgr = new HttpRestfulManager();
-        // 业务回调须在 Open() 前注入（Open 内部经 ZmReqLoopPool投递后才会被调用）
-        m_httpRestfulMgr->SetRESTfulRequestCB(m_restfulRequestCB);
-        // WebSocket 业务回调(HTTP 与 RESTful 服务器共用,同上 Open 前注入)
-        m_httpRestfulMgr->SetWebSocketCallbacks(m_websocketCallbacks);
-        if (!m_httpRestfulMgr->Open())
-        {
-            DEFAULT_LOG_ERROR("OpenHttpRESTfulServer failed: HttpRestfulManager::Open() returned false");
-            delete m_httpRestfulMgr;
-            m_httpRestfulMgr = nullptr;
-        }
-        else
-        {
-            // HTTPS 模式:注入共享 ticket 密钥,启动/轮换统一经事件循环线程投递
-            // (HTTP 模式零开销,不创建 rotator;避免主线程与 loop 线程并发写 SSL_CTX)
-            if (m_httpRestfulMgr->IsOpen() && m_httpRestfulMgr->IsHttps())
-            {
-                ZmTicketKeyRotator* rotator = EnsureTicketRotator();
-                if (rotator)
-                    m_httpRestfulMgr->PostSetTicketKeys(
-                        rotator->GetTicketManager().Key(), ZM_TICKET_KEYS_LEN);
-            }
-        }
-    }
-}
-
-void NetDock::CloseHttpRESTfulServer()
-{
-    // ★ 仅执行软关闭（停 HTTP Server + 排空 worker + 停 ZmReqLoopPool），不 delete 对象
-    // delete 推迟到 UnInit() 统一执行
-    if (m_httpRestfulMgr)
-    {
-        m_httpRestfulMgr->Close();
-    }
-}
-
-bool NetDock::IsRESTfulHttpOpen() const
-{
-    return m_httpRestfulMgr && m_httpRestfulMgr->IsOpen();
-}
-
-void NetDock::OpenHttpServer()
-{
-    if (!m_httpServerMgr)
-    {
-        m_httpServerMgr = new HttpServerManager();
-        m_httpServerMgr->Open();
-        // HTTPS 模式:注入共享 ticket 密钥,启动/轮换统一经事件循环线程投递
-        // (HTTP 模式零开销,不创建 rotator;避免主线程与 loop 线程并发写 SSL_CTX)
-        if (m_httpServerMgr->IsOpen() && m_httpServerMgr->IsHttps())
-        {
-            ZmTicketKeyRotator* rotator = EnsureTicketRotator();
-            if (rotator)
-                m_httpServerMgr->PostSetTicketKeys(
-                    rotator->GetTicketManager().Key(), ZM_TICKET_KEYS_LEN);
-        }
-    }
-}
-
-void NetDock::CloseHttpServer()
-{
-    if (m_httpServerMgr)
-    {
-        m_httpServerMgr->Close();
-        delete m_httpServerMgr;
-        m_httpServerMgr = nullptr;
-    }
-}
-
-// ============================================================================
-// TLS session ticket 轮换器(方案 B:懒创建,所有 HTTPS 服务器共享一把密钥)
-// ============================================================================
-
-ZmTicketKeyRotator* NetDock::EnsureTicketRotator()
-{
-    if (m_ticketRotator)
-        return m_ticketRotator;
-
-    // 从 exe 路径推导证书文件(certs/ 与 exe 同目录,与 HttpServerManager::Open 一致)
-    char exePath[MAX_PATH];
-    ZmSystem::GetModuleDir(exePath, MAX_PATH);
-    std::string ticketFile = std::string(exePath) + "\\certs\\ticket.key";
-
-    m_ticketRotator = new ZmTicketKeyRotator();
-    if (!m_ticketRotator->Init(ticketFile.c_str()))
-    {
-        // 初始化失败:回退 OpenSSL 内部随机密钥。
-        // 不返回 rotator,避免把全零密钥安装到各服务器
-        DEFAULT_LOG_ERROR("TicketRotator 初始化失败,回退 OpenSSL 内部随机密钥(恢复不跨重启)");
-        delete m_ticketRotator;
-        m_ticketRotator = nullptr;
-        return nullptr;
-    }
-    if (!m_ticketRotator->Start(12 * 3600, std::bind(&NetDock::OnTicketRotated, this)))
-    {
-        DEFAULT_LOG_ERROR("TicketRotator 启动失败,禁用定时轮换");
-    }
-    else
-    {
-        DEFAULT_LOG_INFO("TicketRotator 已启用:密钥文件 {},轮换间隔 12h", ticketFile);
-    }
-
-    return m_ticketRotator;
-}
-
-void NetDock::OnTicketRotated()
-{
-    // 在 rotator 线程执行;经 event_base_once 投递到各服务器事件循环线程
-    const unsigned char* key = m_ticketRotator->GetTicketManager().Key();
-    if (m_httpServerMgr)    m_httpServerMgr->PostSetTicketKeys(key, ZM_TICKET_KEYS_LEN);
-    if (m_httpJsonRpcMgr)   m_httpJsonRpcMgr->PostSetTicketKeys(key, ZM_TICKET_KEYS_LEN);
-    if (m_httpRestfulMgr)   m_httpRestfulMgr->PostSetTicketKeys(key, ZM_TICKET_KEYS_LEN);
-
-    DEFAULT_LOG_INFO("TLS session ticket 密钥已轮换,已投递到各 HTTPS 服务器");
-}
-
-ZmHttpRouter& NetDock::GetHttpRouter()
-{
-    return m_httpServerMgr->GetRouter();
-}
-
-HttpServerManager* NetDock::GetHttpServerManager()
-{
-    return m_httpServerMgr;
-}
-
-bool NetDock::IsHttpOpen() const
-{
-    return m_httpServerMgr && m_httpServerMgr->IsOpen();
-}
-
-bool NetDock::IsJrpcHttpOpen() const
-{
-    return m_httpJsonRpcMgr && m_httpJsonRpcMgr->IsOpen();
-}
-
-void NetDock::SetJrpcRequestReadCB(ZmReqLoopJrpcRequestCB cb)
-{
-    m_jrpcRequestReadCB = cb;
-}
-
-void NetDock::SetRESTfulRequestCB(ZmReqLoopRestfulRequestCB cb)
-{
-    m_restfulRequestCB = cb;
-}
-
-void NetDock::SetWebSocketCallbacks(ZmWebSocketCallbacks cb)
-{
-    m_websocketCallbacks = std::move(cb);
-}
-
-void NetDock::OpenBroadcastServer()
-{
-    if (!m_broadcastMgr)
-    {
-        m_broadcastMgr = new BroadcastManager();
-        m_broadcastMgr->Open();
-    }
-}
-
-void NetDock::CloseBroadcastServer()
-{
-    if (m_broadcastMgr)
-    {
-        m_broadcastMgr->Close();
-        delete m_broadcastMgr;
-        m_broadcastMgr = nullptr;
-    }
-}
-
-BroadcastManager* NetDock::GetBroadcastManager()
-{
-    return m_broadcastMgr;
-}
-
-bool NetDock::IsBroadcastOpen() const
-{
-    return m_broadcastMgr && m_broadcastMgr->IsOpen();
-}
-

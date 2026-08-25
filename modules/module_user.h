@@ -13,7 +13,7 @@
 
 #include "zm_util_sqlite.h"
 
-class HttpServerManager;
+class HttpFrontendManager;
 class ZmEvBaseRunLoop;   // 后台周期维护事件循环(成员指针,前向声明)
 
 // ============================================================================
@@ -92,7 +92,7 @@ public:
     void Shutdown();
 
     /** @brief 模块自注册静态页路由 /login /register /reset(service_portal.cpp 调用一行) */
-    void RegisterHttpRoutes(HttpServerManager* httpMgr);
+    void RegisterHttpRoutes(HttpFrontendManager* httpMgr);
 
     /**
      * @brief REST 分发入口(service_portal.cpp 的 else 链最前端调用)
