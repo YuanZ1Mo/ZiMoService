@@ -31,11 +31,10 @@ bool NetDock::Init()
 {
     // 资源路径遵循 exe 同级约定(www / certs,记忆:服务加载 exe 同级 www)
     std::string baseDir = ZmExeDir();
-    DEFAULT_LOG_INFO("OnStart: 构造 NetDock baseDir={}", baseDir);
-
     std::string wwwRoot = baseDir + "www";
     std::string certFile = baseDir + "certs\\server.crt";
     std::string keyFile = baseDir + "certs\\server.key";
+    DEFAULT_LOG_INFO("OnStart: 构造 NetDock baseDir={}", baseDir);
 
     // ── Phase1.1:进程级全局 Init(静态,一次):全局参数/证书/全局 advice ──
     // 调参改这里,重启生效;每项含义/影响/特殊值见 zm_net_http_server.h Options 注释。

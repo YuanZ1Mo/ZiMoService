@@ -5,7 +5,7 @@
 > 需求:基于 `2026-08-30-drogon-httpserver-requirements.md`(25 条 FR + D1\~D7)
 > 依赖:Drogon 1.9.13(头文件 + 静态库在 `ZiMoPublic\drogon`)、`ZmThreadPool`(`zm_util_thread.h`)、Drogon ORM
 > 修订:v2.6 生命周期重构(用户决策,对齐 drogon 单次 run 硬约束):实例级 Open/Close/BootCoordinator 引用计数 → **进程级静态状态机** `Uninit→Initialized→Opened→Closed`;全局参数收敛进 `ZmHttpServer::Options` 经 `Init(opts)` 一次性注入;全局 advice(/ping/访问日志/JSONP)从"首个 Open 经 once_flag"改为 `Init` 内注册;派生面收敛为"端口+路由登记"(删除实例 Open/Close/IsOpen);三个 Manager 与 NetDock 生命周期委托同步删除。运行期唯一可热更新能力:证书 `reloadSSLFiles()`;不支持运行期单端口启停/热重启(重启须进程级)。
-> 修订:v2.1 评审联动:①SPA 回落改用 advice(setImplicitPage 语义为"目录解析",非 SPA 回落,头文件核实);②补四个 advice 挂点到基类接口;③新增 per-port 门禁纪律(全局路由表下恢复旧"端口隔离"行为);④AccessLogger 经 `loadConfigJson` 注入最小配置;⑤方案乙改为定时器链驱动;⑥deadline 定时器放连接所属 loop;⑦AddFilter/RegisterCoro 顺序赋约束;⑧JsonpResponse 改收 req;⑨命名统一 DrogonHttpServer;⑩宿主分层(NetDock/Manager/Portal)并入 §2.5(本期交付 = 基类 + 三面 + 测试接口,业务路由延后);v2 并入原 network-layer-design 的三面细节并修正其过时说法;v1.1 根据代码评审修正(共享 app() 协调、水位机制、证书热加载、Range 解析、Filter 适配、WS onAuth、去重纪律、基类形态);v2.4(还原恢复)流式接收定版:`RegisterStreamCoro` 增 `maxBytes` 路由级上限(X-File-Size 早拒内置 + attributes 透传),`SaveStreamToFile` 落盘助手;全局上传上限 4GB→10GB(FR-03/FR-15);FR-17 访问日志 = PreRouting/PostHandling advice(`PUBLIC_LOG_*` 单行),弃 AccessLogger 插件;v2.5 JSONP 改自动识别型:全局 PreSending advice(GET + 白名单 callback + JSON 响应 → 自动包装),白名单抽 `IsValidJsonpCallback` 复用,开关 `SetAutoJsonp`(默认开),`JsonpResponse` 保留显式通道;v2.6 一对象一端口:`AddListener` 单次设置(重复报错忽略),`GetPorts/GetBindIps` 删、改 `GetPort()/GetBindIp()`,`IsHttps()`=监听 useSSL;前端 HTTPS 模式拆两实例(ZmHttpFrontendServer redirectOnly);Manager 持 primary+redirect;门禁按单端口比较
+> 修订:v2.1 评审联动:①SPA 回落改用 advice(setImplicitPage 语义为"目录解析",非 SPA 回落,头文件核实);②补四个 advice 挂点到基类接口;③新增 per-port 门禁纪律(全局路由表下恢复旧"端口隔离"行为);④AccessLogger 经 `loadConfigJson` 注入最小配置;⑤方案乙改为定时器链驱动;⑥deadline 定时器放连接所属 loop;⑦AddFilter/RegisterCoro 顺序赋约束;⑧JsonpResponse 改收 req;⑨命名统一 DrogonHttpServer;⑩宿主分层(NetDock/Manager/Portal)并入 §2.5(本期交付 = 基类 + 三面 + 测试接口,业务路由延后);v2 并入原 network-layer-design 的三面细节并修正其过时说法;v1.1 根据代码评审修正(共享 app() 协调、水位机制、证书热加载、Range 解析、Filter 适配、WS onAuth、去重纪律、基类形态);v2.4(还原恢复)流式接收定版:`RegisterStreamCoro` 增 `maxBytes` 路由级上限(X-File-Size 早拒内置 + attributes 透传),`SaveStreamToFile` 落盘助手;全局上传上限 4GB→10GB(FR-03/FR-15);FR-17 访问日志 = PreRouting/PostHandling advice(`PUBLIC_LOG_*` 单行),弃 AccessLogger 插件;v2.5 JSONP 改自动识别型:全局 PreSending advice(GET + 白名单 callback + JSON 响应 → 自动包装),白名单抽 `IsValidJsonpCallback` 复用,开关 `SetAutoJsonp`(默认开),`JsonpResponse` 保留显式通道;v2.6 一对象一端口:`AddListener` 单次设置(重复报错忽略),`GetPorts/GetBindIps` 删、改 `GetPort()/GetBindIp()`,`IsHttps()`=监听 useSSL;前端 HTTPS 模式拆两实例(ZmHttpFrontendServer redirectOnly);Manager 持 primary+redirect;门禁按单端口比较;v2.7 关闭语义修正:FR-04"在飞请求 graceful 收尾"边界——drogon 无 drain API,`quit()` 后挂起协程不再调度,在飞 HTTP 由业务层保障(守护线程 join/断点),验收清单同步
 
 ***
 
@@ -73,6 +73,8 @@ static bool ZmHttpServer::IsOpened();
 * **一对象一端口(v2.6)**:每个服务器面对象仅绑定一个监听——`AddListener` 单次设置(重复设置报错忽略);查询 `GetPort()`(未设置=0)、`GetBindIp()`;`IsHttps()` = 本面监听 useSSL;多端口面用多个实例(前端 HTTPS 模式 = 443 完整实例 + 80 重定向实例)。
 
 * 关闭顺序(FR-04):业务线程先 join → 最后 `ZmHttpServer::Close()` 触发 `quit()`+join。
+
+* **在飞 HTTP 语义(v2.7 修正,drogon 无 graceful-drain API)**:`quit()` 后事件循环不再调度回调——挂起协程(await RunOnPool/上传/打包流)直接丢弃,`RunOnPool` 工作池不 join(进程退出中止)。凡业务上需"跑完"的工作须走**业务层自保障**:守护线程 `Shutdown()` join,或可中断+断点(上传落盘临时文件后 rename);框架只保证"停得干净"(无崩溃/UAF/线程 join)。
 
 * **运行期不可改配置**:drogon 配置型 setter 运行期不可改(多数带 running 守卫/不生效),故全部经 `Init(opts)` 启动前注入;运行期唯一可热更新 = 证书 `ReloadCertificates()`。
 
@@ -677,7 +679,7 @@ bool RequireModule(const HttpRequestPtr& req, HttpResponsePtr& resp,
 5. 鉴权:会话失效 401、模块未授权 403、`zm_session` cookie 读写一致
 6. 线程纪律:handler 内无阻塞操作(代码评审);文件中心/音频/登录在高并发下无事件循环卡顿
 7. 生命周期:Stop 无崩溃、无泄漏;证书热重载生效
-8. 关闭顺序:在飞请求 graceful 收尾,无 UAF/崩溃(回归现内存纪律)
+8. 关闭顺序:业务线程先 join;在飞 HTTP 由业务层保障(守护线程/断点),无 UAF/崩溃(回归现内存纪律)
 9. JSONP:带 `callback` 返回 JS 包装、非法名拒绝、无 callback 走常规 JSON
 10. 派生:三服务器面独立实例化/注册/状态查询,共享 app() 不串扰
 

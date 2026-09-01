@@ -12,6 +12,7 @@
 #include "zm_util_json.h"   // ZMJSON
 
 #include <chrono>
+#include <filesystem>
 #include <thread>
 
 #include "zm_util_logger.h"
@@ -49,8 +50,7 @@ void ServicePortal::Init()
     RegisterJsonRpcRoutes(m_jrpc);
     DEFAULT_LOG_INFO("Portal::Init REST");
     RegisterRestfulTestRoutes(m_restful);
-    // 预检+CORS 挂在 RESTful 面(业务层显式,FR-21;设计 §11.4)
-    DEFAULT_LOG_INFO("Portal::Init CORS");
+    DEFAULT_LOG_INFO("Portal::Init CORS");    // 预检+CORS 挂在 RESTful 面(业务层显式,FR-21;设计 §11.4)
     RegisterRestfulCors(m_restful);
     DEFAULT_LOG_INFO("Portal::Init 完成");
 }
@@ -71,20 +71,25 @@ bool ServicePortal::BroadcastMessage(const string& topic, const string& content,
 // ============================================================================
 // 前端页面路由(80/443;页面别名按旧迁移表,设计 §11.2)
 // ============================================================================
-namespace
-{
+
 /// 由文档根 + 相对路径构造静态页响应
-ZmHttpCoroHandler MakePageHandler(const string& www, const string& relPath)
+/// 经 SendFileCoro(方案甲):自动获得 Range/206/416 与 Accept-Ranges(页面大图/
+/// JS 断点续传、视频 seek 收益);缺页仍走自定义 404 页(HTML,保持前端语义),
+/// 区别于 SendFileCoro 自身的 JSON 404 错误包。
+ZmHttpCoroHandler MakePageHandler(ZmHttpFrontendServer* fe, const string& www,
+                                 const string& relPath)
 {
-    return [www, relPath](HttpRequestPtr req) -> Task<HttpResponsePtr> {
+    return [fe, www, relPath](HttpRequestPtr req) -> Task<HttpResponsePtr> {
         string full = www;
         if (!full.empty() && full.back() != '\\' && full.back() != '/')
             full += "\\";
         full += relPath;
-        co_return HttpResponse::newFileResponse(full);
+        // 缺页:走全局 setCustom404Page 的 HTML 404 页(而非 SendFileCoro 的 JSON 404)
+        if (!std::filesystem::exists(full))
+            co_return HttpResponse::newNotFoundResponse();
+        co_return co_await fe->SendFileCoro(req, full);
     };
 }
-}  // namespace
 
 void ServicePortal::RegisterFrontendRoutes(ZmHttpFrontendServer* fe)
 {
@@ -93,12 +98,12 @@ void ServicePortal::RegisterFrontendRoutes(ZmHttpFrontendServer* fe)
     const string& www = fe->GetDocumentRoot();
 
     // 逐条页面别名(旧前端路由表)
-    fe->RegisterCoro("/", Get, MakePageHandler(www, "html\\index.html"));
-    fe->RegisterCoro("/login", Get, MakePageHandler(www, "html\\login.html"));
-    fe->RegisterCoro("/register", Get, MakePageHandler(www, "html\\register.html"));
-    fe->RegisterCoro("/reset", Get, MakePageHandler(www, "html\\reset.html"));
-    fe->RegisterCoro("/force-reset", Get, MakePageHandler(www, "html\\force-reset.html"));
-    fe->RegisterCoro("/404", Get, MakePageHandler(www, "html\\404.html"));
+    fe->RegisterCoro("/", Get, MakePageHandler(fe, www, "html\\index.html"));
+    fe->RegisterCoro("/login", Get, MakePageHandler(fe, www, "html\\login.html"));
+    fe->RegisterCoro("/register", Get, MakePageHandler(fe, www, "html\\register.html"));
+    fe->RegisterCoro("/reset", Get, MakePageHandler(fe, www, "html\\reset.html"));
+    fe->RegisterCoro("/force-reset", Get, MakePageHandler(fe, www, "html\\force-reset.html"));
+    fe->RegisterCoro("/404", Get, MakePageHandler(fe, www, "html\\404.html"));
 
     // /share/{token} 302 → RESTful 端口分享页(设计 §11.2;目标 URL 业务期再核定)
     const bool httpsMode = fe->IsHttps();
@@ -152,10 +157,9 @@ void ServicePortal::RegisterRestfulTestRoutes(ZmHttpRestfulServer* rest)
 
     // 根路径可自定义(service_define.h 宏默认);测试路由统一以根前缀注册
     const string& rpcRoot = rest->GetRootPath();
-    const string rpcPing = rpcRoot + "/ping";
 
     // 系统 ping(与旧版 RESTful 系统路由一致;基类默认 /ping 为 FR-23 全局健康检查)
-    rest->RegisterCoro(rpcPing, Get,
+    rest->RegisterCoro(rpcRoot + "/ping", Get,
         [](HttpRequestPtr req) -> Task<HttpResponsePtr> {
             ZMJSON d;
             d["pong"] = true;
@@ -204,6 +208,29 @@ void ServicePortal::RegisterRestfulTestRoutes(ZmHttpRestfulServer* rest)
                 full += "\\";
             full += "html\\portal.html";
             co_return co_await m_restful->SendFileHybridCoro(req, full, "portal.html");
+        });
+
+    // 文件传输(FR-12 方案乙 + Range;样本 = www/__selftest/blob.bin(测试路由,业务期替换))
+    rest->RegisterCoro(rpcRoot + "/test/download-stream", Get,
+        [this](HttpRequestPtr req) -> Task<HttpResponsePtr> {
+            string www = m_netDock->GetFrontendServer()->GetDocumentRoot();
+            string full = www;
+            if (!full.empty() && full.back() != '\\' && full.back() != '/')
+                full += "\\";
+            full += "__selftest\\blob.bin";
+            ZmHttpSendFileOptions opts;
+            opts.interBlockMs = 5;   // 测试:块间快速推进
+            co_return co_await m_restful->SendFileStreamCoro(req, full, "blob.bin", opts);
+        });
+
+    // 文件传输(FR-12 方案乙验证):exe 同级 modules\filehub\0\ 下的 3.52GB iso
+    // (≥2GB 阈值 → SendFileStreamCoro,HttpIoPool 分块流式;临时测试口,验证后删)
+    rest->RegisterCoro(rpcRoot + "/test/download-iso", Get,
+        [this](HttpRequestPtr req) -> Task<HttpResponsePtr> {
+            string full = ZmExeDir() + "modules\\filehub\\0\\"
+                          "cn_office_professional_plus_2019_x86_x64_dvd_5e5be643.iso";
+            co_return co_await m_restful->SendFileHybridCoro(
+                req, full, "cn_office_professional_plus_2019_x86_x64_dvd_5e5be643.iso");
         });
 
     // 业务 deadline(FR-14):睡眠 3s > deadline 1s → 504 且只回一次
