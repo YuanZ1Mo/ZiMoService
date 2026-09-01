@@ -5,7 +5,7 @@
 > 需求:基于 `2026-08-30-drogon-httpserver-requirements.md`(25 条 FR + D1\~D7)
 > 依赖:Drogon 1.9.13(头文件 + 静态库在 `ZiMoPublic\drogon`)、`ZmThreadPool`(`zm_util_thread.h`)、Drogon ORM
 > 修订:v2.6 生命周期重构(用户决策,对齐 drogon 单次 run 硬约束):实例级 Open/Close/BootCoordinator 引用计数 → **进程级静态状态机** `Uninit→Initialized→Opened→Closed`;全局参数收敛进 `ZmHttpServer::Options` 经 `Init(opts)` 一次性注入;全局 advice(/ping/访问日志/JSONP)从"首个 Open 经 once_flag"改为 `Init` 内注册;派生面收敛为"端口+路由登记"(删除实例 Open/Close/IsOpen);三个 Manager 与 NetDock 生命周期委托同步删除。运行期唯一可热更新能力:证书 `reloadSSLFiles()`;不支持运行期单端口启停/热重启(重启须进程级)。
-> 修订:v2.1 评审联动:①SPA 回落改用 advice(setImplicitPage 语义为"目录解析",非 SPA 回落,头文件核实);②补四个 advice 挂点到基类接口;③新增 per-port 门禁纪律(全局路由表下恢复旧"端口隔离"行为);④AccessLogger 经 `loadConfigJson` 注入最小配置;⑤方案乙改为定时器链驱动;⑥deadline 定时器放连接所属 loop;⑦AddFilter/RegisterCoro 顺序赋约束;⑧JsonpResponse 改收 req;⑨命名统一 DrogonHttpServer;⑩宿主分层(NetDock/Manager/Portal)并入 §2.5(本期交付 = 基类 + 三面 + 测试接口,业务路由延后);v2 并入原 network-layer-design 的三面细节并修正其过时说法;v1.1 根据代码评审修正(共享 app() 协调、水位机制、证书热加载、Range 解析、Filter 适配、WS onAuth、去重纪律、基类形态);v2.4(还原恢复)流式接收定版:`RegisterStreamCoro` 增 `maxBytes` 路由级上限(X-File-Size 早拒内置 + attributes 透传),`SaveStreamToFile` 落盘助手;全局上传上限 4GB→10GB(FR-03/FR-15);FR-17 访问日志 = PreRouting/PostHandling advice(`PUBLIC_LOG_*` 单行),弃 AccessLogger 插件;v2.5 JSONP 改自动识别型:全局 PreSending advice(GET + 白名单 callback + JSON 响应 → 自动包装),白名单抽 `IsValidJsonpCallback` 复用,开关 `SetAutoJsonp`(默认开),`JsonpResponse` 保留显式通道
+> 修订:v2.1 评审联动:①SPA 回落改用 advice(setImplicitPage 语义为"目录解析",非 SPA 回落,头文件核实);②补四个 advice 挂点到基类接口;③新增 per-port 门禁纪律(全局路由表下恢复旧"端口隔离"行为);④AccessLogger 经 `loadConfigJson` 注入最小配置;⑤方案乙改为定时器链驱动;⑥deadline 定时器放连接所属 loop;⑦AddFilter/RegisterCoro 顺序赋约束;⑧JsonpResponse 改收 req;⑨命名统一 DrogonHttpServer;⑩宿主分层(NetDock/Manager/Portal)并入 §2.5(本期交付 = 基类 + 三面 + 测试接口,业务路由延后);v2 并入原 network-layer-design 的三面细节并修正其过时说法;v1.1 根据代码评审修正(共享 app() 协调、水位机制、证书热加载、Range 解析、Filter 适配、WS onAuth、去重纪律、基类形态);v2.4(还原恢复)流式接收定版:`RegisterStreamCoro` 增 `maxBytes` 路由级上限(X-File-Size 早拒内置 + attributes 透传),`SaveStreamToFile` 落盘助手;全局上传上限 4GB→10GB(FR-03/FR-15);FR-17 访问日志 = PreRouting/PostHandling advice(`PUBLIC_LOG_*` 单行),弃 AccessLogger 插件;v2.5 JSONP 改自动识别型:全局 PreSending advice(GET + 白名单 callback + JSON 响应 → 自动包装),白名单抽 `IsValidJsonpCallback` 复用,开关 `SetAutoJsonp`(默认开),`JsonpResponse` 保留显式通道;v2.6 一对象一端口:`AddListener` 单次设置(重复报错忽略),`GetPorts/GetBindIps` 删、改 `GetPort()/GetBindIp()`,`IsHttps()`=监听 useSSL;前端 HTTPS 模式拆两实例(ZmHttpFrontendServer redirectOnly);Manager 持 primary+redirect;门禁按单端口比较
 
 ***
 
@@ -70,7 +70,7 @@ static bool ZmHttpServer::IsOpened();
 
 * **约束**:`AddListener` 必须在 `Open()` 前调用(Open 后调用被拒绝并报错);`Init` 只能一次;`Open` 前必须 `Init` 且至少登记一个监听;`Close` 后为终态,不能再 `Open`/`Init`(drogon `run()` 单次硬约束,重启须进程级)。
 
-* `GetPorts()` 返回本面已注册监听端口;`IsHttps()` 返回本面是否含 443 监听。
+* **一对象一端口(v2.6)**:每个服务器面对象仅绑定一个监听——`AddListener` 单次设置(重复设置报错忽略);查询 `GetPort()`(未设置=0)、`GetBindIp()`;`IsHttps()` = 本面监听 useSSL;多端口面用多个实例(前端 HTTPS 模式 = 443 完整实例 + 80 重定向实例)。
 
 * 关闭顺序(FR-04):业务线程先 join → 最后 `ZmHttpServer::Close()` 触发 `quit()`+join。
 
@@ -168,10 +168,12 @@ public:
     static bool IsInitialized();
     static bool IsOpened();
 
-    bool IsHttps() const;                    // 本面监听含 443
-    std::vector<uint16_t> GetPorts() const;  // 本面监听端口
+    bool IsHttps() const;                    // 本面监听 useSSL(一对象一端口,v2.6)
+    uint16_t GetPort() const;                // 本面监听端口(未设置 = 0)
+    std::string GetBindIp() const;           // 本面绑定地址(0.0.0.0/:: = 通配)
 
-    // ── 监听配置(FR-02,per-listener SSL 指 useSSL/useOldTLS,证书全局经 Init;必须先于 Open) ──
+    // ── 监听配置(FR-02,per-listener SSL 指 useSSL/useOldTLS,证书全局经 Init;必须先于 Open)
+    //   一对象一端口(v2.6):仅允许设置一次,重复设置报错忽略;多端口面用多个实例 ──
     virtual void AddListener(uint16_t port, bool useSSL = false,
                              const std::string& ip = "0.0.0.0",
                              bool useOldTLS = false,
@@ -522,7 +524,8 @@ drogon::Task<T> DrogonHttpServer::RunOnPool(std::function<T()> fn)
 
 三者共享 `app()`;路由靠路径前缀区分;全局项(/ping/访问日志 advice/JSONP)由 `ZmHttpServer::Init` 一次性注册(去重纪律 §2.3)。
 
-### 11.2 前端服务器 `HttpFrontendServer`(80/443)
+### 11.2 前端服务器 `ZmHttpFrontendServer`(80/443)
+> **v2.6 一对象一端口**:HTTPS 模式下前端由**两个实例**构成——`ZmHttpFrontendServer(redirectOnly=false)` 挂 443(完整面:静态/SPA/404/门禁)+ `ZmHttpFrontendServer(redirectOnly=true)` 挂 80(**仅** 80→443 重定向 advice,FR-22);无证书模式仅一个完整面(80,HTTP)。SPA 回落/封禁前缀由业务层 `AddSpaFallback/AddDeniedPath` 配置,平台不硬编码页面路径。
 
 **静态文件**:`SetDocumentRoot(wwwRoot)` 内置防目录穿越、MIME、Range;Cache-Control 语义保留:HTML 不缓存、JS/CSS 靠 `?v=` 破缓存(经 `SetStaticFileHeaders` 或页面别名 handler 按扩展名设置,见旧 [SendFile](file:///a:/ZiMo/ZiMoService/http_server_manager.cpp#L238-L257))。
 

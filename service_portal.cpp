@@ -101,7 +101,7 @@ void ServicePortal::RegisterFrontendRoutes(ZmHttpFrontendServer* fe)
     fe->RegisterCoro("/404", Get, MakePageHandler(www, "html\\404.html"));
 
     // /share/{token} 302 → RESTful 端口分享页(设计 §11.2;目标 URL 业务期再核定)
-    const bool httpsMode = fe->IsHttps();   // 39441 已随全局证书升级 HTTPS
+    const bool httpsMode = fe->IsHttps();
     fe->RegisterCoro("/share/{1}", Get,
         [this, httpsMode](HttpRequestPtr req) -> Task<HttpResponsePtr> {
             // via-regex 路由:捕获组经 getRoutingParameters() 获取

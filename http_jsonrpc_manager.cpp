@@ -18,7 +18,7 @@ void HttpJsonRpcManager::Setup()
         m_server->Setup();
 }
 
-std::vector<uint16_t> HttpJsonRpcManager::GetPorts() const
+uint16_t HttpJsonRpcManager::GetPort() const
 {
-    return m_server ? m_server->GetPorts() : std::vector<uint16_t>{};
+    return m_server ? m_server->GetPort() : 0;
 }

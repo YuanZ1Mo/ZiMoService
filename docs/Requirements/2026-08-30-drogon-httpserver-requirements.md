@@ -1,6 +1,6 @@
 # Drogon HTTP 服务器基类(DrogonHttpServer)需求文档
 
-> 状态:待审阅 · 版本:v4 · 日期:2026-08-30
+> 状态:待审阅 · 版本:v5 · 日期:2026-08-31
 > 范围:定义 `DrogonHttpServer` 基类应具备的能力(功能需求 + 非功能需求 + 约束)
 > 前置:ZiMoService 自研 HTTP 栈与旧业务模块已清理,基于 Drogon 1.9.13 绿色重建
 > 关联:设计文档 `2026-08-30-drogon-httpserver-base-design.md`(基类设计)、`2026-08-30-drogon-network-layer-design.md`(总体设计)
@@ -82,7 +82,7 @@ ZiMoService 原基于自研 HTTP 栈(libevent)提供三类服务面,各占一端
 
 #### FR-02 监听配置
 
-* 提供 `AddListener(port, useSSL, ip, useOldTLS, sslConfCmds)`,可注册多个监听;**证书统一经** **`ZmHttpServer::Init`** **的 Options(`certFile/keyFile`)全局设置**(保证热加载),不在 AddListener 传 per-listener cert。
+* 提供 `AddListener(port, useSSL, ip, useOldTLS, sslConfCmds)`——**一对象一端口(v5)**:每个服务器面对象仅可设置一次,重复设置报错忽略;多端口面用多个实例(前端 HTTPS 模式 = 443 完整实例 + 80 重定向实例,后者仅 80→443 重定向);查询 `GetPort()/GetBindIp()`;**证书统一经** **`ZmHttpServer::Init`** **的 Options(`certFile/keyFile`)全局设置**(保证热加载),不在 AddListener 传 per-listener cert。
 
 * 前端 443(HTTPS)+ 39440/39441(HTTP)由它承载。
 
@@ -276,13 +276,15 @@ ZiMoService 原基于自研 HTTP 栈(libevent)提供三类服务面,各占一端
 
 * 全局开关 `SetAutoJsonp(false)` 可关闭(三面共享,默认开)。
 
+* **一对象一端口(v5)**:每个服务器面对象仅监听一个端口——`AddListener` 单次设置(重复报错忽略),查询 `GetPort()/GetBindIp()`;需要多端口时用多个对象实例(如前端 HTTPS 模式 = 443 完整实例 + 80 重定向实例)。
+
 * **验收**:GET+callback 的 JSON 响应自动成为可执行 JS 包装;非法 callback 名不包装;无 callback / 非 GET 行为与常规 JSON 一致;关闭开关后全部原样。
 
 #### FR-25 派生服务器面
 
 * 基类必须可派生三个具体服务器面:`HttpFrontendServer`(80/443)、`HttpJsonRpcServer`(39440)、`HttpRestfulServer`(39441)。
 
-* 三者**分别实例化**:各自 `AddListener` 自己的端口、各自注册自己的路由组(filter/advice 隔离)、各自状态查询(`IsOpen`/`IsHttps`/`GetPorts`)。
+* 三者**分别实例化**:各自 `AddListener` 自己的端口(**一对象一端口**,v5)、各自注册自己的路由组(filter/advice 隔离)、各自状态查询(`IsHttps`/`GetPort`)。
 
 * 三者**共享同一** **`app()`**(运行时单实例、单事件循环池、单路由表,靠路径前缀区分)。
 

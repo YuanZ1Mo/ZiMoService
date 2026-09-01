@@ -25,7 +25,7 @@ public:
               bool useSSL = false,
               const std::string& rootPath = ZM_HTTP_JRPC_SERVER_ROOT_URI);
     void Setup();
-    std::vector<uint16_t> GetPorts() const;
+    uint16_t GetPort() const;
 
     ZmHttpJsonRpcServer* GetServer() const { return m_server.get(); }
 
