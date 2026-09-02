@@ -767,9 +767,6 @@
     <ClInclude Include="service_define.h">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="..\ZiMoPublic\net\zm_net_runloop.h">
-      <Filter>头文件\Public\net</Filter>
-    </ClInclude>
     <ClInclude Include="broadcast_manager.h">
       <Filter>头文件</Filter>
     </ClInclude>
@@ -4399,6 +4396,36 @@
     </ClInclude>
     <ClInclude Include="..\ZiMoPublic\drogon\include\postgresql\server\storage\waiteventset.h">
       <Filter>头文件\Public\drogon\include\postgresql\server\storage</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ZiMoPublic\net\zm_net_http_client.h">
+      <Filter>头文件\Public\net</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ZiMoPublic\net\zm_net_http_client_download.h">
+      <Filter>头文件\Public\net</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ZiMoPublic\net\zm_net_http_frontend_server.h">
+      <Filter>头文件\Public\net</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ZiMoPublic\net\zm_net_http_jsonrpc_server.h">
+      <Filter>头文件\Public\net</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ZiMoPublic\net\zm_net_http_restful_server.h">
+      <Filter>头文件\Public\net</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ZiMoPublic\net\zm_net_http_server.h">
+      <Filter>头文件\Public\net</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ZiMoPublic\util\zm_util_evbase_runloop.h">
+      <Filter>头文件\Public\util</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ZiMoPublic\util\zm_util_json.h">
+      <Filter>头文件\Public\util</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ZiMoPublic\util\zm_util_logger.h">
+      <Filter>头文件\Public\util</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ZiMoPublic\util\zm_util_zipfile.h">
+      <Filter>头文件\Public\util</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
