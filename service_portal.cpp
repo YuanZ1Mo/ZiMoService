@@ -127,6 +127,22 @@ void ServicePortal::RegisterFrontendRoutes(ZmHttpFrontendServer* fe)
     fe->AddSpaFallback("/portal", "html/portal.html");
     // /doc 目录物理存在于 www 下,显式封禁(验收:不可达)
     fe->AddDeniedPath("/doc");
+
+    // ── 客户端测试目标(2026-09-04;供 http/https 客户端回归测试,见 tests/http_client) ──
+    // 回显方法/路径/query/全部请求头(跨域剥头验证:客户端经 80→443 重定向链命中本端点,
+    // 由响应 headers 判定 Authorization 等敏感头是否被剥除)。
+    fe->RegisterCoro("/test/client/echo", Get,
+        [](HttpRequestPtr req) -> Task<HttpResponsePtr> {
+            ZMJSON d;
+            d["method"] = req->getMethodString();
+            d["path"] = req->path();
+            d["query"] = req->getQuery();
+            ZMJSON hs = ZMJSON::object();
+            for (const auto& kv : req->getHeaders())
+                hs[kv.first] = kv.second;
+            d["headers"] = hs;
+            co_return ZmHttpServer::JsonResponse(200, d);
+        });
 }
 
 // ============================================================================
