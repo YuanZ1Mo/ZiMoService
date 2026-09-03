@@ -51,6 +51,8 @@ bool NetDock::Init()
     // per-IP 连接数护栏(0 = 不限):⚠ 单机压测全部连接同源 IP,设值小于压测并发 → 被拒连;
     // 公网/防慢连接场景可设为 512~2048。
     opts.maxConnectionsPerIP = 0;
+    // 指标端点(进程级计数,JSON);公网/暴露其他机器时建议挂 filter。
+    opts.metricsPath = "/zimo/metrics";
     opts.idleTimeoutSec = 90;              // keep-alive 空闲 90s 回收;调大可减少复用死连接型 NoHttpResponse
     opts.keepaliveRequests = 0;            // 单连接累计请求上限:0 = 不限次数回收(压测不触发次数回收竞态)
     opts.enableRequestStream = true;       // 上传流式落盘依赖,勿关
@@ -83,6 +85,12 @@ bool NetDock::Init()
     m_frontend->Init("0.0.0.0", hasCert, wwwRoot);
     m_jrpc->Init(39440, "0.0.0.0", hasCert);
     m_restful->Init(39441, "0.0.0.0", hasCert);
+
+    // 前端静态缓存头策略(§16.1.2 A 档):默认"再校验态"(每次 IMS → 304);
+    // 静态资源发布"指纹命名"(文件名带内容哈希)后,把 js/css 切"长缓存态":
+    //   SetStaticCachePolicy({ ..., { ".js", "public, max-age=31536000, immutable" } })
+    m_frontend->GetServer()->SetStaticCachePolicy(
+        {"public, max-age=0, must-revalidate", {}});
 
     // 前端面门禁登记其他面业务根路径(自定义后仍正确拒绝外来前缀,设计 §4.4)
     m_frontend->GetServer()->AddOtherRootPath(m_jrpc->GetServer()->GetRootPath());

@@ -710,3 +710,186 @@ bool RequireModule(const HttpRequestPtr& req, HttpResponsePtr& resp,
 7. `service_portal.h/.cpp`:构造时经 NetDock 取三面 server 引用注册路由(本期测试路由);`Shutdown()` 业务收尾
 8. `ZiMoService.vcxproj`:接入 drogon 库目录 + `DROGON_STATIC_DEFINE/TRANTOR_STATIC_DEFINE` + 链接项(drogon/trantor/jsoncpp/cares/lz4/sqlite3/libssl/libcrypto),移除旧 `libcrypto_static/libssl_static` + 新增文件
 
+***
+
+## 16. 第二期:增强特性(2026-09-03 评审)
+
+在本期(§1-15)之上追加五个增强项,均为**默认保守**配置(不改变现有行为,
+net_dock 显式启用后生效)。接口演进:基类(§2 类层次)同一位置追加。
+
+### 16.1 静态资源条件请求与缓存头(FR-12/FR-20 增强)
+
+> 本节分两项(B 档在前):**B 档 = 静态目录 304(内建 + SPA 补齐)**(16.1.0-16.1.1);
+> **A 档 = 静态缓存头策略**(16.1.2)。与用户清单逐项对应。
+
+**16.1.0 B 档:静态目录 304(内建验证)**:
+
+**事实盘点(2026-09-03 源码核验,更正早期错误的"仅 Range 判 304"结论)**:
+- 静态目录 304 **内建且默认开启**:`enableLastModify_{true}`
+  (`StaticFileRouter.h:144`);无 Range 请求在 `StaticFileRouter.cc:433-470` 完整判定
+  (If-Modified-Since == Last-Modified → 304),Range 请求 `:331-377` 按 RFC 7233 §3.1
+  先判预条件;`.gz/.br` 孪生发送时 `Last-Modified` 取源文件 mtime(`:543-547`),
+  与 304 判定同源;
+- `SendFile*`(§6)已实现 Last-Modified + 强 ETag(`"size-mtime"`,If-None-Match
+  优先弱比较/If-Modified-Since 兜底)→ 304;
+- 发送路径事实:文件型响应发送不经 304 特殊分支(`HttpServer.cc:1002-1026`),
+  **"PreSending 改写响应为 304"方案不可行**(仍会 sendFile 正文)。
+
+**16.1.1 B 档:SPA 回落补齐(编码)**:
+`http_frontend_server.cpp:139-161` 的 `newFileResponse(page)` 不经 StaticFileRouter,
+无 Last-Modified/ETag/304。方案:把 `FetchFileMeta/CacheHeaders/Maybe304`
+(现匿名 namespace)提升为 `ZmHttpServer` protected static,SPA 分支改走
+`FetchFileMeta → CacheHeaders → Maybe304`(命中 cb(304);否则 newFileResponse +
+addHeader(Last-Modified/ETag));`SendFile*` 共用同一 helper(行为单源)。
+
+**16.1.2 缓存头策略(A 档)**:
+drogon 静态响应默认 `Expires: 1970`(`StaticFileRouter.cc:544-546`);1.9.13
+仅有全局统一 `setStaticFileHeaders`(`HttpAppFramework.h:952`,无按扩展名 API)。
+发布层两态:再校验态(默认,html)→ `public, max-age=0, must-revalidate`;
+长缓存态(指纹 js/css 等)→ `public, max-age=31536000, immutable`。
+
+```
+struct ZmStaticCacheConfig { std::string defaultPolicy;
+                             std::vector<std::pair<std::string,std::string>> extPolicy; };
+void SetStaticCachePolicy(const ZmStaticCacheConfig&);   // Open 前调用
+```
+`RegisterRoutes` 追加一条 PreSending(本端口判定):静态响应特征(无 body +
+有 Last-Modified)按 `req->path()` 扩展名查 extPolicy,未命中用 defaultPolicy;
+已有 Cache-Control 不覆盖;**只加头不改状态**,与 304 无交互(304 定"传不传",
+缓存头定"请求不请求")。指纹命名本体属发布层,不在本期。
+
+**16.1.3 不做**:静态目录 ETag(drogon 无挂点,IMS 已覆盖同语义);
+SPA 页的 .gz 分发(现状一致,发布层后续)。
+
+### 16.2 Multipart 表单/文件上传(FR-15 补充)
+
+流式解析 API 已内建:`RequestStream::newMultipartReader(req, headerCb, dataCb,
+finishCb)`(`RequestStream.h:110-114`);内存版 `MultiPartParser` 基于 `getBody()`,
+超 64KB 语义不可控 → 弃用。
+
+```cpp
+struct ZmMultipartResult { std::vector<std::pair<std::string,std::string>> fields;
+    struct File { std::string itemName, fileName /*已消毒*/, contentType;
+                  uint64_t size; std::string data /*v1 内存*/; };
+    std::vector<File> files; };
+void RegisterMultipartCoro(path, drogon::HttpMethod m,
+    std::function<drogon::Task<drogon::HttpResponsePtr>(req, ZmMultipartResult)> h,
+    filters = {}, uint64_t maxBytes = 256ULL << 20);          // 单请求总量上限
+static drogon::Task<int64_t> SaveMultipartFile(const ZmMultipartResult::File& f,
+                                               const std::string& destPath);
+```
+
+**行为链**:Content-Type+boundary 预检(缺 → 400)→ 声明超限 413 → 流式 reader
+(Header/Data/Finish 三回调;字段值 ≤1MB;超限换 NullReader + 413)→ 业务协程;
+文件名 `SanitizeFileName` 消毒(去 `..`/`/`/`\`/控制符,空 → 非法标记)。
+**决策**:v1 文件内容内存交付(受 maxBytes 硬上限);**大文件仍走裸流
+(RegisterStreamCoro + X-File-Size)**,multipart 流式落盘留 v2;缓存(1)语义:
+同 §16.1,B 档交互仅共用"上限判定"思路,无共享代码。
+
+**前置实验(阶段 0,硬性门)**:100MB 文件在 reader 下的内存峰值(确认
+是否经 `clientMaxMemoryBodySize` 落盘 / 纯内存),据此定建议 maxBytes;
+消毒攻击集。失败 → 改设计(文件通道复用写线程)。
+
+### 16.3 请求 ID 与指标端点(FR-17 扩展)
+
+```
+Options.metricsPath;   // 指标端点路径(空=不注册),建议 /zimo/metrics
+```
+
+**请求 ID**:恒启(无开关)。PreRouting 生成 `zm-<unix秒>-<原子序>` 入
+attributes("ZmRequestId"),**透传优先**(请求带 `X-Request-Id` 且合法
+`[A-Za-z0-9-_.-]` ≤128 → 原样使用);PreSending 回写 `X-Request-Id`
+(含 304/重定向);访问日志行首加 `[zm-...]`(**格式变更,解析脚本需同步**)。
+**结算点(实测修正)**:drogon 1.9.13 的 PostHandling advice **仅覆盖 controller/binder
+响应路径**,静态目录(含 304)、Range、重定向、advice 拦截响应不经 —— 访问日志与
+指标结算统一挂 **PreSending**(handleResponse 统一出口),PreRouting 生成+结算同一对 advice。
+**指标端点**:Init 注册 GET handler,输出 JSON;计数器(原子,每请求 1-4 次):
+total / status2xx-5xx / inflight / 延迟四桶(<10/10-100/100-1000/1000+ ms) /
+uptime_s。**零第三方依赖**(zb/文本协议格式后续任务)。
+
+### 16.4 限流(**已实施 2026-09-04**;设计→实现,RL 全系验证通过)
+
+> §4.4 曾留"可选内存限流"一句,此为正式方案。底层:捆绑 Drogon 1.9.13
+> `RateLimiter.h`(`newRateLimiter(type, capacity, timeUnit)`,取值
+> kFixedWindow/kSlidingWindow/kTokenBucket;并发必须用 `SafeRateLimiter` 锁包装,
+> filter 会在多个事件循环线程执行)。
+
+**16.4.1 能力分两层(两种语义都覆盖)**:
+- **逐 IP 独立配额**:每个 IP 一个独立桶(各用各的额度,互不影响);
+- **专项 overlay(针对特定 IP 单独待遇)**:封禁 / 白名单放行 / 不同阈值,
+  支持**运行期动态 CRUD**(核心诉求:封禁恶意 IP、临时调额、解封,不重启)。
+
+**16.4.2 接口(基类)`ZmHttpServer::RateLimit` 静态区**:
+```cpp
+/// 单桶(全局配额;filter 内 isAllowed;仅内部/专属调用方使用)
+drogon::RateLimiterPtr CreateRateLimiter(drogon::RateLimiterType type,
+                                         size_t capacity,
+                                         std::chrono::duration<double> timeUnit);
+/// 逐 IP 桶:有界 LRU(默认 10000,~2MB),惰性淘汰防泄漏
+drogon::RateLimiterPtr CreatePerIpRateLimiter(drogon::RateLimiterType type,
+                                              size_t capacity,
+                                              std::chrono::duration<double> timeUnit,
+                                              size_t maxEntries = 10000);
+// ── 专项 overlay(运行期可调;规则量 ≤ 数千条) ──
+void SetIpBlocked(const std::string& ip);          // 封禁 → 直接 429(不消费配额)
+void UnblockIp(const std::string& ip);
+void SetIpQuota(const std::string& ip, size_t capacity,
+                std::chrono::duration<double> timeUnit);   // 专项阈值(覆盖默认)
+void SetIpAllowed(const std::string& ip);          // 白名单放行(配额不消费)
+void RemoveRateRule(const std::string& ip);
+bool IsRateRuleHit(const std::string& ip);         // 审计/日志标注
+```
+
+**16.4.3 执行链与热路径**:
+```
+请求(preRouting/filter)→ 查 overlay(COW 快照,原子指针读 = 零锁)
+  封禁 → 429(短路);白名单 → 放行;专项 → 用专项配额建(复用)桶;
+  默认  → LRU 桶查/建 → isAllowed() 失败 → 429
+```
+- **规则表 COW**:`std::atomic<std::shared_ptr<const RuleMap>>`,写 = copy+swap
+  (低频、微秒级);事件循环无锁读;
+- **适配形态**:`AddFilter("rate-limit", ...)` 注册为 filter,挂到
+  `RegisterCoro/RegisterStreamCoro` 的 filters —— 路由级限流一行接入;
+  全局粗粒度(如每连接级)用 PreRouting advice 变体。
+
+**16.4.4 动态规则与管理入口(宿主选一/组合)**:
+1. **管理 API**(推荐):RESTful 面 `/zimo/api/admin/rate`(POST/DELETE/GET),
+   复用 `RequireModule` 鉴权(仅 admin 模块);
+2. **规则文件热重载**:`Options.rateRulesFile`(JSON 基线表),mtime 变化/信号重注入;
+3. TTL 可选:封禁带有效期(惰性过期,不耗定时器);操作加审计日志(PUBLIC_LOG)。
+
+**16.4.5 决策与边界**:
+- 429(非 500/503),标准语义;
+- **持久化不在本层**:规则桶/动态规则重启即失,跨重启落在业务层(SQLite 重放,
+  延续 §4.4"持久化限流留业务层"分工);
+- ⚠ **压测适配(重复两节的坑)**:单机压测全部请求同源 IP —— per-IP 默认配额
+  必须显式放大(或规则层开白名单),否则压测自 429;自动化脚本同理;
+- CIDR/段匹配留 v2(v1 精确全串;`*.` 段匹配见 16.4.6 可选);
+- 与连接数护栏分治:per-IP **连接数**(`maxConnectionsPerIP`,已接入)与 per-IP
+  **请求速率**(本层)互补不重叠。
+
+**16.4.6 验证要点(RL 系列)**:
+RL1 固定窗口 5/min:连发 7 → 第 6 起 429;RL2 滑动窗口边界(恢复期);
+RL3 per-IP:A 超限 B 不受影响;RL4 封禁 IP(CIDR 精确)→ 429,解封即 200;
+RL5 白名单 IP 穿过限额;RL6 动态 SetIpQuota 降低后立即生效(不重启);
+RL7 并发压测下统计:命中数与 isAllowed 数一致(SafeRateLimiter 无竞态)。
+
+### 16.5 验证(第二期验收矩阵)
+
+| 项 | 用例(简) | 预期 |
+|---|---|---|
+| 静态 304 | 静态 js/index + IMS;Range+IMS;.gz 孪生 + IMS | 304 无 body(内建);U 系列详见前文用例 |
+| SPA | /portal → 200 带 LM/ETag;+IMS → 304 | 修复点 16.1.1 主线 |
+| 缓存头 | 默认再校验态;extPolicy 长缓存(按 .js);非静态无注入 | 16.1.2 |
+| Multipart | 字段×2+文件×1;无 boundary 400;2MB>maxBytes 413+无残留;`../../x.sh` 消毒为 `x.sh`;字段-文件混序 | M 系列 |
+| 请求 ID | 响应带 X-Request-Id;上游透传;非法字符重生成;日志行首一致;metrics 递增 | R 系列 |
+| 限流 | 固定/滑动窗口边界;per-IP 互不影响;封禁/解封即时生效;动态阈值;白名单穿越 | RL 系列(§16.4.6)——2026-09-04 实测:RL1 ✅(5→第6个起 429);RL4 ✅(block/unblock 机制生效);RL5 ✅(白名单穿透限额 10/10);RL6 ✅(动态 quota 立即生效 2→3rd 429);RL7 ✅(并发 30 = 5×200+25×429,SafeRateLimiter 无竞态);RL2/RL3 为算法/结构级保证(kSlidingWindow 参数即用;桶 key=IP) |
+
+### 16.6 实施顺序
+
+1. **B 档 + SPA 补齐**(helper 提升,最小依赖)→ 2. **A 档缓存头**(独立)
+   → 3. **请求 ID + 指标**(独立)→ 4. **Multipart**(阶段 0 前置实验后)
+   → 5. **限流**(§16.4;filter 形态,依赖现有 filters/advice 机制)
+各步编译验收:ZiMoService 全量构建(`/p:OutDir=A:/ZiMo/temp_build_out/`);
+文档与代码分仓库提交(ZiMoPublic 代码 / ZiMoService docs)。
+

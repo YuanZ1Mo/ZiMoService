@@ -234,6 +234,38 @@ void ServicePortal::RegisterRestfulTestRoutes(ZmHttpRestfulServer* rest)
         });
 
     // 业务 deadline(FR-14):睡眠 3s > deadline 1s → 504 且只回一次
+    // ── 限流验证(§16.4;RL1-7):per-IP 5/min + overlay 动态管理测试端点 ──
+    {
+        auto lim = ZmHttpServer::ZmIpRateLimiter::Create(
+            drogon::RateLimiterType::kFixedWindow, 5, 60.0);
+        rest->AddFilter("test-rate", [lim](HttpRequestPtr req, HttpResponsePtr& resp) {
+            return lim->Check(req, resp);
+        });
+        rest->RegisterCoro(rpcRoot + "/test/rate", Get,
+            [](HttpRequestPtr req) -> Task<HttpResponsePtr> {
+                co_return ZmHttpServer::JsonResponse(200, ZMJSON());
+            }, {"test-rate"});
+        // 动态规则端点:POST /test/rate-act/{ip}/{action}(block/unblock/allow/rem/quota)
+        rest->RegisterCoro(rpcRoot + "/test/rate-act/{1}/{2}", Post,
+            [](HttpRequestPtr req) -> Task<HttpResponsePtr> {
+                const auto& p = req->getRoutingParameters();
+                string ip = p.size() > 0 ? p[0] : "";
+                string act = p.size() > 1 ? p[1] : "";
+                if (act == "block")       ZmHttpServer::SetIpBlocked(ip);
+                else if (act == "unblock") ZmHttpServer::UnblockIp(ip);
+                else if (act == "allow")  ZmHttpServer::SetIpAllowed(ip);
+                else if (act == "rem")    ZmHttpServer::RemoveRateRule(ip);
+                else if (act == "quota")  ZmHttpServer::SetIpQuota(ip, 2, 60.0);
+                else
+                    co_return ZmHttpServer::ErrorResponse(400, "bad action");
+                ZMJSON d;
+                d["ok"] = true;
+                d["ip"] = ip;
+                d["hit"] = ZmHttpServer::IsRateRuleHit(ip);
+                co_return ZmHttpServer::JsonResponse(200, d);
+            });
+    }
+
     rest->RegisterCoroWithDeadline(rpcRoot + "/test/slow", Get,
         [](HttpRequestPtr req) -> Task<HttpResponsePtr> {
             co_await ZmHttpServer::RunOnPool<int>([]() -> int {
@@ -293,6 +325,24 @@ void ServicePortal::RegisterRestfulTestRoutes(ZmHttpRestfulServer* rest)
         },
         {}, 10ULL * 1024 * 1024 * 1024);   // 路由级上限:10GB
 
+    // ── 第二期验证路由(2026-09-03;验收后按计划保留/移除) ──
+    // multipart 回显(字段/文件清单;业务落盘经 SaveMultipartFile)
+    rest->RegisterMultipartCoro(rpcRoot + "/test/multipart", Post,
+        [](HttpRequestPtr req, ZmHttpServer::ZmMultipartResult res) -> Task<HttpResponsePtr> {
+            ZMJSON d;
+            d["fields"] = res.fields.size();
+            ZMJSON files = ZMJSON::array();
+            for (const auto& f : res.files)
+            {
+                ZMJSON fo;
+                fo["item"] = f.itemName;
+                fo["name"] = f.fileName;
+                fo["size"] = f.size;
+                files.push_back(fo);
+            }
+            d["files"] = files;
+            co_return ZmHttpServer::JsonResponse(200, d);
+        });
     // WebSocket echo(FR-16)
     ZmHttpServer::WsCallbacks wsCb;
     wsCb.onAuth = [](HttpRequestPtr req) {
