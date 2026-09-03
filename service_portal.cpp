@@ -316,6 +316,9 @@ void ServicePortal::RegisterRestfulCors(ZmHttpRestfulServer* rest)
     if (!rest)
         return;
 
+    // CORS 白名单已收敛为 Options.corsAllowedOrigins(net_dock 配置);
+    // 未命中(含空名单)→ 预检 403、响应不回显 CORS 头,浏览器判跨域失败。
+    // 需跨域的调用方在 net_dock 登记 Origin(精确全串,如 https://www.xxx.com)。
     // OPTIONS 预检(FR-21)
     rest->RegisterPreRouting([](const HttpRequestPtr& req, AdviceCallback&& cb,
                                 AdviceChainCallback&& cc) {
@@ -324,28 +327,32 @@ void ServicePortal::RegisterRestfulCors(ZmHttpRestfulServer* rest)
             cc();
             return;
         }
+        string origin = req->getHeader("Origin");
+        if (!ZmHttpServer::IsCorsOriginAllowed(origin))
+        {
+            // 白名单外:拒绝预检,不带任何 CORS 头(浏览器侧表现为跨域失败)
+            cb(ZmHttpServer::ErrorResponse(403, "origin not allowed"));
+            return;
+        }
         ZMJSON d;
         auto resp = ZmHttpServer::JsonResponse(200, d);
-        string origin = req->getHeader("Origin");
-        if (!origin.empty())
-        {
-            resp->addHeader("Access-Control-Allow-Origin", origin);
-            resp->addHeader("Access-Control-Allow-Credentials", "true");
-        }
+        resp->addHeader("Access-Control-Allow-Origin", origin);
+        resp->addHeader("Access-Control-Allow-Credentials", "true");
         resp->addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
         resp->addHeader("Access-Control-Allow-Headers",
                         "Origin, Content-Type, Accept, X-File-Size");
         cb(resp);
     });
 
-    // 响应附加 CORS 头(回显 Origin + 凭据)
+    // 响应附加 CORS 头(仅白名单命中才回显 Origin + 凭据)
     rest->RegisterPreSending([](const HttpRequestPtr& req, const HttpResponsePtr& resp) {
         if (req->method() == Options)
             return;   // 预检响应已带
         string origin = req->getHeader("Origin");
-        if (!origin.empty() &&
-            (req->getHeader("cookie").find("zm_session") != string::npos ||
-             resp->getStatusCode() >= k200OK))
+        if (!ZmHttpServer::IsCorsOriginAllowed(origin))
+            return;
+        if (req->getHeader("cookie").find("zm_session") != string::npos ||
+            resp->getStatusCode() >= k200OK)
         {
             resp->addHeader("Access-Control-Allow-Origin", origin);
             resp->addHeader("Access-Control-Allow-Credentials", "true");

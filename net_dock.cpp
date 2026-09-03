@@ -41,14 +41,29 @@ bool NetDock::Init()
     ZmHttpServer::Options opts;
     opts.threadNum = 0;                    // 事件循环线程数:0 = 自动 = CPU 核数(吞吐核心)
     opts.maxConnections = 8192;            // 最大连接数护栏,超限拒连;也是峰值内存上限之一
+    // 框架级请求体上限:1.9.13 对【全体请求含流式】强制(HttpRequestParser 层 413),
+    // 是流式大上传(RegisterStreamCoro)唯一的框架兜底;勿调小于业务最大上传。
+    // 非流式路由的提前拒绝由 nonStreamBodyLimit 承担。
     opts.clientMaxBodySize = 10ULL * 1024 * 1024 * 1024;  // 单请求体上限 10GB(文件上传兜底,FR-15),超限 413
+    // 非流式路由请求体上限(PreRouting 按 Content-Length 预检 413);
+    // 带 X-File-Size 声明者豁免(流式大上传路径);恶意声明 X-File-Size 仍受 clientMaxBodySize 兜底。
+    opts.nonStreamBodyLimit = 256ULL * 1024 * 1024;
+    // per-IP 连接数护栏(0 = 不限):⚠ 单机压测全部连接同源 IP,设值小于压测并发 → 被拒连;
+    // 公网/防慢连接场景可设为 512~2048。
+    opts.maxConnectionsPerIP = 0;
     opts.idleTimeoutSec = 90;              // keep-alive 空闲 90s 回收;调大可减少复用死连接型 NoHttpResponse
     opts.keepaliveRequests = 0;            // 单连接累计请求上限:0 = 不限次数回收(压测不触发次数回收竞态)
     opts.enableRequestStream = true;       // 上传流式落盘依赖,勿关
     opts.workPoolSize = 8;                 // 业务阻塞工作池线程数(DB/磁盘/CPU 型 handler),高并发可调大
     opts.gzip = false; opts.brotli = false;        // 动态压缩(CPU 换带宽):压测/延迟敏感保持关闭
-    opts.gzipStatic = false; opts.brotliStatic = false;  // 静态文件压缩开关(FR-18)
+    // 静态 gzip:只找 <file>.gz 孪生优先发送(非现场压缩,补 Content-Encoding 头);
+    //   部署时跑一次 tools/build_www_gzip.sh 生成孪生;无孪生时本开关无副作用(照发原文件)。
+    // 静态 brotli 同理但需 <file>.br 孪生,暂未维护,保持关闭。
+    opts.gzipStatic = true;
+    opts.brotliStatic = false;                     // 静态文件压缩开关(FR-18)
     bool hasCert = std::filesystem::exists(certFile) && std::filesystem::exists(keyFile);
+    // CORS 白名单(仅回显名单内 Origin 的跨域响应;空 = 默认拒绝一切跨域):
+    // 示例:opts.corsAllowedOrigins = { "https://www.example.com", "http://localhost:5173" };
     if (hasCert)
     {
         opts.certFile = certFile;        // 有全局证书 → 前端 443+80、JRPC/RESTful 同升 HTTPS
