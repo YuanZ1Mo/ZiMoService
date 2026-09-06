@@ -1,0 +1,107 @@
+/* ============================================================
+   portal.css —— 门户壳布局(固定顶栏 + 抽屉侧边导航 + 工作区)
+   设计基准:docs/designs/mockups/user-system/04-portal-home.html
+   ============================================================ */
+
+.portal { min-height: 100vh; padding-top: var(--topbar-h); }
+
+/* ---------- 顶部状态栏:固定悬浮,不随页面滚动 ---------- */
+.portal-topbar{
+  position:fixed;inset:0 0 auto 0;height:var(--topbar-h);z-index:800;
+  display:flex;align-items:center;gap:14px;padding:0 22px;
+  background:color-mix(in srgb,var(--color-card) 86%,transparent);
+  backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--color-border-soft);
+}
+.portal-brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:17px;letter-spacing:.2px}
+.portal-topbar-right{margin-left:auto;display:flex;align-items:center;gap:10px}
+
+/* 心跳连接胶囊:已连接(绿·脉冲) / 重连中(琥珀) / 已断开(红) */
+.hb-chip{
+  display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 11px;
+  border-radius:var(--r-pill);font-size:var(--fs-cap);font-weight:600;
+  background:var(--color-ok-bg);color:var(--color-ok);
+}
+.hb-chip .hb-dot{width:7px;height:7px;border-radius:50%;background:currentColor}
+.hb-chip.on .hb-dot{animation:pulse-soft 2s infinite}
+.hb-chip.warn{background:var(--color-warn-bg);color:var(--color-warn)}
+.hb-chip.err{background:var(--color-err-bg);color:var(--color-err)}
+
+/* ---------- 侧边导航:抽屉式(桌面可收起 / 移动端遮罩) ---------- */
+.portal-side{
+  position:fixed;top:var(--topbar-h);left:0;bottom:0;width:var(--sidebar-w);z-index:700;
+  display:flex;flex-direction:column;padding:16px 12px;
+  background:var(--color-card);border-right:1px solid var(--color-border-soft);
+  transition:width var(--dur-slow) var(--ease),transform var(--dur-slow) var(--ease);
+}
+.portal-side.collapsed{width:var(--sidebar-w-min)}
+.side-label-cap{
+  font-size:var(--fs-cap);color:var(--color-text-3);font-weight:600;
+  letter-spacing:.4px;padding:12px 12px 8px;
+}
+.side-item{
+  display:flex;align-items:center;gap:12px;height:42px;padding:0 12px;flex:none;
+  border-radius:var(--r-md);color:var(--color-text-2);font-weight:600;font-size:var(--fs-body);
+  cursor:pointer;white-space:nowrap;overflow:hidden;width:100%;text-align:left;
+  transition:background var(--dur),color var(--dur),transform var(--dur-fast) var(--ease);
+}
+.side-item:hover{background:var(--color-border-soft);color:var(--color-text)}
+.side-item:active{transform:scale(.98)}
+.side-item.active{background:var(--color-primary-soft);color:var(--color-primary);position:relative}
+.side-item.active::before{
+  content:"";position:absolute;left:-12px;top:9px;bottom:9px;width:4px;
+  border-radius:0 4px 4px 0;background:var(--grad-brand);
+}
+.side-ico{width:22px;height:22px;flex:none;display:flex;align-items:center;justify-content:center}
+.side-label{overflow:hidden;text-overflow:ellipsis}
+.portal-side.collapsed .side-label,
+.portal-side.collapsed .side-cap,
+.portal-side.collapsed .side-badge{display:none}
+.side-foot{margin-top:auto;padding:12px;font-size:var(--fs-cap);color:var(--color-text-3);white-space:nowrap;overflow:hidden}
+
+/* ---------- 工作区 ---------- */
+.portal-main{
+  margin-left:var(--sidebar-w);padding:24px 32px 40px;
+  min-height:calc(100vh - var(--topbar-h));
+  transition:margin-left var(--dur-slow) var(--ease);
+  max-width:1560px;
+}
+.portal-main.wide{margin-left:var(--sidebar-w-min)}
+
+/* ---------- 移动端:遮罩抽屉 ---------- */
+@media (max-width:768px){
+  .portal-side{
+    transform:translateX(-105%);width:var(--sidebar-w) !important;
+    box-shadow:var(--shadow-lg);
+  }
+  .portal-side.open{transform:translateX(0)}
+  .portal-side.open .side-label,
+  .portal-side.open .side-cap,
+  .portal-side.open .side-badge{display:inline}
+  .portal-main{margin-left:0 !important;padding:16px}
+}
+
+/* ---------- 模块工作区通用 ---------- */
+.work-card{padding:22px;margin-bottom:18px}
+.section-title{font-size:var(--fs-h2);line-height:var(--lh-h2);margin-bottom:14px}
+.page-head{margin-bottom:20px}
+.page-head h1{font-size:var(--fs-h1);line-height:var(--lh-h1)}
+
+/* 工具栏(用户管理等) */
+.toolbar{display:flex;gap:12px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+.tb-search{width:240px;height:38px}
+.tb-sel{width:130px;height:38px}
+
+/* 分页 */
+.pager{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:16px;flex-wrap:wrap}
+.pg-info{color:var(--color-text-2);font-size:var(--fs-body)}
+.pg-btns{display:flex;gap:6px}
+.pg-btn{
+  min-width:32px;height:32px;padding:0 8px;border-radius:var(--r-sm);
+  border:1px solid var(--color-border);background:var(--color-card);
+  display:inline-flex;align-items:center;justify-content:center;
+  font-size:var(--fs-body);font-weight:600;color:var(--color-text-2);
+  transition:all var(--dur-fast);cursor:pointer;
+}
+.pg-btn:hover:not(:disabled){border-color:var(--color-primary);color:var(--color-primary)}
+.pg-btn:disabled{opacity:.4;cursor:not-allowed}

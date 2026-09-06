@@ -29,9 +29,9 @@ string ZmExeDir()
 
 bool NetDock::Init()
 {
-    // 资源路径遵循 exe 同级约定(www / certs,记忆:服务加载 exe 同级 www)
+    // 资源路径遵循 exe 同级约定(frontend / certs,记忆:服务加载 exe 同级 frontend)
     std::string baseDir = ZmExeDir();
-    std::string wwwRoot = baseDir + "www";
+    std::string wwwRoot = baseDir + "frontend";
     std::string certFile = baseDir + "certs\\server.crt";
     std::string keyFile = baseDir + "certs\\server.key";
     DEFAULT_LOG_INFO("OnStart: 构造 NetDock baseDir={}", baseDir);
@@ -59,13 +59,19 @@ bool NetDock::Init()
     opts.workPoolSize = 8;                 // 业务阻塞工作池线程数(DB/磁盘/CPU 型 handler),高并发可调大
     opts.gzip = false; opts.brotli = false;        // 动态压缩(CPU 换带宽):压测/延迟敏感保持关闭
     // 静态 gzip:只找 <file>.gz 孪生优先发送(非现场压缩,补 Content-Encoding 头);
-    //   部署时跑一次 tools/build_www_gzip.sh 生成孪生;无孪生时本开关无副作用(照发原文件)。
+    //   孪生由 frontend 的 npm run deploy 自动生成(deploy.mjs 内置 gzip 步骤)。
     // 静态 brotli 同理但需 <file>.br 孪生,暂未维护,保持关闭。
     opts.gzipStatic = true;
     opts.brotliStatic = false;                     // 静态文件压缩开关(FR-18)
     bool hasCert = std::filesystem::exists(certFile) && std::filesystem::exists(keyFile);
     // CORS 白名单(仅回显名单内 Origin 的跨域响应;空 = 默认拒绝一切跨域):
-    // 示例:opts.corsAllowedOrigins = { "https://www.example.com", "http://localhost:5173" };
+    // 页面端口(80/443)与业务 API 端口(39441)为同站跨端口,浏览器预检需放行页面 Origin;
+    // 部署域名(如 https://www.xxx.com)在此登记。示例:opts.corsAllowedOrigins = { "https://www.example.com" };
+    opts.corsAllowedOrigins = {
+        "http://localhost", "http://127.0.0.1",
+        "https://localhost", "https://127.0.0.1",
+        "http://localhost:5173",   // vite dev 服务器(前端开发期)
+    };
     if (hasCert)
     {
         opts.certFile = certFile;        // 有全局证书 → 前端 443+80、JRPC/RESTful 同升 HTTPS

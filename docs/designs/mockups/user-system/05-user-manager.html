@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>05 · 系统管理 - 用户管理 — ZiMo 设计预览</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  body{padding-top:var(--topbar-h)}
+  .workspace{margin-left:var(--sidebar-w);padding:var(--sp-6) var(--sp-8) var(--sp-10);min-height:calc(100vh - var(--topbar-h));transition:margin-left var(--dur-slow) var(--ease);max-width:1560px}
+  .sidenav.mini ~ .workspace{margin-left:var(--sidebar-w-min)}
+  @media (max-width:768px){.sidenav{transform:translateX(-105%);box-shadow:var(--shadow-lg)}.sidenav.open-mobile{transform:none}.workspace{margin-left:0 !important;padding:var(--sp-4)}}
+  .topbar{padding-right:var(--sp-6)}
+  .page-head{margin-bottom:var(--sp-5)}
+  .page-head h1{font-size:var(--fs-h1);line-height:var(--lh-h1)}
+  .toolbar{display:flex;gap:var(--sp-3);flex-wrap:wrap;align-items:center;margin-bottom:var(--sp-4)}
+  .toolbar .search{width:260px}
+  .seg-filter{padding:3px;gap:2px}
+  .seg-filter .seg-item{height:30px;font-size:var(--fs-cap);padding:0 12px;flex:none}
+  .toolbar .switch-row{display:flex;align-items:center;gap:8px;font-size:var(--fs-cap);color:var(--color-text-2);cursor:pointer;user-select:none}
+  .tbl-actions{display:flex;gap:6px;justify-content:flex-end;white-space:nowrap}
+  .pager{display:flex;align-items:center;justify-content:space-between;padding:var(--sp-4) 2px 0;flex-wrap:wrap;gap:var(--sp-3)}
+  .pg-btns{display:flex;gap:6px}
+  .pg-btn{min-width:32px;height:32px;border-radius:var(--r-sm);border:1px solid var(--color-border);background:var(--color-card);
+    display:inline-flex;align-items:center;justify-content:center;font-size:var(--fs-body);font-weight:600;color:var(--color-text-2);
+    transition:all var(--dur-fast);cursor:pointer}
+  .pg-btn:hover:not(:disabled):not(.cur){border-color:var(--color-primary);color:var(--color-primary)}
+  .pg-btn.cur{background:var(--color-primary);border-color:var(--color-primary);color:#fff}
+  .pg-btn:disabled{opacity:.4;cursor:not-allowed}
+  .menu-wrap{position:relative}
+  .menu-wrap .menu{right:0;top:calc(100% + 6px)}
+  .tmp-pwd-box{display:flex;align-items:center;gap:8px;padding:14px 16px;border-radius:var(--r-md);
+    background:var(--color-warning-bg);border:1.5px dashed var(--color-warning);margin-top:var(--sp-3)}
+  .tmp-pwd-box code{font-family:Consolas,monospace;font-size:18px;font-weight:700;letter-spacing:1px;color:var(--color-text);flex:1}
+  .perm-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 13px;border:1px solid var(--color-border-soft);border-radius:var(--r-md);margin-bottom:8px}
+  .perm-row .l{display:flex;align-items:center;gap:10px}
+  .lock-hint{display:flex;gap:8px;align-items:flex-start;padding:9px 12px;border-radius:var(--r-sm);background:var(--color-border-soft);font-size:var(--fs-cap);color:var(--color-text-2);margin-top:8px}
+  .user-box{display:flex;align-items:center;gap:10px;padding:5px 6px;border-radius:var(--r-pill);cursor:pointer;transition:background var(--dur)}
+  .user-box:hover{background:var(--color-border-soft)}
+  .user-box .uname{font-size:var(--fs-body);font-weight:600;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+</style>
+</head>
+<body>
+<div class="mock-bar">
+  <span class="pg">05 · 系统管理 - 用户管理</span><span class="path">/portal/user-manager</span>
+  <span class="spacer"></span>
+  <a href="index.html">← 设计总览</a>
+  <a href="04-portal-home.html">← 用户主页</a>
+  <button class="theme-btn" onclick="toggleTheme()">🌗 亮/暗</button>
+</div>
+
+<!-- 顶栏(简化复用) -->
+<header class="topbar">
+  <button class="icon-btn" onclick="document.getElementById('sidenav').classList.toggle('mini')" aria-label="收起/展开导航">
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+  </button>
+  <div class="brand"><span class="brand-logo">Z</span>ZiMo</div>
+  <div class="grow"></div>
+  <span class="hb-chip"><span class="dot"></span>已连接</span>
+  <button class="icon-btn" onclick="toggleTheme()" aria-label="切换亮暗主题">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>
+  </button>
+  <div class="user-box">
+    <span class="avatar">知</span><span class="uname">知墨</span>
+  </div>
+  <button class="icon-btn" onclick="toast('已退出登录,将跳转 /login','info','退出登录')" aria-label="退出登录" title="退出登录">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+  </button>
+</header>
+
+<!-- 侧边导航(系统管理激活) -->
+<aside class="sidenav" id="sidenav">
+  <div class="sidenav-label">功能模块</div>
+  <div class="nav-item" onclick="location.href='04-portal-home.html'" title="用户主页">
+    <span class="nav-ico"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m3 10 9-7 9 7v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M9 22V12h6v10"/></svg></span>
+    <span class="nav-text">用户主页</span><span class="badge badge-info num" style="margin-left:auto">1</span>
+  </div>
+  <div class="nav-group-gap"></div>
+  <div class="sidenav-label">管理</div>
+  <div class="nav-item active" title="系统管理">
+    <span class="nav-ico"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3h.1a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5h.1a1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg></span>
+    <span class="nav-text">系统管理</span><span class="badge badge-neutral num" style="margin-left:auto">-1</span>
+  </div>
+  <div class="grow"></div>
+  <div class="cap faint" style="padding:var(--sp-3)">ZiMo Portal · v1.0</div>
+</aside>
+
+<!-- 工作区:系统管理模块 -->
+<main class="workspace">
+  <div class="page-head">
+    <h1>系统管理</h1>
+    <p class="muted mt-2 cap">管理用户、角色与权限 · 所有操作将记录审计日志</p>
+  </div>
+
+  <!-- 子标签:本期仅用户管理,其余 TODO 占位 -->
+  <div class="underline-tabs mb-6">
+    <button class="tab active">用户管理</button>
+    <button class="tab" disabled onclick="toast('该功能建设中,敬请期待','warning','建设中')" style="cursor:pointer">审计日志 <span class="badge badge-neutral" style="margin-left:5px">TODO</span></button>
+    <button class="tab" disabled onclick="toast('该功能建设中,敬请期待','warning','建设中')" style="cursor:pointer">系统设置 <span class="badge badge-neutral" style="margin-left:5px">TODO</span></button>
+  </div>
+
+  <!-- 工具栏 -->
+  <div class="toolbar">
+    <div class="input-wrap search">
+      <span class="input-prefix"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></span>
+      <input class="input" placeholder="搜索账号 / 昵称 / UID" style="height:38px">
+    </div>
+    <select class="input" style="width:130px;height:38px">
+      <option>全部角色</option><option>developer</option><option>admin</option><option>user</option>
+    </select>
+    <div class="seg seg-filter">
+      <button class="seg-item active">全部</button>
+      <button class="seg-item">正常</button>
+      <button class="seg-item">停用</button>
+      <button class="seg-item">已删除</button>
+    </div>
+    <div class="grow"></div>
+    <div class="switch-row" onclick="this.querySelector('.switch').classList.toggle('on')">
+      <span class="switch" id="incDel"></span>包含已删除
+    </div>
+  </div>
+
+  <!-- 用户表格(列由 GET /admin/users/columns 元数据驱动) -->
+  <div class="tbl-wrap">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th>用户</th>
+          <th class="sortable">角色 <span class="sort-ico">⇅</span></th>
+          <th>状态</th>
+          <th>强制改密</th>
+          <th class="sortable sorted desc">最后登录 <span class="sort-ico">⇅</span></th>
+          <th style="text-align:right">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <!-- 自己:不可操作 -->
+        <tr>
+          <td><div class="cell-user"><span class="avatar">知</span>
+            <div class="meta"><b>知墨</b><div class="sub num">zimo01 · UID 10000001</div></div></div></td>
+          <td><span class="badge badge-role-developer">developer</span></td>
+          <td><span class="badge badge-success"><span class="dot"></span>正常</span></td>
+          <td><span class="faint">—</span></td>
+          <td class="num muted">09-06 14:32</td>
+          <td><div class="tbl-actions"><span class="cap faint" style="padding-right:6px">当前登录用户</span></div></td>
+        </tr>
+        <!-- admin:developer 可管理 -->
+        <tr>
+          <td><div class="cell-user"><span class="avatar" style="color:var(--pink-600)">柠</span>
+            <div class="meta"><b>柠檬精</b><div class="sub num">lemon · UID 10000002</div></div></div></td>
+          <td><span class="badge badge-role-admin">admin</span></td>
+          <td><span class="badge badge-success"><span class="dot"></span>正常</span></td>
+          <td><span class="faint">—</span></td>
+          <td class="num muted">09-06 12:01</td>
+          <td><div class="tbl-actions">
+            <button class="btn btn-secondary btn-sm" onclick="openDrawer()">编辑</button>
+            <div class="menu-wrap"><button class="icon-btn" style="width:30px;height:30px" onclick="toggleRowMenu(event)" aria-label="更多操作">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>
+              <div class="menu" style="min-width:180px">
+                <button class="menu-item" onclick="toast('保存后生效:降为 user(等级压制内)','success','角色变更')">降为 user</button>
+                <button class="menu-item" onclick="openReset()">强制重置密码</button>
+                <div class="menu-sep"></div>
+                <button class="menu-item" onclick="confirmModal('停用','lemon')">停用该用户</button>
+                <button class="menu-item danger" onclick="confirmModal('删除','lemon')">删除(软删除)</button>
+              </div>
+            </div>
+          </div></td>
+        </tr>
+        <!-- 普通用户 force_change=1 -->
+        <tr>
+          <td><div class="cell-user"><span class="avatar">星</span>
+            <div class="meta"><b>星野</b><div class="sub num">xingye · UID 10000003</div></div></div></td>
+          <td><span class="badge badge-role-user">user</span></td>
+          <td><span class="badge badge-success"><span class="dot"></span>正常</span></td>
+          <td><span class="badge badge-force">待改密</span></td>
+          <td class="num muted">09-06 11:47</td>
+          <td><div class="tbl-actions">
+            <button class="btn btn-secondary btn-sm" onclick="openDrawer()">编辑</button>
+            <div class="menu-wrap"><button class="icon-btn" style="width:30px;height:30px" onclick="toggleRowMenu(event)" aria-label="更多操作">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>
+              <div class="menu" style="min-width:180px">
+                <button class="menu-item" onclick="toast('提权为 admin · 提升最高到操作者的下一级','success','角色变更')">提为 admin</button>
+                <button class="menu-item" onclick="openReset()">强制重置密码</button>
+                <div class="menu-sep"></div>
+                <button class="menu-item" onclick="confirmModal('停用','xingye')">停用该用户</button>
+                <button class="menu-item danger" onclick="confirmModal('删除','xingye')">删除(软删除)</button>
+              </div>
+            </div>
+          </div></td>
+        </tr>
+        <!-- 停用用户:显示"启用" -->
+        <tr>
+          <td><div class="cell-user"><span class="avatar" style="opacity:.6">屿</span>
+            <div class="meta"><b>孤屿</b><div class="sub num">guyu · UID 10000004</div></div></div></td>
+          <td><span class="badge badge-role-user">user</span></td>
+          <td><span class="badge badge-warning"><span class="dot"></span>已停用</span></td>
+          <td><span class="faint">—</span></td>
+          <td class="num muted">09-02 20:15</td>
+          <td><div class="tbl-actions">
+            <button class="btn btn-primary btn-sm" onclick="toast('guyu 已启用,可重新登录','success','启用成功')">启用</button>
+            <button class="btn btn-ghost btn-sm" onclick="openDrawer()">编辑</button>
+            <div class="menu-wrap"><button class="icon-btn" style="width:30px;height:30px" onclick="toggleRowMenu(event)" aria-label="更多操作">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>
+              <div class="menu" style="min-width:180px">
+                <button class="menu-item" onclick="openReset()">强制重置密码</button>
+                <div class="menu-sep"></div>
+                <button class="menu-item danger" onclick="confirmModal('删除','guyu')">删除(软删除)</button>
+              </div>
+            </div>
+          </div></td>
+        </tr>
+        <!-- 已删除用户:显示"恢复" -->
+        <tr class="is-deleted">
+          <td><div class="cell-user"><span class="avatar" style="opacity:.45">晚</span>
+            <div class="meta"><b>晚风</b><div class="sub num">wanfeng · UID 10000005</div></div></div></td>
+          <td><span class="badge badge-role-user">user</span></td>
+          <td><span class="badge badge-danger"><span class="dot"></span>已删除</span></td>
+          <td><span class="faint">—</span></td>
+          <td class="num muted">08-28 09:03</td>
+          <td><div class="tbl-actions">
+            <button class="btn btn-primary btn-sm" onclick="toast('wanfeng 已恢复为正常用户','success','恢复成功')">恢复</button>
+          </div></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- 分页 -->
+  <div class="pager">
+    <span class="cap muted">共 <b class="num">128</b> 名用户 · 第 <b class="num">1 / 13</b> 页</span>
+    <div class="pg-btns">
+      <button class="pg-btn" disabled>‹</button>
+      <button class="pg-btn cur">1</button><button class="pg-btn">2</button><button class="pg-btn">3</button>
+      <button class="pg-btn">…</button><button class="pg-btn">13</button>
+      <button class="pg-btn">›</button>
+    </div>
+  </div>
+
+  <!-- 骨架屏演示 -->
+  <div class="annotate mt-8">
+    <b>加载态</b> · 列表请求中展示表骨架(表头保留 + 6 行骨架条);切换筛选/翻页不清空旧数据,以轻微降透明度 + 骨架提示,
+    避免布局跳动。空态:插画 + "没有找到匹配的用户" + 清除筛选按钮。
+  </div>
+</main>
+
+<!-- ===================== 编辑抽屉(GetColumnsMeta 驱动) ===================== -->
+<div class="drawer-mask" id="dMask" onclick="closeDrawer()"></div>
+<aside class="drawer" id="editDrawer" aria-hidden="true">
+  <div class="drawer-head">
+    <div>
+      <b style="font-size:16px">编辑用户 · 柠檬精</b>
+      <div class="cap faint num">UID 10000002 · lemon</div>
+    </div>
+    <button class="icon-btn" onclick="closeDrawer()" aria-label="关闭">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+  </div>
+  <div class="drawer-body">
+    <!-- 属性表单:列元数据决定可编辑/置灰 -->
+    <div class="drawer-sec">
+      <h4>基本信息 <span class="tag">PATCH /admin/users/{uid} · 白名单列</span></h4>
+      <div class="field">
+        <label class="field-label">账号</label>
+        <input class="input" value="lemon" readonly>
+        <span class="field-hint">置灰:注册后不可修改(元数据 editable=false)</span>
+      </div>
+      <div class="field">
+        <label class="field-label">昵称</label>
+        <input class="input" value="柠檬精">
+      </div>
+      <div class="field">
+        <label class="field-label">状态</label>
+        <select class="input"><option selected>正常(1)</option><option>停用(2)</option></select>
+      </div>
+      <div class="field">
+        <label class="field-label">密码盐 / 哈希</label>
+        <input class="input" value="••••••••••••" readonly>
+        <span class="field-hint">敏感列永不下发、永不可改</span>
+      </div>
+    </div>
+
+    <!-- 角色变更 -->
+    <div class="drawer-sec">
+      <h4>角色变更 <span class="tag">POST /role · 等级压制</span></h4>
+      <div class="field">
+        <select class="input">
+          <option>user(等级 1)</option>
+          <option selected>admin(等级 2)</option>
+          <option disabled>developer(等级 3 · 高于操作者,不可选)</option>
+        </select>
+      </div>
+      <div class="lock-hint">
+        <span>ℹ</span><span>仅允许操作等级低于自己的用户;提升最高到操作者的下一级;不可操作自己。developer 用户受最高等级天然保护。</span>
+      </div>
+    </div>
+
+    <!-- 模块授权 -->
+    <div class="drawer-sec">
+      <h4>模块授权 <span class="tag">POST /permissions · 单人覆盖</span></h4>
+      <div class="perm-row">
+        <div class="l"><span class="mod-ico g1" style="width:32px;height:32px;border-radius:10px;font-size:0">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m3 10 9-7 9 7v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M9 22V12h6v10"/></svg></span>
+          <div><b style="font-size:13px">用户主页</b><div class="cap faint">默认拥有(user 角色)</div></div>
+        </div>
+        <span class="badge badge-neutral">继承角色</span>
+      </div>
+      <div class="perm-row" style="border-color:rgba(16,185,129,.35);background:var(--color-success-bg)">
+        <div class="l"><span class="mod-ico g2" style="width:32px;height:32px;border-radius:10px;font-size:0">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></span>
+          <div><b style="font-size:13px">系统管理</b><div class="cap faint">单人授予 · 覆盖角色默认</div></div>
+        </div>
+        <span class="badge badge-success">已授予</span>
+      </div>
+      <div class="row gap-2 mt-3">
+        <button class="btn btn-secondary btn-sm" onclick="toast('授予系统管理权限(grant_type=1)','success','授权成功')">授予</button>
+        <button class="btn btn-danger-soft btn-sm" onclick="toast('拒绝优先级最高,该用户将失去此模块','warning','已设为拒绝')">拒绝</button>
+        <button class="btn btn-ghost btn-sm" onclick="toast('恢复为角色默认权限','info','清除覆盖')">清除覆盖</button>
+      </div>
+    </div>
+  </div>
+  <div class="drawer-foot">
+    <button class="btn btn-ghost" onclick="closeDrawer()">取消</button>
+    <button class="btn btn-grad" onclick="closeDrawer();toast('用户属性已保存 · 操作已写入审计日志','success','保存成功')">保存修改</button>
+  </div>
+</aside>
+
+<!-- ===================== 强制重置密码弹窗 ===================== -->
+<div class="modal-mask" id="resetModal">
+  <div class="modal">
+    <div class="modal-head">
+      <div><b style="font-size:16px">强制重置密码</b><div class="cap faint">lemon · UID 10000002</div></div>
+      <button class="icon-btn" onclick="closeModal('resetModal')" aria-label="关闭">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <p class="muted" style="font-size:var(--fs-body)">将生成一次性临时密码,置 <b>force_change=1</b>,并吊销该用户全部会话。该用户下次登录时将被要求设置新密码。</p>
+      <div class="tmp-pwd-box">
+        <code id="tmpPwd">Tmp-8x2Q!mZe</code>
+        <button class="btn btn-secondary btn-sm" onclick="copyTmp(this)">复制</button>
+      </div>
+      <div class="lock-hint" style="margin-top:12px">
+        <span>⚠</span><span>临时密码仅本次弹窗展示,关闭后不可再查看,请立即通过安全渠道转交给用户。</span>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('resetModal')">关闭</button>
+      <button class="btn btn-danger" onclick="closeModal('resetModal');toast('密码已重置,全部会话已吊销 · 已记录审计','success','重置成功')">确认重置</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== 危险操作确认弹窗 ===================== -->
+<div class="modal-mask" id="confirmBox">
+  <div class="modal">
+    <div class="modal-head">
+      <div><b style="font-size:16px" id="cfTitle">确认操作</b></div>
+      <button class="icon-btn" onclick="closeModal('confirmBox')" aria-label="关闭">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <p class="muted" id="cfMsg" style="font-size:var(--fs-body)"></p>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('confirmBox')">取消</button>
+      <button class="btn btn-danger" id="cfOk" onclick="closeModal('confirmBox');toast('操作已完成 · 已记录审计与安全事件','success','操作成功')">确认执行</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast 容器 -->
+<div class="toasts" id="toasts"></div>
+
+<script>
+function toggleTheme(){const d=document.documentElement;d.dataset.theme=d.dataset.theme==='dark'?'light':'dark';localStorage.setItem('mock-theme',d.dataset.theme)}
+if(localStorage.getItem('mock-theme'))document.documentElement.dataset.theme=localStorage.getItem('mock-theme');
+function toast(msg,type='success',title='提示'){
+  const t=document.createElement('div');t.className='toast '+type;
+  t.innerHTML=`<span>${type==='success'?'✓':type==='error'?'✕':type==='warning'?'⚠':'ℹ'}</span><div><div class="t-title">${title}</div><div class="t-msg">${msg}</div></div>`;
+  document.getElementById('toasts').appendChild(t);setTimeout(()=>t.remove(),3200);
+}
+function openDrawer(){document.getElementById('editDrawer').classList.add('open');document.getElementById('dMask').classList.add('open')}
+function closeDrawer(){document.getElementById('editDrawer').classList.remove('open');document.getElementById('dMask').classList.remove('open')}
+function openReset(){document.getElementById('resetModal').classList.add('open');
+  document.getElementById('tmpPwd').textContent='Tmp-'+Math.random().toString(36).slice(2,8)+'!'+Math.random().toString(36).slice(2,6)}
+function closeModal(id){document.getElementById(id).classList.remove('open')}
+function copyTmp(btn){navigator.clipboard&&navigator.clipboard.writeText(document.getElementById('tmpPwd').textContent);btn.textContent='已复制 ✓';setTimeout(()=>btn.textContent='复制',1500)}
+function confirmModal(action,acc){
+  document.getElementById('cfTitle').textContent=action==='停用'?'确认停用该用户?':'确认删除该用户?';
+  document.getElementById('cfMsg').innerHTML=action==='停用'
+    ?`停用后 <b>${acc}</b> 将无法登录,其全部会话将被立即吊销;后续可随时"启用"恢复。`
+    :`删除为<b>软删除</b>:<b>${acc}</b> 将不可登录且列表默认不显示;可通过"恢复"入口还原。`;
+  document.getElementById('confirmBox').classList.add('open')}
+function toggleRowMenu(e){e.stopPropagation();const m=e.currentTarget.nextElementSibling;
+  document.querySelectorAll('.menu.open').forEach(x=>{if(x!==m)x.classList.remove('open')});m.classList.toggle('open')}
+document.addEventListener('click',()=>document.querySelectorAll('.menu.open').forEach(m=>m.classList.remove('open')));
+</script>
+</body>
+</html>

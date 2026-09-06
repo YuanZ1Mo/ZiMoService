@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>03 · 强制改密 /force-reset + 404 — ZiMo 设计预览</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  .page-sec{min-height:calc(50vh - 24px);display:flex;align-items:center;justify-content:center;padding:var(--sp-8) var(--sp-4);position:relative;overflow:hidden}
+  .blob{position:absolute;border-radius:50%;filter:blur(70px);opacity:.5;pointer-events:none}
+  .blob-1{width:380px;height:380px;background:rgba(245,158,11,.14);top:-100px;right:-60px}
+  .blob-2{width:320px;height:320px;background:rgba(2,132,199,.15);bottom:-120px;left:-40px}
+  .blob-3{width:340px;height:340px;background:rgba(236,72,153,.13);top:-80px;left:22%}
+  .blob-4{width:300px;height:300px;background:rgba(6,182,212,.16);bottom:-60px;right:18%}
+  .auth-card{width:420px;max-width:100%;background:var(--color-card);border:1px solid var(--color-border-soft);
+    border-radius:var(--r-xl);box-shadow:var(--shadow-lg);padding:var(--sp-8);position:relative;z-index:1}
+  .sec-banner{display:flex;gap:12px;align-items:flex-start;padding:13px 15px;border-radius:var(--r-md);margin-bottom:var(--sp-5);
+    background:var(--color-warning-bg);border:1px solid rgba(245,158,11,.25);color:var(--color-warning);font-size:var(--fs-body)}
+  .sec-banner .ic{flex:none;width:34px;height:34px;border-radius:10px;background:rgba(245,158,11,.15);display:flex;align-items:center;justify-content:center}
+  .sec-banner b{display:block;margin-bottom:2px}
+  .sec-banner .cap{color:var(--color-text-2)}
+  .tips-sec{padding:var(--sp-6) var(--sp-8);display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:var(--sp-4)}
+  /* 404 */
+  .nf-code{font-family:var(--font-num);font-size:110px;font-weight:800;line-height:1;letter-spacing:4px;
+    background:var(--grad-hero);-webkit-background-clip:text;background-clip:text;color:transparent;text-align:center}
+  .nf-404{position:relative;z-index:1;text-align:center;max-width:460px}
+  .nf-shapes{display:flex;justify-content:center;gap:14px;margin-bottom:var(--sp-5)}
+  .nf-shapes i{display:block;border-radius:30% 70% 62% 38%/56% 34% 66% 44%;opacity:.85;animation:floatY 4s ease-in-out infinite}
+  .nf-shapes i:nth-child(1){width:44px;height:44px;background:var(--sky-400)}
+  .nf-shapes i:nth-child(2){width:58px;height:58px;background:var(--cyan-400);animation-delay:.7s}
+  .nf-shapes i:nth-child(3){width:40px;height:40px;background:var(--pink-400);animation-delay:1.4s}
+</style>
+</head>
+<body>
+<div class="mock-bar">
+  <span class="pg">03 · 强制改密 + 404</span><span class="path">/force-reset · /404</span>
+  <span class="spacer"></span>
+  <a href="index.html">← 设计总览</a>
+  <a href="02-register.html">← 注册页</a>
+  <a href="04-portal-home.html">下一页:门户 →</a>
+  <button class="theme-btn" onclick="toggleTheme()">🌗 亮/暗</button>
+</div>
+
+<!-- ===================== 强制改密 ===================== -->
+<div class="page-sec">
+  <div class="blob blob-1"></div><div class="blob blob-2"></div>
+
+  <div class="auth-card anim-fade-up">
+    <div class="brand"><span class="brand-logo">Z</span>ZiMo 门户</div>
+
+    <div class="sec-banner mt-6">
+      <span class="ic">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+      </span>
+      <span><b>需要重置密码</b><span class="cap">管理员已重置你的账号密码。为保障安全,请先设置新密码,再继续使用门户。</span></span>
+    </div>
+
+    <form onsubmit="return demoSubmit(event)">
+      <div class="field">
+        <label class="field-label" for="npwd">新密码</label>
+        <div class="input-wrap">
+          <span class="input-prefix">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="10" width="16" height="10" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+          </span>
+          <input class="input" id="npwd" type="password" placeholder="8-64 位,不含空格" autocomplete="new-password">
+          <span class="input-suffix">
+            <button type="button" class="icon-btn" onclick="const i=document.getElementById('npwd');i.type=i.type==='password'?'text':'password'" aria-label="显示/隐藏密码">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+          </span>
+        </div>
+        <div class="strength">
+          <div class="strength-bars" id="sbars"><i></i><i></i><i></i><i></i></div>
+          <span class="strength-label" id="slabel">与注册一致:8-64 位 · 强度达标(zxcvbn ≥ 2)</span>
+        </div>
+      </div>
+
+      <button class="btn btn-grad btn-lg btn-block" id="rsBtn" type="submit">重置并进入门户</button>
+      <button class="btn btn-ghost btn-block mt-3" type="button" onclick="location.href='01-login.html'">退出登录</button>
+    </form>
+  </div>
+</div>
+
+<div class="tips-sec" style="padding-top:0">
+  <div class="annotate">
+    <b>访问边界(服务端门禁)</b> · force_change=1 的会话仅可访问本页与登出/心跳接口;访问其他页面/接口一律 403 并引导回本页。
+    正常会话访问本页 → 自动跳回 /portal。
+  </div>
+  <div class="annotate">
+    <b>成功流转</b> · 重置成功 → 服务端吊销旧会话并签发新会话(保持登录态) → 清除 force_change → 前端跳 /portal,
+    Toast"密码已更新"。失败(强度不足等)→ 字段级报错,停留本页。
+  </div>
+</div>
+
+<!-- ===================== 404 ===================== -->
+<div class="page-sec">
+  <div class="blob blob-3"></div><div class="blob blob-4"></div>
+
+  <div class="nf-404">
+    <div class="nf-shapes"><i></i><i></i><i></i></div>
+    <div class="nf-code num">404</div>
+    <h1 class="mt-4" style="font-size:var(--fs-h1)">页面走丢了</h1>
+    <p class="muted mt-2">你要找的页面不存在,或者已被移走。<br>检查一下地址,或者从下面继续。</p>
+    <div class="row gap-3 mt-6" style="justify-content:center">
+      <a class="btn btn-grad" href="04-portal-home.html">返回门户</a>
+      <a class="btn btn-secondary" href="01-login.html">去登录</a>
+    </div>
+  </div>
+</div>
+
+<div class="tips-sec" style="padding-top:0;padding-bottom:var(--sp-10)">
+  <div class="annotate">
+    <b>404 规则</b> · 白名单页面,免会话;未登录时按钮显示"去登录",已登录显示"返回门户"(按会话状态切换,由前端路由守卫判定)。
+  </div>
+</div>
+
+<script>
+function toggleTheme(){const d=document.documentElement;d.dataset.theme=d.dataset.theme==='dark'?'light':'dark';localStorage.setItem('mock-theme',d.dataset.theme)}
+if(localStorage.getItem('mock-theme'))document.documentElement.dataset.theme=localStorage.getItem('mock-theme');
+document.getElementById('npwd').addEventListener('input',e=>{
+  const v=e.target.value;let score=0;
+  if(v.length>=8)score++;if(/[A-Z]/.test(v)&&/[a-z]/.test(v))score++;if(/\d/.test(v))score++;if(/[^A-Za-z0-9]/.test(v))score++;
+  if(v.length<8)score=Math.min(score,1);
+  document.getElementById('sbars').className='strength-bars s'+score;
+  document.getElementById('slabel').textContent=['与注册一致:8-64 位 · 强度达标(zxcvbn ≥ 2)','强度:过弱','强度:一般','强度:良好','强度:很强'][score];
+});
+function demoSubmit(e){e.preventDefault();const b=document.getElementById('rsBtn');b.disabled=true;b.textContent='重置中…';
+  setTimeout(()=>{b.disabled=false;b.textContent='重置并进入门户';alert('演示:成功后吊销旧会话并签发新会话,跳转 /portal')},900);return false}
+</script>
+</body>
+</html>

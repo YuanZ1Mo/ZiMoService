@@ -10,12 +10,20 @@
 #include <drogon/HttpResponse.h>
 
 #include "zm_util_json.h"   // ZMJSON
-
-#include <chrono>
-#include <filesystem>
-#include <thread>
-
 #include "zm_util_logger.h"
+
+// 业务模块
+#include "modules/module_db.h"
+#include "modules/module_user.h"
+#include "modules/module_password.h"
+#include "modules/module_session.h"
+#include "modules/module_permission.h"
+#include "modules/module_security.h"
+#include "modules/module_audit.h"
+#include "modules/module_gate.h"
+#include "modules/module_auth.h"
+#include "modules/module_user_admin.h"
+#include "modules/module_portal.h"
 
 using namespace drogon;
 using std::string;
@@ -29,9 +37,7 @@ ServicePortal::ServicePortal(NetDock* netDock)
 {
 }
 
-ServicePortal::~ServicePortal()
-{
-}
+ServicePortal::~ServicePortal() = default;
 
 void ServicePortal::Init()
 {
@@ -44,12 +50,15 @@ void ServicePortal::Init()
     m_jrpc = m_netDock->GetJsonRpcServer();
     m_restful = m_netDock->GetRestfulServer();
 
+    // 先创建业务模块(数据库建库建表种子;依赖注入)
+    CreateModules();
+
     DEFAULT_LOG_INFO("Portal::Init 前端");
     RegisterFrontendRoutes(m_frontend);
     DEFAULT_LOG_INFO("Portal::Init JRPC");
     RegisterJsonRpcRoutes(m_jrpc);
     DEFAULT_LOG_INFO("Portal::Init REST");
-    RegisterRestfulTestRoutes(m_restful);
+    RegisterRestfulRoutes(m_restful);
     DEFAULT_LOG_INFO("Portal::Init CORS");    // 预检+CORS 挂在 RESTful 面(业务层显式,FR-21;设计 §11.4)
     RegisterRestfulCors(m_restful);
     DEFAULT_LOG_INFO("Portal::Init 完成");
@@ -69,322 +78,115 @@ bool ServicePortal::BroadcastMessage(const string& topic, const string& content,
 }
 
 // ============================================================================
-// 前端页面路由(80/443;页面别名按旧迁移表,设计 §11.2)
+// 业务模块装配(依赖方向:编排模块 → 数据服务模块 → DbModule;门禁最后装,先于接口注册)
 // ============================================================================
-
-/// 由文档根 + 相对路径构造静态页响应
-/// 经 SendFileCoro(方案甲):自动获得 Range/206/416 与 Accept-Ranges(页面大图/
-/// JS 断点续传、视频 seek 收益);缺页仍走自定义 404 页(HTML,保持前端语义),
-/// 区别于 SendFileCoro 自身的 JSON 404 错误包。
-ZmHttpCoroHandler MakePageHandler(ZmHttpFrontendServer* fe, const string& www,
-                                 const string& relPath)
+void ServicePortal::CreateModules()
 {
-    return [fe, www, relPath](HttpRequestPtr req) -> Task<HttpResponsePtr> {
-        string full = www;
-        if (!full.empty() && full.back() != '\\' && full.back() != '/')
-            full += "\\";
-        full += relPath;
-        // 缺页:走全局 setCustom404Page 的 HTML 404 页(而非 SendFileCoro 的 JSON 404)
-        if (!std::filesystem::exists(full))
-            co_return HttpResponse::newNotFoundResponse();
-        co_return co_await fe->SendFileCoro(req, full);
-    };
+    // 数据访问(全新建库建表 + 种子;库文件 exe 同级 db\user.db)
+    m_db = std::make_unique<ZmDbModule>();
+    if (!m_db->Init(ZmExeDir() + "db\\user.db"))
+    {
+        DEFAULT_LOG_ERROR("ServicePortal::CreateModules: ZmDbModule::Init 失败,业务功能不可用");
+    }
+    else
+    {
+        m_db->StartPeriodicCleanup();
+    }
+    // 数据服务模块
+    m_user = std::make_unique<ZmUserModule>(m_db.get());
+    m_password = std::make_unique<ZmPasswordModule>(m_user.get());
+    m_session = std::make_unique<ZmSessionModule>(m_db.get());
+    m_permission = std::make_unique<ZmPermissionModule>(m_db.get(), m_user.get());
+    m_security = std::make_unique<ZmSecurityModule>(m_db.get());
+    m_audit = std::make_unique<ZmAuditModule>(m_db.get());
+    // 门禁(横切;先装再注册业务接口)
+    m_gate = std::make_unique<ZmAuthGateModule>(m_session.get(), m_permission.get());
+    // 编排模块
+    m_auth = std::make_unique<ZmAuthModule>(m_restful, m_user.get(), m_password.get(),
+                                            m_session.get(), m_security.get(),
+                                            m_audit.get(), m_permission.get(), m_db.get(), m_gate.get());
+    m_admin = std::make_unique<ZmUserAdminModule>(m_restful, m_user.get(), m_password.get(),
+                                                  m_session.get(), m_permission.get(),
+                                                  m_security.get(), m_audit.get(), m_db.get(), m_gate.get());
+    m_portal = std::make_unique<ZmPortalModule>(m_restful, m_user.get(), m_session.get(),
+                                                m_permission.get(), m_gate.get());
 }
 
+// ============================================================================
+// 前端页面路由(80/443)
+// 页面组织与鉴权跳转规则见《2026-09-05-用户系统业务需求.md》§2.6/§3.1-3.3:
+//   SPA 单一 index.html 由前端路由承载(/login /register /reset /force-reset /404
+//   与 /portal 及子路径);页面渲染 + 302 跳转 + 白名单全部由门禁 advice 处理
+//   (module_gate),本方法不再注册页面 handler。
+// ============================================================================
 void ServicePortal::RegisterFrontendRoutes(ZmHttpFrontendServer* fe)
 {
     if (!fe)
         return;
-    const string& www = fe->GetDocumentRoot();
-
-    // 逐条页面别名(旧前端路由表)
-    fe->RegisterCoro("/", Get, MakePageHandler(fe, www, "html\\index.html"));
-    fe->RegisterCoro("/login", Get, MakePageHandler(fe, www, "html\\login.html"));
-    fe->RegisterCoro("/register", Get, MakePageHandler(fe, www, "html\\register.html"));
-    fe->RegisterCoro("/reset", Get, MakePageHandler(fe, www, "html\\reset.html"));
-    fe->RegisterCoro("/force-reset", Get, MakePageHandler(fe, www, "html\\force-reset.html"));
-    fe->RegisterCoro("/404", Get, MakePageHandler(fe, www, "html\\404.html"));
-
-    // /share/{token} 302 → RESTful 端口分享页(设计 §11.2;目标 URL 业务期再核定)
-    const bool httpsMode = fe->IsHttps();
-    fe->RegisterCoro("/share/{1}", Get,
-        [this, httpsMode](HttpRequestPtr req) -> Task<HttpResponsePtr> {
-            // via-regex 路由:捕获组经 getRoutingParameters() 获取
-            const auto& params = req->getRoutingParameters();
-            string token = params.empty() ? "" : params[0];
-            string host = req->getHeader("Host");
-            size_t colon = host.rfind(':');
-            if (colon != string::npos && host.find(']') == string::npos)
-                host = host.substr(0, colon);
-            // 分享目标:rest 面根路径 + /share/{token}
-            string target = m_restful->GetRootPath() + "/share/" + token;
-            string loc = (httpsMode ? "https://" : "http://") + host + ":39441" + target;
-            co_return HttpResponse::newRedirectionResponse(loc);
-        });
-
-    // ── 前端面可配置结构(业务层提供具体路径;平台层只给机制,见 zm_net_http_frontend_server) ──
-    // SPA 回落:当前 www 下无物理 /portal 目录,全部回落 portal.html(与旧 PortalModule 语义等价)
-    fe->AddSpaFallback("/portal", "html/portal.html");
-    // /doc 目录物理存在于 www 下,显式封禁(验收:不可达)
-    fe->AddDeniedPath("/doc");
-
-    // ── 客户端测试目标(2026-09-04;供 http/https 客户端回归测试,见 tests/http_client) ──
-    // 回显方法/路径/query/全部请求头(跨域剥头验证:客户端经 80→443 重定向链命中本端点,
-    // 由响应 headers 判定 Authorization 等敏感头是否被剥除)。
-    fe->RegisterCoro("/test/client/echo", Get,
-        [](HttpRequestPtr req) -> Task<HttpResponsePtr> {
-            ZMJSON d;
-            d["method"] = req->getMethodString();
-            d["path"] = req->path();
-            d["query"] = req->getQuery();
-            ZMJSON hs = ZMJSON::object();
-            for (const auto& kv : req->getHeaders())
-                hs[kv.first] = kv.second;
-            d["headers"] = hs;
-            co_return ZmHttpServer::JsonResponse(200, d);
-        });
+    // 鉴权门禁(前端面):白名单 / 302 / force_change 边界 / SPA 页面响应
+    m_gate->SetupFrontendGate(fe);
 }
 
 // ============================================================================
 // JSON-RPC(39440):协议校验与信封由平台面内建(zm_net_http_jsonrpc_server),
 // 业务层只注册 method 处理器;ping 为平台内建,无需注册。
+// 本期无 JRPC 业务接口(用户系统全部走 RESTful)。
 // ============================================================================
 void ServicePortal::RegisterJsonRpcRoutes(ZmHttpJsonRpcServer* jrpc)
 {
-    if (!jrpc)
-        return;
-
-    // 演示业务注册形态:echo(原样回显 params;非平台内建)
-    jrpc->RegisterMethod("echo",
-        [](const ZMJSON& params, ZMJSON& result, ZMJSON& error) {
-            (void)error;
-            result["params"] = params;
-            return true;
-        });
+    (void)jrpc;
 }
 
 // ============================================================================
-// RESTful 测试接口(39441 /zimo/api;本期仅测试,不对接业务)
+// RESTful(39441 /zimo/api):门禁 advice 先行,再按模块注册业务接口
+// (注册与命名规范见《2026-09-05-用户系统模块设计.md》§5)。
 // ============================================================================
-void ServicePortal::RegisterRestfulTestRoutes(ZmHttpRestfulServer* rest)
+void ServicePortal::RegisterRestfulRoutes(ZmHttpRestfulServer* rest)
 {
     if (!rest)
         return;
-
-    // 根路径可自定义(service_define.h 宏默认);测试路由统一以根前缀注册
-    const string& rpcRoot = rest->GetRootPath();
-
-    // 系统 ping(与旧版 RESTful 系统路由一致;基类默认 /ping 为 FR-23 全局健康检查)
-    rest->RegisterCoro(rpcRoot + "/ping", Get,
-        [](HttpRequestPtr req) -> Task<HttpResponsePtr> {
-            ZMJSON d;
-            d["pong"] = true;
-            co_return ZmHttpServer::JsonResponse(200, d);
-        });
-
-    // 基本 JSON / 错误包
-    rest->RegisterCoro(rpcRoot + "/test/json", Get,
-        [](HttpRequestPtr req) -> Task<HttpResponsePtr> {
-            ZMJSON d;
-            d["name"] = "ZmHttpServer";
-            d["test"] = true;
-            co_return ZmHttpServer::JsonResponse(200, d);
-        });
-
-    rest->RegisterCoro(rpcRoot + "/test/error", Get,
-        [](HttpRequestPtr req) -> Task<HttpResponsePtr> {
-            co_return ZmHttpServer::ErrorResponse(500, "internal server error");
-        });
-
-    // 路径参数 / query 参数
-    rest->RegisterCoro(rpcRoot + "/test/echo/{1}", Get,
-        [](HttpRequestPtr req) -> Task<HttpResponsePtr> {
-            const auto& params = req->getRoutingParameters();
-            ZMJSON d;
-            d["path"] = params.empty() ? "" : ZMJSON(params[0]);
-            d["q"] = req->getParameter("q");
-            d["method"] = req->getMethodString();
-            co_return ZmHttpServer::JsonResponse(200, d);
-        });
-
-    // JSONP(FR-24)
-    rest->RegisterCoro(rpcRoot + "/test/jsonp", Get,
-        [](HttpRequestPtr req) -> Task<HttpResponsePtr> {
-            ZMJSON d;
-            d["pong"] = true;
-            co_return ZmHttpServer::JsonpResponse(req, d);
-        });
-
-    // 文件传输(FR-12 方案甲 + Range;取 www/html/portal.html 作为样本)
-    rest->RegisterCoro(rpcRoot + "/test/download", Get,
-        [this](HttpRequestPtr req) -> Task<HttpResponsePtr> {
-            string www = m_netDock->GetFrontendServer()->GetDocumentRoot();
-            string full = www;
-            if (!full.empty() && full.back() != '\\' && full.back() != '/')
-                full += "\\";
-            full += "html\\portal.html";
-            co_return co_await m_restful->SendFileHybridCoro(req, full, "portal.html");
-        });
-
-    // 文件传输(FR-12 方案乙 + Range;样本 = www/__selftest/blob.bin(测试路由,业务期替换))
-    rest->RegisterCoro(rpcRoot + "/test/download-stream", Get,
-        [this](HttpRequestPtr req) -> Task<HttpResponsePtr> {
-            string www = m_netDock->GetFrontendServer()->GetDocumentRoot();
-            string full = www;
-            if (!full.empty() && full.back() != '\\' && full.back() != '/')
-                full += "\\";
-            full += "__selftest\\blob.bin";
-            ZmHttpSendFileOptions opts;
-            opts.interBlockMs = 5;   // 测试:块间快速推进
-            co_return co_await m_restful->SendFileStreamCoro(req, full, "blob.bin", opts);
-        });
-
-    // 文件传输(FR-12 方案乙验证):exe 同级 modules\filehub\0\ 下的 3.52GB iso
-    // (≥2GB 阈值 → SendFileStreamCoro,HttpIoPool 分块流式;临时测试口,验证后删)
-    rest->RegisterCoro(rpcRoot + "/test/download-iso", Get,
-        [this](HttpRequestPtr req) -> Task<HttpResponsePtr> {
-            string full = ZmExeDir() + "modules\\filehub\\0\\"
-                          "cn_office_professional_plus_2019_x86_x64_dvd_5e5be643.iso";
-            co_return co_await m_restful->SendFileHybridCoro(
-                req, full, "cn_office_professional_plus_2019_x86_x64_dvd_5e5be643.iso");
-        });
-
-    // 业务 deadline(FR-14):睡眠 3s > deadline 1s → 504 且只回一次
-    // ── 限流验证(§16.4;RL1-7):per-IP 5/min + overlay 动态管理测试端点 ──
-    {
-        auto lim = ZmHttpServer::ZmIpRateLimiter::Create(
-            drogon::RateLimiterType::kFixedWindow, 5, 60.0);
-        rest->AddFilter("test-rate", [lim](HttpRequestPtr req, HttpResponsePtr& resp) {
-            return lim->Check(req, resp);
-        });
-        rest->RegisterCoro(rpcRoot + "/test/rate", Get,
-            [](HttpRequestPtr req) -> Task<HttpResponsePtr> {
-                co_return ZmHttpServer::JsonResponse(200, ZMJSON());
-            }, {"test-rate"});
-        // 动态规则端点:POST /test/rate-act/{ip}/{action}(block/unblock/allow/rem/quota)
-        rest->RegisterCoro(rpcRoot + "/test/rate-act/{1}/{2}", Post,
-            [](HttpRequestPtr req) -> Task<HttpResponsePtr> {
-                const auto& p = req->getRoutingParameters();
-                string ip = p.size() > 0 ? p[0] : "";
-                string act = p.size() > 1 ? p[1] : "";
-                if (act == "block")       ZmHttpServer::SetIpBlocked(ip);
-                else if (act == "unblock") ZmHttpServer::UnblockIp(ip);
-                else if (act == "allow")  ZmHttpServer::SetIpAllowed(ip);
-                else if (act == "rem")    ZmHttpServer::RemoveRateRule(ip);
-                else if (act == "quota")  ZmHttpServer::SetIpQuota(ip, 2, 60.0);
-                else
-                    co_return ZmHttpServer::ErrorResponse(400, "bad action");
-                ZMJSON d;
-                d["ok"] = true;
-                d["ip"] = ip;
-                d["hit"] = ZmHttpServer::IsRateRuleHit(ip);
-                co_return ZmHttpServer::JsonResponse(200, d);
-            });
-    }
-
-    rest->RegisterCoroWithDeadline(rpcRoot + "/test/slow", Get,
-        [](HttpRequestPtr req) -> Task<HttpResponsePtr> {
-            co_await ZmHttpServer::RunOnPool<int>([]() -> int {
-                std::this_thread::sleep_for(std::chrono::seconds(3));
-                return 0;
-            });
-            ZMJSON d;
-            d["slow"] = false;
-            co_return ZmHttpServer::JsonResponse(200, d);
-        }, 1000);
-
-    // 阻塞离核演示(FR-19):PBKDF2 模拟(实质为 sleep,返回计时结果)
-    rest->RegisterCoro(rpcRoot + "/test/pool", Get,
-        [](HttpRequestPtr req) -> Task<HttpResponsePtr> {
-            auto started = std::chrono::steady_clock::now();
-            int r = co_await ZmHttpServer::RunOnPool<int>([]() -> int {
-                std::this_thread::sleep_for(std::chrono::milliseconds(300));
-                return 42;
-            });
-            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                          std::chrono::steady_clock::now() - started).count();
-            ZMJSON d;
-            d["value"] = r;
-            d["usedPool"] = static_cast<int64_t>(ms) >= 0;
-            co_return ZmHttpServer::JsonResponse(200, d);
-        });
-
-    // 流式上传演示(FR-15 路径 B):路由级 10GB 上限经注册参数 maxBytes(基类自动
-    // X-File-Size 早拒);块到即写系统临时目录;上限经 attributes 取出做落盘兜底
-    rest->RegisterStreamCoro(rpcRoot + "/test/upload-stream", Post,
-        [](HttpRequestPtr req, RequestStreamPtr stream) -> Task<HttpResponsePtr> {
-            // 上限由注册参数内置(基类已做早拒);经 attributes 取出,用于落盘兜底
-            uint64_t kUploadMax = 10ULL * 1024 * 1024 * 1024;
-            try { kUploadMax = req->getAttributes()->get<uint64_t>("ZmStreamMaxBytes"); }
-            catch (...) {}
-
-            std::error_code ec;
-            string dest = (std::filesystem::temp_directory_path() /
-                           "zmsvc_upload_received.bin").string();
-            bool tooLarge = false;
-            ZmHttpUploadFileOptions opts;
-            opts.maxBytes = kUploadMax;
-            bool ok = co_await ZmHttpServer::SaveStreamToFile(
-                std::move(stream), dest, opts, &tooLarge);
-
-            ZMJSON d;
-            if (!ok)
-            {
-                d["ok"] = false;
-                d["tooLarge"] = tooLarge;
-                d["dest"] = dest;
-                co_return ZmHttpServer::JsonResponse(tooLarge ? 413 : 400, d);
-            }
-            d["ok"] = true;
-            d["size"] = static_cast<uint64_t>(std::filesystem::file_size(dest, ec));
-            co_return ZmHttpServer::JsonResponse(200, d);
-        },
-        {}, 10ULL * 1024 * 1024 * 1024);   // 路由级上限:10GB
-
-    // ── 第二期验证路由(2026-09-03;验收后按计划保留/移除) ──
-    // multipart 回显(字段/文件清单;业务落盘经 SaveMultipartFile)
-    rest->RegisterMultipartCoro(rpcRoot + "/test/multipart", Post,
-        [](HttpRequestPtr req, ZmHttpServer::ZmMultipartResult res) -> Task<HttpResponsePtr> {
-            ZMJSON d;
-            d["fields"] = res.fields.size();
-            ZMJSON files = ZMJSON::array();
-            for (const auto& f : res.files)
-            {
-                ZMJSON fo;
-                fo["item"] = f.itemName;
-                fo["name"] = f.fileName;
-                fo["size"] = f.size;
-                files.push_back(fo);
-            }
-            d["files"] = files;
-            co_return ZmHttpServer::JsonResponse(200, d);
-        });
-    // WebSocket echo(FR-16)
-    ZmHttpServer::WsCallbacks wsCb;
-    wsCb.onAuth = [](HttpRequestPtr req) {
-        // 本期测试:放行(业务期在此接 AuthAndTouch 会话校验)
-        return true;
-    };
-    wsCb.onOpen = [](const WebSocketConnectionPtr& conn, const HttpRequestPtr& req) {
-        conn->send("welcome");
-    };
-    wsCb.onMessage = [](const WebSocketConnectionPtr& conn, string&& msg, WebSocketMessageType type) {
-        conn->send("echo:" + msg, type);
-    };
-    wsCb.onClose = [](const WebSocketConnectionPtr& conn) {
-        DEFAULT_LOG_INFO("ws 连接关闭");
-    };
-    rest->RegisterWebSocket(rpcRoot + "/test/ws", wsCb);
+    // 鉴权门禁(RESTful 面):会话校验 / force_change 边界 / 接口级权限(横切)
+    m_gate->SetupRestfulGate(rest);
+    // 业务模块接口
+    m_auth->RegisterRoutes();
+    m_admin->RegisterRoutes();
+    m_portal->RegisterRoutes();
 }
+
+// ============================================================================
+// RESTful CORS(39441;预检 + 响应附加头,业务层显式,FR-21;设计 §11.4)
+//   放行规则:CORS 白名单(Options.corsAllowedOrigins)命中,或"同站跨端口"
+//   (Origin 与请求 Host 同 host,仅端口不同——页面 80/443 与 API 39441 场景)。
+// ============================================================================
+namespace
+{
+/// 同站判断:Origin(scheme://host[:port])与 Host 头(host[:port])去端口后一致
+bool IsSameSiteHost(const string& origin, const string& hostHeader)
+{
+    size_t p = origin.find("://");
+    if (p == string::npos)
+        return false;
+    string o = origin.substr(p + 3);
+    auto stripPort = [](string h) -> string {
+        if (!h.empty() && h.front() == '[')
+        {   // IPv6 字面量
+            size_t e = h.find(']');
+            return e == string::npos ? h : h.substr(0, e + 1);
+        }
+        size_t c = h.rfind(':');
+        return c == string::npos ? h : h.substr(0, c);
+    };
+    return stripPort(o) == stripPort(hostHeader);
+}
+}  // namespace
 
 void ServicePortal::RegisterRestfulCors(ZmHttpRestfulServer* rest)
 {
     if (!rest)
         return;
 
-    // CORS 白名单已收敛为 Options.corsAllowedOrigins(net_dock 配置);
-    // 未命中(含空名单)→ 预检 403、响应不回显 CORS 头,浏览器判跨域失败。
-    // 需跨域的调用方在 net_dock 登记 Origin(精确全串,如 https://www.xxx.com)。
+    // CORS 白名单(Options.corsAllowedOrigins)+ 同站跨端口自动放行;
+    // 均未命中 → 预检 403、响应不回显 CORS 头,浏览器判跨域失败。
     // OPTIONS 预检(FR-21)
     rest->RegisterPreRouting([](const HttpRequestPtr& req, AdviceCallback&& cb,
                                 AdviceChainCallback&& cc) {
@@ -394,9 +196,10 @@ void ServicePortal::RegisterRestfulCors(ZmHttpRestfulServer* rest)
             return;
         }
         string origin = req->getHeader("Origin");
-        if (!ZmHttpServer::IsCorsOriginAllowed(origin))
+        if (!ZmHttpServer::IsCorsOriginAllowed(origin) &&
+            !IsSameSiteHost(origin, req->getHeader("Host")))
         {
-            // 白名单外:拒绝预检,不带任何 CORS 头(浏览器侧表现为跨域失败)
+            // 白名单外且非同站:拒绝预检,不带任何 CORS 头(浏览器侧表现为跨域失败)
             cb(ZmHttpServer::ErrorResponse(403, "origin not allowed"));
             return;
         }
@@ -404,18 +207,19 @@ void ServicePortal::RegisterRestfulCors(ZmHttpRestfulServer* rest)
         auto resp = ZmHttpServer::JsonResponse(200, d);
         resp->addHeader("Access-Control-Allow-Origin", origin);
         resp->addHeader("Access-Control-Allow-Credentials", "true");
-        resp->addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        resp->addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PATCH, DELETE");
         resp->addHeader("Access-Control-Allow-Headers",
                         "Origin, Content-Type, Accept, X-File-Size");
         cb(resp);
     });
 
-    // 响应附加 CORS 头(仅白名单命中才回显 Origin + 凭据)
+    // 响应附加 CORS 头(白名单命中或同站跨端口才回显 Origin + 凭据)
     rest->RegisterPreSending([](const HttpRequestPtr& req, const HttpResponsePtr& resp) {
         if (req->method() == Options)
             return;   // 预检响应已带
         string origin = req->getHeader("Origin");
-        if (!ZmHttpServer::IsCorsOriginAllowed(origin))
+        if (!ZmHttpServer::IsCorsOriginAllowed(origin) &&
+            !IsSameSiteHost(origin, req->getHeader("Host")))
             return;
         if (req->getHeader("cookie").find("zm_session") != string::npos ||
             resp->getStatusCode() >= k200OK)

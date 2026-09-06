@@ -1,0 +1,73 @@
+#ifndef ZM_MODULE_USER_ADMIN_H
+#define ZM_MODULE_USER_ADMIN_H
+
+// ============================================================================
+// ZmUserAdminModule:用户管理模块(设计文档 §3.9,系统管理-用户管理)
+//  全部管理操作编排(列表/列元数据/属性修改/提降权/模块授权/停用启用/
+//  删除恢复/强制重置密码);可见权限点 userManager(门禁已拦截)。
+//  等级压制:操作者 level > 目标,不可操作自己;developer(level 3)天然自我保护。
+//  每次操作联动操作审计 + 安全事件 + 权限缓存失效 + 策略版本递增。
+// ============================================================================
+
+#include <drogon/HttpRequest.h>
+#include <drogon/HttpResponse.h>
+#include <drogon/utils/coroutine.h>
+#include <zm_util_json.h>
+
+#include <cstdint>
+#include <string>
+
+class ZmDbModule;
+class ZmUserModule;
+class ZmPasswordModule;
+class ZmSessionModule;
+class ZmPermissionModule;
+class ZmSecurityModule;
+class ZmAuditModule;
+class ZmHttpRestfulServer;
+class ZmAuthGateModule;
+struct ZmSessionCtx;
+
+class ZmUserAdminModule
+{
+public:
+    ZmUserAdminModule(ZmHttpRestfulServer* rest, ZmUserModule* user,
+                      ZmPasswordModule* password, ZmSessionModule* session,
+                      ZmPermissionModule* permission, ZmSecurityModule* security,
+                      ZmAuditModule* audit, ZmDbModule* db, ZmAuthGateModule* gate);
+    ~ZmUserAdminModule();
+
+    void RegisterRoutes();
+
+private:
+    /// 等级压制 + 不可操作自己;返回错误信息(空 = 允许)
+    static std::string CheckOperable(const ZmSessionCtx& operatorCtx, int64_t targetUid,
+                                     int targetLevel);
+    /// 从请求提取 {1} 占位符 uid(先取参数,取不到则从路径解析)
+    static int64_t UidOf(const drogon::HttpRequestPtr& req);
+
+    drogon::Task<drogon::HttpResponsePtr> HandleList(drogon::HttpRequestPtr req);
+    drogon::Task<drogon::HttpResponsePtr> HandleColumns(drogon::HttpRequestPtr req);
+    drogon::Task<drogon::HttpResponsePtr> HandlePermCodes(drogon::HttpRequestPtr req);
+    drogon::Task<drogon::HttpResponsePtr> HandleGet(drogon::HttpRequestPtr req);
+    drogon::Task<drogon::HttpResponsePtr> HandlePatch(drogon::HttpRequestPtr req);
+    drogon::Task<drogon::HttpResponsePtr> HandleRole(drogon::HttpRequestPtr req);
+    drogon::Task<drogon::HttpResponsePtr> HandlePermissions(drogon::HttpRequestPtr req);
+    drogon::Task<drogon::HttpResponsePtr> HandleDisable(drogon::HttpRequestPtr req);
+    drogon::Task<drogon::HttpResponsePtr> HandleEnable(drogon::HttpRequestPtr req);
+    drogon::Task<drogon::HttpResponsePtr> HandleDelete(drogon::HttpRequestPtr req);
+    drogon::Task<drogon::HttpResponsePtr> HandleRestore(drogon::HttpRequestPtr req);
+    drogon::Task<drogon::HttpResponsePtr> HandleResetPassword(drogon::HttpRequestPtr req);
+
+    ZmHttpRestfulServer* m_rest = nullptr;
+    ZmUserModule* m_user = nullptr;
+    ZmPasswordModule* m_password = nullptr;
+    ZmSessionModule* m_session = nullptr;
+    ZmPermissionModule* m_permission = nullptr;
+    ZmSecurityModule* m_security = nullptr;
+    ZmAuditModule* m_audit = nullptr;
+    ZmDbModule* m_db = nullptr;
+    ZmAuthGateModule* m_gate = nullptr;
+};
+
+#endif // ZM_MODULE_USER_ADMIN_H

@@ -1,3 +1,7 @@
 .vs
+*.vcxproj.user
 Release_LibZiMoPublic
 Release
+docs/issues
+docs/plans
+docs/tests

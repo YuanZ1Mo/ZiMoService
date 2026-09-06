@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>02 · 注册页 /register — ZiMo 设计预览</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  .auth-stage{min-height:calc(100vh - 48px);display:flex;align-items:center;justify-content:center;padding:var(--sp-8) var(--sp-4);position:relative;overflow:hidden}
+  .blob{position:absolute;border-radius:50%;filter:blur(70px);opacity:.5;pointer-events:none}
+  .blob-1{width:420px;height:420px;background:rgba(6,182,212,.18);top:-120px;left:-80px}
+  .blob-2{width:340px;height:340px;background:rgba(236,72,153,.13);bottom:-120px;right:-40px}
+  .blob-3{width:240px;height:240px;background:rgba(2,132,199,.14);top:16%;right:16%}
+  .auth-card{width:440px;max-width:100%;background:var(--color-card);border:1px solid var(--color-border-soft);
+    border-radius:var(--r-xl);box-shadow:var(--shadow-lg);padding:var(--sp-8);position:relative;z-index:1}
+  .auth-card h1{font-size:26px;line-height:34px}
+  .auth-card .sub{color:var(--color-text-2);margin-top:4px;margin-bottom:var(--sp-5)}
+  .first-user-chip{display:flex;gap:9px;align-items:flex-start;padding:10px 13px;border-radius:var(--r-md);
+    background:var(--grad-brand-soft);font-size:var(--fs-cap);line-height:19px;color:var(--color-text-2);margin-bottom:var(--sp-5)}
+  .states-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:var(--sp-4);padding:0 var(--sp-8) var(--sp-10)}
+  .state-card{background:var(--color-card);border:1px solid var(--color-border-soft);border-radius:var(--r-lg);padding:var(--sp-5);box-shadow:var(--shadow-sm)}
+  .state-card h4{font-size:var(--fs-body);margin-bottom:var(--sp-3)}
+  .mini-field{margin-bottom:10px}
+  .mini-field .lbl{font-size:var(--fs-cap);color:var(--color-text-2);margin-bottom:4px}
+  .mini-field .box{height:36px;border:1.5px solid var(--color-border);border-radius:var(--r-sm);display:flex;align-items:center;padding:0 10px;font-size:var(--fs-cap);color:var(--color-text-3)}
+  .mini-field .box.err{border-color:var(--color-danger);color:var(--color-danger);font-weight:600}
+  .mini-field .fe{font-size:11px;color:var(--color-danger);margin-top:3px}
+  .tips-sec{padding:var(--sp-6) var(--sp-8) var(--sp-10);display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:var(--sp-4)}
+</style>
+</head>
+<body>
+<div class="mock-bar">
+  <span class="pg">02 · 注册页</span><span class="path">/register</span>
+  <span class="spacer"></span>
+  <a href="index.html">← 设计总览</a>
+  <a href="01-login.html">← 登录页</a>
+  <a href="03-force-reset.html">下一页:强制改密 →</a>
+  <button class="theme-btn" onclick="toggleTheme()">🌗 亮/暗</button>
+</div>
+
+<!-- ===================== 页面主体 ===================== -->
+<div class="auth-stage">
+  <div class="blob blob-1"></div><div class="blob blob-2"></div><div class="blob blob-3"></div>
+
+  <div class="auth-card anim-fade-up">
+    <div class="brand"><span class="brand-logo">Z</span>ZiMo 门户</div>
+    <h1 class="mt-4">创建你的账号 ✨</h1>
+    <div class="sub">一分钟完成注册,自动登录直达门户</div>
+
+    <!-- 注册方式切换:仅账号注册可用 -->
+    <div class="seg mb-6" role="tablist">
+      <button class="seg-item active">账号注册</button>
+      <button class="seg-item" disabled title="暂未开放">手机注册</button>
+      <button class="seg-item" disabled title="暂未开放">邮箱注册</button>
+    </div>
+
+    <!-- 角色分配说明(首个注册用户) -->
+    <div class="first-user-chip">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0284C7" stroke-width="2" stroke-linecap="round" style="flex:none;margin-top:1px"><path d="m12 2 2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.5-4.8 2.5.9-5.4L4.2 7.7l5.4-.8Z"/></svg>
+      <span>系统首个注册的用户将自动获得 <b>developer</b>(开发者)身份;之后的注册用户为 <b>user</b>(普通用户)身份。</span>
+    </div>
+
+    <!-- 服务端错误演示位(表单顶部兜底) -->
+    <div class="form-banner banner-error" id="topErr" hidden style="display:none;align-items:flex-start;gap:10px;padding:11px 14px;border-radius:12px;font-size:14px;margin-bottom:16px;background:var(--color-danger-bg);color:var(--color-danger);border:1px solid rgba(220,38,38,.2)">
+      <span>✕</span><span>注册过于频繁,请 1 分钟后再试</span>
+    </div>
+
+    <form onsubmit="return demoSubmit(event)">
+      <div class="field">
+        <label class="field-label" for="acc">账号</label>
+        <div class="input-wrap">
+          <span class="input-prefix">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg>
+          </span>
+          <input class="input" id="acc" placeholder="4-30 位小写字母 / 数字 / _ / -" autocapitalize="none" spellcheck="false">
+        </div>
+        <span class="field-hint" id="accHint">首尾不能是 _ 或 -,注册后不可修改</span>
+        <span class="field-error" id="accErr" hidden>账号已存在,换一个试试</span>
+      </div>
+
+      <div class="field">
+        <label class="field-label" for="pwd">密码</label>
+        <div class="input-wrap">
+          <span class="input-prefix">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="10" width="16" height="10" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+          </span>
+          <input class="input" id="pwd" type="password" placeholder="8-64 位,不含空格" autocomplete="new-password">
+          <span class="input-suffix">
+            <button type="button" class="icon-btn" onclick="const i=document.getElementById('pwd');i.type=i.type==='password'?'text':'password'" aria-label="显示/隐藏密码">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+          </span>
+        </div>
+        <!-- zxcvbn 本地强度评估:实时 -->
+        <div class="strength">
+          <div class="strength-bars" id="sbars"><i></i><i></i><i></i><i></i></div>
+          <span class="strength-label" id="slabel">密码强度:输入密码后实时评估</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="field-label" for="nick">昵称 <span class="opt">选填,默认与账号一致</span></label>
+        <div class="input-wrap">
+          <span class="input-prefix">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 8a5 5 0 1 0-10 0c0 4-2 5-2 5h14s-2-1-2-5"/><path d="M10 20a2.2 2.2 0 0 0 4 0"/></svg>
+          </span>
+          <input class="input" id="nick" placeholder="1-20 个字符,不含空白">
+        </div>
+        <span class="field-error" id="nickErr" hidden>昵称不能包含空白字符</span>
+      </div>
+
+      <button class="btn btn-grad btn-lg btn-block" id="regBtn" type="submit">注 册</button>
+    </form>
+
+    <div class="auth-foot row between mt-6" style="padding-top:var(--sp-5);border-top:1px solid var(--color-border-soft)">
+      <span class="muted">已有账号?<a href="01-login.html" class="link-btn">返回登录</a></span>
+      <span class="faint cap">注册即代表同意社区规范</span>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== 交互行为说明 ===================== -->
+<div class="tips-sec">
+  <div class="annotate">
+    <b>实时校验(本地优先)</b> · 账号:失焦校验格式(4-30 位 [a-z0-9_-],首尾非 _/-,自动转小写);
+    密码:输入即评估强度(zxcvbn 本地,≥2 达标,同时展示 4 档强度条);昵称:输入时校验空白字符。
+  </div>
+  <div class="annotate">
+    <b>服务端错误映射</b> · USER_EXISTS → 账号字段下方"账号已存在";PWD_WEAK → 密码字段下方"密码强度过低";
+    RATE_LIMITED → 表单顶部兜底 banner;网络错误 → 表单顶部"网络连接失败"。字段级与表单级分层呈现。
+  </div>
+  <div class="annotate">
+    <b>成功流转</b> · 注册成功 → 按钮短暂"注册成功 ✓" → 自动登录(服务端直接签发会话) → 跳转 /portal,无需再走登录页。
+  </div>
+  <div class="annotate">
+    <b>首次注册提示</b> · "首个注册用户 = developer"提示条仅在系统无任何有效用户时显示(由服务端配置/接口告知),完成后不再出现。
+  </div>
+</div>
+
+<!-- ===================== 状态示例 ===================== -->
+<div style="padding:0 var(--sp-8) var(--sp-4)"><h2 style="font-size:var(--fs-h1)">页面状态一览</h2><p class="muted mt-2">字段级内联报错与强度反馈</p></div>
+<div class="states-grid">
+  <div class="state-card">
+    <h4><span class="badge badge-success"><span class="dot"></span>填写中(强度反馈)</h4>
+    <div class="mini-field"><div class="lbl">账号</div><div class="box">zimo01</div></div>
+    <div class="mini-field">
+      <div class="lbl">密码</div><div class="box">Zimo#2026</div>
+      <div style="display:flex;gap:4px;margin-top:5px"><i style="height:4px;flex:1;border-radius:2px;background:var(--color-success)"></i><i style="height:4px;flex:1;border-radius:2px;background:var(--color-success)"></i><i style="height:4px;flex:1;border-radius:2px;background:var(--color-success)"></i><i style="height:4px;flex:1;border-radius:2px;background:var(--color-border)"></i></div>
+      <div class="fe" style="color:var(--color-success)">强度良好(3/4)</div>
+    </div>
+    <button class="btn btn-grad btn-block">注 册</button>
+  </div>
+  <div class="state-card">
+    <h4><span class="badge badge-danger"><span class="dot"></span>字段级错误</h4>
+    <div class="mini-field"><div class="lbl">账号</div><div class="box err">Zimo_01</div><div class="fe">首尾不能是 _ 或 -,已自动转为小写</div></div>
+    <div class="mini-field"><div class="lbl">密码</div><div class="box err">123456</div><div class="fe">密码强度过低,建议加入大小写与符号</div></div>
+    <button class="btn btn-grad btn-block">注 册</button>
+  </div>
+  <div class="state-card">
+    <h4><span class="badge badge-warning"><span class="dot"></span>服务端错误(顶部兜底)</h4>
+    <div style="display:flex;gap:8px;align-items:flex-start;padding:9px 12px;border-radius:10px;font-size:12px;margin-bottom:10px;background:var(--color-danger-bg);color:var(--color-danger);border:1px solid rgba(220,38,38,.2)">✕ 账号已存在,换一个试试</div>
+    <div class="mini-field"><div class="lbl">账号</div><div class="box err">zimo01</div></div>
+    <div class="mini-field"><div class="lbl">密码</div><div class="box">Zimo#2026</div></div>
+    <button class="btn btn-grad btn-block">注 册</button>
+  </div>
+  <div class="state-card">
+    <h4><span class="badge badge-info"><span class="dot"></span>提交中</h4>
+    <div class="mini-field"><div class="lbl">账号</div><div class="box" style="background:var(--color-border-soft)">zimo02</div></div>
+    <div class="mini-field"><div class="lbl">密码</div><div class="box" style="background:var(--color-border-soft)">Zimo#2026</div></div>
+    <button class="btn btn-grad btn-block" disabled><span class="skel" style="width:14px;height:14px;border-radius:50%"></span>注册中…</button>
+  </div>
+</div>
+
+<script>
+function toggleTheme(){const d=document.documentElement;d.dataset.theme=d.dataset.theme==='dark'?'light':'dark';localStorage.setItem('mock-theme',d.dataset.theme)}
+if(localStorage.getItem('mock-theme'))document.documentElement.dataset.theme=localStorage.getItem('mock-theme');
+// 密码强度实时演示(简化版,产品实现用 zxcvbn)
+document.getElementById('pwd').addEventListener('input',e=>{
+  const v=e.target.value;let score=0;
+  if(v.length>=8)score++;if(/[A-Z]/.test(v)&&/[a-z]/.test(v))score++;if(/\d/.test(v))score++;if(/[^A-Za-z0-9]/.test(v))score++;
+  if(v.length<8)score=Math.min(score,1);
+  const bars=document.getElementById('sbars'),label=document.getElementById('slabel');
+  bars.className='strength-bars s'+score;
+  label.textContent=['密码强度:输入密码后实时评估','密码强度:过弱','密码强度:一般','密码强度:良好','密码强度:很强'][score];
+  label.style.color=score<=1?'var(--color-danger)':score===2?'var(--color-warning)':'var(--color-success)';
+});
+function demoSubmit(e){e.preventDefault();const b=document.getElementById('regBtn');b.disabled=true;b.textContent='注册中…';
+  setTimeout(()=>{b.disabled=false;b.textContent='注 册';document.getElementById('accErr').hidden=false;document.getElementById('acc').classList.add('is-error')},900);return false}
+</script>
+</body>
+</html>

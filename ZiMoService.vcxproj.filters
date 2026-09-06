@@ -270,6 +270,39 @@
     <ClCompile Include="service_portal.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="modules\module_db.cpp">
+      <Filter>源文件\modules</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\module_user.cpp">
+      <Filter>源文件\modules</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\module_password.cpp">
+      <Filter>源文件\modules</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\module_session.cpp">
+      <Filter>源文件\modules</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\module_permission.cpp">
+      <Filter>源文件\modules</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\module_security.cpp">
+      <Filter>源文件\modules</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\module_audit.cpp">
+      <Filter>源文件\modules</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\module_gate.cpp">
+      <Filter>源文件\modules</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\module_auth.cpp">
+      <Filter>源文件\modules</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\module_user_admin.cpp">
+      <Filter>源文件\modules</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\module_portal.cpp">
+      <Filter>源文件\modules</Filter>
+    </ClCompile>
     <ClCompile Include="http_jsonrpc_manager.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
@@ -769,6 +802,39 @@
     </ClInclude>
     <ClInclude Include="broadcast_manager.h">
       <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\module_db.h">
+      <Filter>头文件\modules</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\module_user.h">
+      <Filter>头文件\modules</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\module_password.h">
+      <Filter>头文件\modules</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\module_session.h">
+      <Filter>头文件\modules</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\module_permission.h">
+      <Filter>头文件\modules</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\module_security.h">
+      <Filter>头文件\modules</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\module_audit.h">
+      <Filter>头文件\modules</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\module_gate.h">
+      <Filter>头文件\modules</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\module_auth.h">
+      <Filter>头文件\modules</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\module_user_admin.h">
+      <Filter>头文件\modules</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\module_portal.h">
+      <Filter>头文件\modules</Filter>
     </ClInclude>
     <ClInclude Include="..\ZiMoPublic\net\zm_net_broadcast_server.h">
       <Filter>头文件\Public\net</Filter>

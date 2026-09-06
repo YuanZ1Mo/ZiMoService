@@ -1,0 +1,24 @@
+/* ============================================================
+   theme.css —— 亮/暗主题:跟随系统偏好 + 手动切换
+   ThemeSwitch 组件负责:初始按系统偏好落 data-theme(无本地偏好时),
+   手动切换写入 localStorage('zimo-theme'),system 档移除 data-theme
+   并监听系统变化。
+   ============================================================ */
+
+/* 手动指定亮色时强制 color-scheme */
+:root[data-theme="light"] { color-scheme: light; }
+
+/* 未手动指定且系统为暗色 → 暗色 color-scheme(令牌由 ThemeSwitch 落 data-theme) */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { color-scheme: dark; }
+}
+
+/* 主题切换按钮 */
+.theme-switch{
+  width:36px;height:36px;border-radius:var(--r-md);
+  display:inline-flex;align-items:center;justify-content:center;
+  color:var(--color-text-2);
+  transition:background var(--dur),color var(--dur),transform var(--dur-fast) var(--ease);
+}
+.theme-switch:hover{background:var(--color-border-soft);color:var(--color-text)}
+.theme-switch:active{transform:scale(.92)}

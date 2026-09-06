@@ -58,7 +58,7 @@
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(ProjectDir)..\ZiMoPublic\libevent\lib\VC\x64\MT;$(ProjectDir)..\ZiMoPublic\libopus\lib\VC\x64\MT;$(ProjectDir)..\ZiMoPublic\drogon\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>Iphlpapi.lib;ws2_32.lib;wsock32.lib;bcrypt.lib;crypt32.lib;secur32.lib;shlwapi.lib;rpcrt4.lib;event.lib;event_core.lib;event_extra.lib;opus.lib;drogon.lib;trantor.lib;jsoncpp.lib;cares.lib;lz4.lib;sqlite3.lib;libssl.lib;libcrypto.lib;brotlidec.lib;brotlienc.lib;brotlicommon.lib;mariadbclient.lib;pq.lib;hiredis.lib;pgcommon.lib;pgfeutils.lib;pgport.lib;pgtypes.lib;zs.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>Iphlpapi.lib;ws2_32.lib;wsock32.lib;bcrypt.lib;crypt32.lib;secur32.lib;shlwapi.lib;rpcrt4.lib;trantor.lib;event.lib;event_core.lib;event_extra.lib;opus.lib;drogon.lib;jsoncpp.lib;cares.lib;lz4.lib;sqlite3.lib;libssl.lib;libcrypto.lib;brotlidec.lib;brotlienc.lib;brotlicommon.lib;mariadbclient.lib;pq.lib;hiredis.lib;pgcommon.lib;pgfeutils.lib;pgport.lib;pgtypes.lib;zs.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <UACExecutionLevel>RequireAdministrator</UACExecutionLevel>
     </Link>
     <CustomBuildStep>
@@ -1451,6 +1451,17 @@
     <ClInclude Include="service_define.h" />
     <ClInclude Include="service_global.h" />
     <ClInclude Include="service_portal.h" />
+    <ClInclude Include="modules\module_db.h" />
+    <ClInclude Include="modules\module_user.h" />
+    <ClInclude Include="modules\module_password.h" />
+    <ClInclude Include="modules\module_session.h" />
+    <ClInclude Include="modules\module_permission.h" />
+    <ClInclude Include="modules\module_security.h" />
+    <ClInclude Include="modules\module_audit.h" />
+    <ClInclude Include="modules\module_gate.h" />
+    <ClInclude Include="modules\module_auth.h" />
+    <ClInclude Include="modules\module_user_admin.h" />
+    <ClInclude Include="modules\module_portal.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="broadcast_manager.cpp" />
@@ -1461,6 +1472,17 @@
     <ClCompile Include="service_center.cpp" />
     <ClCompile Include="service_main.cpp" />
     <ClCompile Include="service_portal.cpp" />
+    <ClCompile Include="modules\module_db.cpp" />
+    <ClCompile Include="modules\module_user.cpp" />
+    <ClCompile Include="modules\module_password.cpp" />
+    <ClCompile Include="modules\module_session.cpp" />
+    <ClCompile Include="modules\module_permission.cpp" />
+    <ClCompile Include="modules\module_security.cpp" />
+    <ClCompile Include="modules\module_audit.cpp" />
+    <ClCompile Include="modules\module_gate.cpp" />
+    <ClCompile Include="modules\module_auth.cpp" />
+    <ClCompile Include="modules\module_user_admin.cpp" />
+    <ClCompile Include="modules\module_portal.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="resource.rc" />

@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ZiMo 用户系统 · 前端设计预览总览</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  .wrap{max-width:1180px;margin:0 auto;padding:var(--sp-8) var(--sp-6) var(--sp-12)}
+  .cover{border-radius:24px;padding:var(--sp-10);color:#fff;background:var(--grad-hero);background-size:200% 200%;animation:gradFlow 14s ease infinite;box-shadow:var(--shadow-pop);position:relative;overflow:hidden}
+  .cover::after{content:"";position:absolute;width:420px;height:420px;border-radius:50%;background:rgba(255,255,255,.12);top:-160px;right:-100px}
+  .cover h1{font-size:34px;line-height:44px;font-weight:800;letter-spacing:.5px}
+  .cover p{opacity:.94;margin-top:10px;max-width:640px}
+  .page-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:var(--sp-4)}
+  .page-card{padding:var(--sp-5);cursor:pointer;position:relative;overflow:hidden}
+  .page-card .thumb{height:120px;border-radius:var(--r-md);margin-bottom:var(--sp-4);position:relative;overflow:hidden;border:1px solid var(--color-border-soft)}
+  .page-card h3{font-size:var(--fs-h2);line-height:var(--lh-h2)}
+  .page-card .path{font-family:Consolas,monospace;font-size:12px;color:var(--color-primary)}
+  .page-card .arr{position:absolute;right:16px;top:50%;transform:translateY(-50%);opacity:0;transition:all var(--dur) var(--ease);color:var(--color-primary)}
+  .page-card:hover .arr{opacity:1;transform:translateY(-50%) translateX(4px)}
+  .thumb-t1{background:var(--grad-brand-soft);display:flex;align-items:center;justify-content:center}
+  .thumb-t1 i{width:52%;height:78%;background:var(--color-card);border-radius:10px 10px 0 0;box-shadow:var(--shadow-md);display:flex;flex-direction:column;gap:6px;padding:10px}
+  .thumb-t1 i b{height:8px;width:60%;border-radius:4px;background:var(--grad-brand);display:block}
+  .thumb-t1 i s{height:6px;border-radius:3px;background:var(--color-border);display:block;flex:none}
+  .thumb-t2{background:linear-gradient(160deg,#0284C7 0%,#06B6D4 60%,#EC4899 130%);display:flex}
+  .thumb-t2 i{display:flex;flex-direction:column;gap:5px;padding:10px;width:34%}
+  .thumb-t2 i b{height:7px;border-radius:3px;background:rgba(255,255,255,.5);display:block}
+  .thumb-t2 i s{height:5px;border-radius:3px;background:rgba(255,255,255,.28);display:block}
+  .thumb-t2 em{flex:1;background:rgba(255,255,255,.16);border-radius:8px;margin:8px}
+  .thumb-t3{background:var(--color-card);display:flex;flex-direction:column;gap:5px;padding:10px}
+  .thumb-t3 b{height:8px;border-radius:4px;background:var(--color-border);display:block}
+  .thumb-t3 u{flex:1;border-radius:6px;background:var(--color-primary-soft);border:1px solid var(--color-border-soft)}
+  .sec{margin-top:var(--sp-10)}
+  .sec>h2{font-size:22px;margin-bottom:6px}
+  .sec>.sub{color:var(--color-text-2);margin-bottom:var(--sp-5);font-size:var(--fs-body)}
+  .swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:var(--sp-3)}
+  .swatch{border-radius:var(--r-md);overflow:hidden;border:1px solid var(--color-border-soft);background:var(--color-card)}
+  .swatch .c{height:64px}
+  .swatch .m{padding:9px 12px}
+  .swatch .m b{font-size:12px;display:block}
+  .swatch .m span{font-size:11px;color:var(--color-text-3);font-family:Consolas,monospace}
+  .type-row{display:flex;align-items:baseline;gap:var(--sp-5);padding:var(--sp-3) 0;border-bottom:1px dashed var(--color-border)}
+  .type-row .spec{width:170px;flex:none;font-size:var(--fs-cap);color:var(--color-text-3);font-family:Consolas,monospace}
+  .gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:var(--sp-5)}
+  .g-item{padding:var(--sp-5)}
+  .g-item>h4{font-size:var(--fs-body);color:var(--color-text-3);font-weight:600;margin-bottom:var(--sp-4)}
+  .tok-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:var(--sp-4)}
+  .tok-item{padding:var(--sp-4) var(--sp-5)}
+  .tok-item b{font-size:13px}
+  .tok-item .v{font-family:Consolas,monospace;font-size:12px;color:var(--color-primary);margin-top:3px;display:block}
+  .tok-item .d{font-size:12px;color:var(--color-text-2);margin-top:5px}
+  .demo-shadow{width:120px;height:56px;border-radius:var(--r-md);background:var(--color-card)}
+</style>
+</head>
+<body>
+<div class="mock-bar">
+  <span class="pg">ZiMo 用户系统 · 前端设计预览</span><span class="path">Design Mockups · v1</span>
+  <span class="spacer"></span>
+  <button class="theme-btn" onclick="toggleTheme()">🌗 亮/暗主题</button>
+</div>
+
+<div class="wrap">
+  <!-- 封面 -->
+  <div class="cover anim-fade-up">
+    <h1>ZiMo 用户系统 · 前端重设计方案</h1>
+    <p>青春 · 活泼 · 明亮 —— 活力蓝 × 清新青 × 元气粉。圆角卡片化信息层级、柔和阴影、大面积留白;
+       低 CPU 灵动点缀(脉冲徽标 / 悬停弹性 / 淡入过渡 / 骨架屏),全面支持亮暗主题与 prefers-reduced-motion。</p>
+    <div class="row gap-3 mt-6" style="position:relative;z-index:1;flex-wrap:wrap">
+      <span class="badge" style="background:rgba(255,255,255,.22);color:#fff">Vue 3 + Vite SPA</span>
+      <span class="badge" style="background:rgba(255,255,255,.22);color:#fff">亮 / 暗主题令牌化</span>
+      <span class="badge" style="background:rgba(255,255,255,.22);color:#fff">仅 transform/opacity 动画</span>
+      <span class="badge" style="background:rgba(255,255,255,.22);color:#fff">对比度 ≥ 4.5:1</span>
+    </div>
+  </div>
+
+  <!-- 页面导航 -->
+  <div class="sec">
+    <h2>① 页面预览(点击进入)</h2>
+    <p class="sub">5 份交互式静态稿,覆盖全部本期页面;每页附交互行为说明与状态一览,右上角可切换亮/暗主题</p>
+    <div class="page-cards anim-stagger">
+      <div class="card card-hover page-card" onclick="location.href='01-login.html'">
+        <div class="thumb thumb-t1"><i><b></b><s style="width:90%"></s><s style="width:75%"></s><s style="width:88%;background:var(--grad-brand)"></s></i></div>
+        <h3>登录页</h3><span class="path">/login</span>
+        <p class="cap muted mt-2">三方式 Tab(手机/邮箱置灰) · 锁定倒计时 · 字段级报错 · loading 态</p>
+        <span class="arr">→</span>
+      </div>
+      <div class="card card-hover page-card" onclick="location.href='02-register.html'">
+        <div class="thumb thumb-t1"><i><b style="width:45%"></b><s style="width:90%"></s><s style="width:90%"></s><s style="width:55%"></s></i></div>
+        <h3>注册页</h3><span class="path">/register</span>
+        <p class="cap muted mt-2">实时强度条(zxcvbn) · 首用户 developer 提示 · 服务端错误映射</p>
+        <span class="arr">→</span>
+      </div>
+      <div class="card card-hover page-card" onclick="location.href='03-force-reset.html'">
+        <div class="thumb thumb-t1"><i><b style="width:70%;background:var(--color-warning)"></b><s style="width:88%"></s><s style="width:84%;background:var(--grad-brand)"></s></i></div>
+        <h3>强制改密 + 404</h3><span class="path">/force-reset · /404</span>
+        <p class="cap muted mt-2">警示横幅 · 访问边界说明 · 404 流动渐变字与漂浮体</p>
+        <span class="arr">→</span>
+      </div>
+      <div class="card card-hover page-card" onclick="location.href='04-portal-home.html'">
+        <div class="thumb thumb-t2"><i><b style="width:70%"></b><s style="width:85%"></s><b style="width:55%"></b><s style="width:60%"></s></i><em></em></div>
+        <h3>门户壳 + 用户主页</h3><span class="path">/portal → /portal/home</span>
+        <p class="cap muted mt-2">固定顶栏(心跳胶囊/用户菜单/退出) · 可收起抽屉导航 · 渐变欢迎横幅 · 特效区占位 · 骨架屏</p>
+        <span class="arr">→</span>
+      </div>
+      <div class="card card-hover page-card" onclick="location.href='05-user-manager.html'">
+        <div class="thumb thumb-t3"><b style="width:35%"></b><u></u><u style="flex:.7"></u></div>
+        <h3>系统管理 · 用户管理</h3><span class="path">/portal/user-manager</span>
+        <p class="cap muted mt-2">列元数据驱动表格 · 状态化操作(启用/恢复) · 编辑抽屉 · 临时密码弹窗 · 危险确认</p>
+        <span class="arr">→</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 配色 -->
+  <div class="sec">
+    <h2>② 色彩系统</h2>
+    <p class="sub">主色活力蓝(信任/行动) + 辅助清新青(活力) + 点缀元气粉(青春感);中性色偏冷蓝调,亮暗双主题语义令牌</p>
+    <div class="swatches">
+      <div class="swatch"><div class="c" style="background:#0284C7"></div><div class="m"><b>Primary 主色</b><span>#0284C7 · 主按钮/链接/选中</span></div></div>
+      <div class="swatch"><div class="c" style="background:#06B6D4"></div><div class="m"><b>Secondary 青</b><span>#06B6D4 · 渐变/辅助强调</span></div></div>
+      <div class="swatch"><div class="c" style="background:#EC4899"></div><div class="m"><b>Accent 粉</b><span>#EC4899 · 点缀/渐变尾/标注</span></div></div>
+      <div class="swatch"><div class="c" style="background:linear-gradient(135deg,#0284C7,#06B6D4)"></div><div class="m"><b>Brand 渐变</b><span>135° 蓝→青 · 主 CTA/横幅</span></div></div>
+      <div class="swatch"><div class="c" style="background:linear-gradient(135deg,#0284C7,#06B6D4 62%,#EC4899 140%)"></div><div class="m"><b>Hero 渐变</b><span>120° 三色 · 欢迎横幅/404</span></div></div>
+      <div class="swatch"><div class="c" style="background:#F0F9FF"></div><div class="m"><b>Background</b><span>#F0F9FF · 页面底色(冷白)</span></div></div>
+      <div class="swatch"><div class="c" style="background:#FFFFFF;border-bottom:1px solid #E2E8F0"></div><div class="m"><b>Card 卡片</b><span>#FFFFFF + 蓝调柔和阴影</span></div></div>
+      <div class="swatch"><div class="c" style="background:#0F172A"></div><div class="m"><b>Text 主文本</b><span>#0F172A / 次 #475569 / 弱 #94A3B8</span></div></div>
+      <div class="swatch"><div class="c" style="background:#10B981"></div><div class="m"><b>Success</b><span>#10B981 · 正常状态</span></div></div>
+      <div class="swatch"><div class="c" style="background:#F59E0B"></div><div class="m"><b>Warning</b><span>#F59E0B · 停用/待改密/锁定</span></div></div>
+      <div class="swatch"><div class="c" style="background:#DC2626"></div><div class="m"><b>Danger</b><span>#DC2626 · 删除/错误</span></div></div>
+      <div class="swatch"><div class="c" style="background:#0B1220"></div><div class="m"><b>Dark BG</b><span>#0B1220 暗底 · 卡片 #141E2E</span></div></div>
+    </div>
+    <div class="tok-list mt-6">
+      <div class="tok-item card"><b>暗色主题映射</b><span class="v">primary → #38BDF8 / cyan → #22D3EE / pink → #F472B6</span>
+        <div class="d">暗色下主色提亮一档保证对比度;正文 #E2E8F0,层级用透明度区分;阴影加深、渐变降饱和</div></div>
+      <div class="tok-item card"><b>角色徽章语义色</b><span class="v">developer 蓝→青渐变 · admin 粉渐变 · user 中性灰</span>
+        <div class="d">状态徽章:正常=绿点脉冲 · 已停用=琥珀 · 已删除=红 · 待改密=琥珀</div></div>
+    </div>
+  </div>
+
+  <!-- 字体 -->
+  <div class="sec">
+    <h2>③ 字体与字阶</h2>
+    <p class="sub">中文系统字体栈(零网络依赖,部署离线可用);数字/品牌用 Outfit/Nunito 圆体(随工程本地打包,带系统回退)</p>
+    <div class="card card-pad">
+      <div class="type-row"><span class="spec">Display · 32/40 · 800</span><span style="font-size:32px;font-weight:800">欢迎回来,知墨</span></div>
+      <div class="type-row"><span class="spec">H1 · 24/32 · 700</span><span style="font-size:24px;font-weight:700">系统管理 · 用户管理</span></div>
+      <div class="type-row"><span class="spec">H2 · 18/26 · 700</span><span style="font-size:18px;font-weight:700">拥有的模块</span></div>
+      <div class="type-row"><span class="spec">Body · 14/22 · 400</span><span style="font-size:14px">正文与控件默认字号;长文本行宽 ≤ 720px 保证可读性</span></div>
+      <div class="type-row"><span class="spec">Caption · 12/18 · 400</span><span class="cap" style="font-size:12px">辅助说明、字段提示、表格列头(600)</span></div>
+      <div class="type-row" style="border:none"><span class="spec">Numeric · 28/36 · 700</span><span class="num" style="font-size:28px;font-weight:700">1,280,000</span></div>
+    </div>
+    <div class="tok-list mt-4">
+      <div class="tok-item card"><b>字体栈</b><span class="v">system-ui, "Segoe UI", "PingFang SC", "Microsoft YaHei UI", "Noto Sans SC"</span>
+        <div class="d">实现时可选:本地打包 Nunito(数字/LOGO/大数字),font-display: swap,离线可用</div></div>
+      <div class="tok-item card"><b>数字排版</b><span class="v">font-variant-numeric: tabular-nums</span>
+        <div class="d">UID/时间/统计数字等宽对齐,表格不跳动;UID 用 Consolas 等宽(设计稿内)</div></div>
+    </div>
+  </div>
+
+  <!-- 形状与阴影 -->
+  <div class="sec">
+    <h2>④ 圆角 · 阴影 · 间距</h2>
+    <p class="sub">4/8 间距节奏;圆角大而克制;阴影统一蓝调、低透明度、大扩散(柔和悬浮感,不厚重)</p>
+    <div class="tok-list">
+      <div class="tok-item card"><b>圆角</b><span class="v">控件 8-12px · 卡片 16px · 弹窗 20px · 徽章 999px</span>
+        <div class="d row gap-4 mt-3"><span style="width:48px;height:32px;border-radius:8px;background:var(--color-primary-soft);border:1.5px solid var(--color-primary)"></span>
+        <span style="width:64px;height:40px;border-radius:16px;background:var(--color-primary-soft);border:1.5px solid var(--color-primary)"></span>
+        <span style="width:80px;height:48px;border-radius:20px;background:var(--color-primary-soft);border:1.5px solid var(--color-primary)"></span></div></div>
+      <div class="tok-item card"><b>阴影</b><span class="v">sm / md / lg / pop(蓝调 rgba(2,132,199,*))</span>
+        <div class="row gap-4 mt-3" style="align-items:center">
+          <span class="demo-shadow" style="box-shadow:var(--shadow-sm)"></span>
+          <span class="demo-shadow" style="box-shadow:var(--shadow-md)"></span>
+          <span class="demo-shadow" style="box-shadow:var(--shadow-lg)"></span>
+        </div></div>
+      <div class="tok-item card"><b>间距阶梯</b><span class="v">4 · 8 · 12 · 16 · 20 · 24 · 32 · 40 · 48</span>
+        <div class="d">卡片内边距 24;区块间隔 32-48;表单项垂直 16;紧凑表格单元 12</div></div>
+    </div>
+  </div>
+
+  <!-- 动效 -->
+  <div class="sec">
+    <h2>⑤ 动效规范(低 CPU 硬约束)</h2>
+    <p class="sub">只动 transform / opacity;时长短、低频次;支持 prefers-reduced-motion 自动降级为静态</p>
+    <div class="tok-list">
+      <div class="tok-item card"><b>微交互</b><span class="v">hover 提升 translateY(-1~2px) 150-200ms ease-out · 按压 scale(.97)</span>
+        <div class="d">按钮/卡片/导航项统一;不改变布局尺寸,仅位移与阴影过渡</div></div>
+      <div class="tok-item card"><b>状态脉冲</b><span class="v">心跳在线点 · pulse 2s infinite(仅 opacity/scale)</span>
+        <div class="d">唯一常驻动画,元素尺寸 7px,开销可忽略;404 漂浮体 4-8s 慢速</div></div>
+      <div class="tok-item card"><b>进出场</b><span class="v">fadeUp 400ms · 列表 stagger 每项延迟 60-80ms · 模态/抽屉 300ms</span>
+        <div class="d">路由切换淡入;抽屉 translateX 滑入;退场比进场快(200ms)</div></div>
+      <div class="tok-item card"><b>骨架屏</b><span class="v">shimmer 1.4s · 渐变扫过(translateX)</span>
+        <div class="d">仅列表/卡片加载时出现;暗色主题降低扫光亮度</div></div>
+      <div class="tok-item card" style="grid-column:1/-1"><b>降级与禁止项</b>
+        <span class="v">@media (prefers-reduced-motion: reduce) → 全部动画时长压至 0.01ms</span>
+        <div class="d">禁止:常驻高频动画、实时 Canvas 粒子(除用户主页特效区显式触发)、触发布局/重绘的属性动画(width/top/left)</div></div>
+    </div>
+  </div>
+
+  <!-- 组件库 -->
+  <div class="sec">
+    <h2>⑥ 组件样例</h2>
+    <p class="sub">与预览页共用 tokens.css;实现阶段映射为 Vue 组件(components/ 目录)</p>
+    <div class="gallery">
+      <div class="g-item card">
+        <h4>按钮 Button</h4>
+        <div class="row gap-3 wrap">
+          <button class="btn btn-grad">主操作</button>
+          <button class="btn btn-primary">确认</button>
+          <button class="btn btn-secondary">次要</button>
+          <button class="btn btn-ghost">幽灵</button>
+          <button class="btn btn-danger">危险</button>
+          <button class="btn btn-grad" disabled>禁用</button>
+        </div>
+        <div class="row gap-3 mt-3">
+          <button class="btn btn-primary btn-sm">小号</button>
+          <button class="btn btn-primary">默认</button>
+          <button class="btn btn-primary btn-lg">大号</button>
+        </div>
+      </div>
+      <div class="g-item card">
+        <h4>输入框 Input(状态)</h4>
+        <div class="field" style="margin-bottom:10px"><input class="input" placeholder="常规"></div>
+        <div class="field" style="margin-bottom:10px"><input class="input" value="聚焦态见右上焦点环" style="border-color:var(--color-primary);box-shadow:0 0 0 3px var(--color-ring)"></div>
+        <div class="field" style="margin-bottom:0"><input class="input is-error" value="错误内容"><span class="field-error">该字段格式不正确</span></div>
+      </div>
+      <div class="g-item card">
+        <h4>徽章 Badge</h4>
+        <div class="row gap-2 wrap">
+          <span class="badge badge-success"><span class="dot"></span>正常</span>
+          <span class="badge badge-warning"><span class="dot"></span>已停用</span>
+          <span class="badge badge-danger"><span class="dot"></span>已删除</span>
+          <span class="badge badge-force">待改密</span>
+          <span class="badge badge-role-developer">developer</span>
+          <span class="badge badge-role-admin">admin</span>
+          <span class="badge badge-role-user">user</span>
+        </div>
+      </div>
+      <div class="g-item card">
+        <h4>Toast 轻提示</h4>
+        <div class="col gap-2">
+          <div class="toast success" style="position:static;animation:none"><span>✓</span><div><div class="t-title">保存成功</div><div class="t-msg">用户属性已保存 · 操作已写入审计日志</div></div></div>
+          <div class="toast error" style="position:static;animation:none"><span>✕</span><div><div class="t-title">操作失败</div><div class="t-msg">PERM_DENIED · 对方等级不低于你</div></div></div>
+          <div class="toast warning" style="position:static;animation:none"><span>⚠</span><div><div class="t-title">建设中</div><div class="t-msg">该功能将在后续版本开放</div></div></div>
+        </div>
+      </div>
+      <div class="g-item card">
+        <h4>分段控件 / 开关 / 复选</h4>
+        <div class="seg mb-4"><button class="seg-item active">全部</button><button class="seg-item">正常</button><button class="seg-item">停用</button></div>
+        <div class="row gap-6 wrap">
+          <div class="row gap-2"><span class="switch on"></span><span class="cap muted">开</span></div>
+          <div class="row gap-2"><span class="switch"></span><span class="cap muted">关</span></div>
+          <label class="cb"><input type="checkbox" checked>包含已删除</label>
+        </div>
+      </div>
+      <div class="g-item card">
+        <h4>骨架屏 Skeleton</h4>
+        <div class="col gap-2">
+          <div class="skel" style="height:16px;width:45%"></div>
+          <div class="skel" style="height:12px;width:92%"></div>
+          <div class="skel" style="height:12px;width:78%"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 设计原则 -->
+  <div class="sec">
+    <h2>⑦ 全局设计原则</h2>
+    <div class="tok-list">
+      <div class="tok-item card"><b>信息层级卡片化</b><div class="d">卡片承载一切内容区块:白卡 + 蓝调阴影浮于冷白底;暗色下用亮度层级替代阴影层级</div></div>
+      <div class="tok-item card"><b>反馈及时分层</b><div class="d">字段级(输入框下) → 区块级(banner) → 全局级(Toast);破坏性操作一律模态二次确认</div></div>
+      <div class="tok-item card"><b>空态有引导</b><div class="d">空数据给插画 + 主行动按钮(如"清除筛选");错误态可视化,不只靠颜色(图标 + 文案)</div></div>
+      <div class="tok-item card"><b>服务端驱动渲染</b><div class="d">侧边栏 = 模块清单接口;表格列 = 列元数据接口;改配置不改前端代码</div></div>
+      <div class="tok-item card"><b>可访问性基线</b><div class="d">正文对比度 ≥ 4.5:1 · 焦点环可见 · 触控目标 ≥ 44px · 图标配 aria-label · 装饰图形 aria-hidden</div></div>
+      <div class="tok-item card"><b>响应式断点</b><div class="d">≥1440 宽松 · 768-1440 标准 · ≤768 侧栏转遮罩抽屉、表格横滑、表单弹层转全屏</div></div>
+    </div>
+  </div>
+
+  <p class="cap faint center" style="margin-top:var(--sp-10)">ZiMo 用户系统前端设计预览 · 2026-09-06 · 评审通过后进入 Vue 3 组件实现阶段</p>
+</div>
+
+<script>
+function toggleTheme(){const d=document.documentElement;d.dataset.theme=d.dataset.theme==='dark'?'light':'dark';localStorage.setItem('mock-theme',d.dataset.theme)}
+if(localStorage.getItem('mock-theme'))document.documentElement.dataset.theme=localStorage.getItem('mock-theme');
+</script>
+</body>
+</html>

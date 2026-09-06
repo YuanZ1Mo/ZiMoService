@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>04 · 门户壳 + 用户主页 — ZiMo 设计预览</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  body{padding-top:var(--topbar-h)}
+  .workspace{margin-left:var(--sidebar-w);padding:var(--sp-6) var(--sp-8) var(--sp-10);min-height:calc(100vh - var(--topbar-h));
+    transition:margin-left var(--dur-slow) var(--ease);max-width:1440px}
+  .sidenav.mini ~ .workspace{margin-left:var(--sidebar-w-min)}
+  @media (max-width:768px){
+    .sidenav{transform:translateX(-105%);box-shadow:var(--shadow-lg)}
+    .sidenav.open-mobile{transform:none}
+    .workspace{margin-left:0 !important;padding:var(--sp-4)}
+  }
+  /* 欢迎横幅 */
+  .hero{position:relative;overflow:hidden;border-radius:var(--r-xl);padding:var(--sp-8);color:#fff;background:var(--grad-hero);background-size:180% 180%;box-shadow:var(--shadow-pop)}
+  .hero::after{content:"";position:absolute;width:340px;height:340px;border-radius:50%;background:rgba(255,255,255,.14);top:-140px;right:-80px}
+  .hero::before{content:"";position:absolute;width:200px;height:200px;border-radius:50%;background:rgba(255,255,255,.1);bottom:-90px;right:16%}
+  .hero h1{font-size:28px;line-height:38px;font-weight:800}
+  .hero .sub{opacity:.92;margin-top:6px;font-size:var(--fs-body)}
+  .hero .badge{background:rgba(255,255,255,.22);color:#fff;backdrop-filter:blur(4px)}
+  .hero .lvl-chip{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;border-radius:var(--r-pill);background:rgba(255,255,255,.22);font-size:var(--fs-cap);font-weight:700}
+  /* 统计卡 */
+  .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:var(--sp-4)}
+  .stat-card{padding:var(--sp-5);display:flex;flex-direction:column;gap:6px}
+  .stat-card .lbl{font-size:var(--fs-cap);color:var(--color-text-3);font-weight:600}
+  .stat-card .val{font-family:var(--font-num);font-size:var(--fs-num-lg);line-height:var(--lh-num-lg);font-weight:700}
+  .stat-card .val small{font-size:var(--fs-body);color:var(--color-text-2);font-family:var(--font-ui);font-weight:400}
+  .stat-ico{width:38px;height:38px;border-radius:12px;display:flex;align-items:center;justify-content:center;flex:none}
+  /* 模块卡片 */
+  .mod-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:var(--sp-4)}
+  .mod-card{padding:var(--sp-5);display:flex;gap:var(--sp-4);align-items:flex-start;cursor:pointer;position:relative}
+  .mod-card .arr{position:absolute;right:16px;top:18px;color:var(--color-text-3);opacity:0;transform:translateX(-6px);transition:all var(--dur) var(--ease)}
+  .mod-card:hover .arr{opacity:1;transform:none;color:var(--color-primary)}
+  .mod-ico{width:46px;height:46px;border-radius:14px;display:flex;align-items:center;justify-content:center;color:#fff;flex:none;box-shadow:var(--shadow-sm)}
+  .mod-ico.g1{background:linear-gradient(135deg,#0284C7,#06B6D4)}
+  .mod-ico.g2{background:linear-gradient(135deg,#EC4899,#F97316)}
+  /* 特效区占位 */
+  .fx-zone{position:relative;overflow:hidden;border-radius:var(--r-lg);min-height:200px;border:1.5px dashed var(--color-border);
+    background:var(--grad-brand-soft);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px}
+  .fx-blob{position:absolute;border-radius:50%;filter:blur(46px);opacity:.55;pointer-events:none}
+  .fx-b1{width:180px;height:180px;background:rgba(2,132,199,.35);top:-60px;left:8%;animation:floatY 6s ease-in-out infinite}
+  .fx-b2{width:150px;height:150px;background:rgba(236,72,153,.3);bottom:-50px;right:10%;animation:floatY 7s ease-in-out infinite reverse}
+  .fx-b3{width:110px;height:110px;background:rgba(6,182,212,.32);top:30%;right:32%;animation:floatY 8s ease-in-out infinite 1s}
+  .user-box{display:flex;align-items:center;gap:10px;padding:5px 6px;border-radius:var(--r-pill);cursor:pointer;transition:background var(--dur)}
+  .user-box:hover{background:var(--color-border-soft)}
+  .user-box .uname{font-size:var(--fs-body);font-weight:600;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .menu-wrap{position:relative}
+  .menu-wrap .menu{right:0;top:calc(100% + 8px)}
+</style>
+</head>
+<body>
+<div class="mock-bar">
+  <span class="pg">04 · 门户壳 + 用户主页</span><span class="path">/portal → /portal/home</span>
+  <span class="spacer"></span>
+  <a href="index.html">← 设计总览</a>
+  <a href="03-force-reset.html">← 上一页</a>
+  <a href="05-user-manager.html">下一页:用户管理 →</a>
+  <button class="theme-btn" onclick="toggleTheme()">🌗 亮/暗</button>
+</div>
+
+<!-- ===================== 顶栏(固定悬浮) ===================== -->
+<header class="topbar">
+  <button class="icon-btn" onclick="toggleSide()" aria-label="收起/展开导航">
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+  </button>
+  <div class="brand"><span class="brand-logo">Z</span>ZiMo</div>
+
+  <div class="grow"></div>
+
+  <!-- 心跳连接状态:10s 心跳,正常=绿色脉冲 -->
+  <span class="hb-chip" id="hbChip"><span class="dot"></span><span id="hbText">已连接</span></span>
+
+  <button class="icon-btn" onclick="toggleTheme()" aria-label="切换亮暗主题">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>
+  </button>
+
+  <!-- 用户菜单 -->
+  <div class="menu-wrap">
+    <div class="user-box" onclick="toggleMenu(event)">
+      <span class="avatar">知</span>
+      <span class="uname">知墨</span>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" class="faint"><path d="m6 9 6 6 6-6"/></svg>
+    </div>
+    <div class="menu" id="userMenu">
+      <div style="padding:10px 12px 8px">
+        <div style="font-weight:700">知墨</div>
+        <div class="cap faint num">zimo01 · developer</div>
+      </div>
+      <div class="menu-sep"></div>
+      <button class="menu-item" onclick="toast('个人中心建设中,敬请期待','warning')">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg>
+        个人中心 <span class="badge badge-neutral" style="margin-left:auto">建设中</span>
+      </button>
+      <div class="menu-sep"></div>
+      <button class="menu-item danger" onclick="doLogout()">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+        退出登录
+      </button>
+    </div>
+  </div>
+
+  <!-- 独立退出按钮(需求 §7.3:置于昵称区域右侧) -->
+  <button class="icon-btn" onclick="doLogout()" aria-label="退出登录" title="退出登录">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+  </button>
+</header>
+
+<!-- ===================== 侧边抽屉导航 ===================== -->
+<aside class="sidenav" id="sidenav">
+  <div class="sidenav-label">功能模块</div>
+
+  <!-- 正数索引区:index 1 -->
+  <div class="nav-item active" title="用户主页">
+    <span class="nav-ico">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m3 10 9-7 9 7v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M9 22V12h6v10"/></svg>
+    </span>
+    <span class="nav-text">用户主页</span>
+    <span class="badge badge-info num" style="margin-left:auto">1</span>
+  </div>
+
+  <div class="nav-group-gap"></div>
+  <div class="sidenav-label">管理</div>
+
+  <!-- 负数索引区:index -1(仅 userManager 权限可见) -->
+  <div class="nav-item" onclick="location.href='05-user-manager.html'" title="系统管理">
+    <span class="nav-ico">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3h.1a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5h.1a1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>
+    </span>
+    <span class="nav-text">系统管理</span>
+    <span class="badge badge-neutral num" style="margin-left:auto">-1</span>
+  </div>
+
+  <div class="grow"></div>
+  <div class="cap faint" style="padding:var(--sp-3)">ZiMo Portal · v1.0</div>
+</aside>
+
+<!-- ===================== 工作区:用户主页模块 ===================== -->
+<main class="workspace">
+  <!-- 欢迎横幅 -->
+  <section class="hero anim-fade-up">
+    <div class="row gap-4 wrap">
+      <div class="grow" style="min-width:260px">
+        <h1>下午好,知墨 👋</h1>
+        <div class="sub">今天也是元气满满的一天,欢迎回到 ZiMo。</div>
+      </div>
+      <div class="col gap-2" style="align-items:flex-end">
+        <span class="badge">🛠 developer · 开发者</span>
+        <span class="lvl-chip num">等级 LV.3</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 概览统计 -->
+  <section class="stats-grid mt-6 anim-stagger">
+    <div class="card card-hover stat-card">
+      <div class="row between"><span class="lbl">上次登录</span>
+        <span class="stat-ico" style="background:var(--color-info-bg);color:var(--color-info)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+        </span>
+      </div>
+      <div class="val">09-06 <small>14:32</small></div>
+      <div class="cap faint num">IP 192.168.1.7 · Chrome 131</div>
+    </div>
+    <div class="card card-hover stat-card">
+      <div class="row between"><span class="lbl">账号状态</span>
+        <span class="stat-ico" style="background:var(--color-success-bg);color:var(--color-success)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 22s8-3.5 8-10V5l-8-3-8 3v7c0 6.5 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></svg>
+        </span>
+      </div>
+      <div class="val" style="font-size:var(--fs-h1);line-height:var(--lh-num-lg)">安全 <small>· 正常使用中</small></div>
+      <div class="cap faint">密码修改于 3 天前</div>
+    </div>
+    <div class="card card-hover stat-card">
+      <div class="row between"><span class="lbl">拥有的模块</span>
+        <span class="stat-ico" style="background:var(--color-primary-soft);color:var(--color-primary)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>
+        </span>
+      </div>
+      <div class="val num">2 <small>个</small></div>
+      <div class="cap faint">由权限推导,随策略变更自动刷新</div>
+    </div>
+  </section>
+
+  <!-- 拥有的模块 -->
+  <section class="mt-8">
+    <div class="row between mb-4">
+      <h2 style="font-size:var(--fs-h1)">我的模块</h2>
+      <span class="cap faint">点击卡片进入 · 切换不丢失运行状态</span>
+    </div>
+    <div class="mod-grid anim-stagger">
+      <div class="card card-hover mod-card">
+        <span class="mod-ico g1">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m3 10 9-7 9 7v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M9 22V12h6v10"/></svg>
+        </span>
+        <div class="grow">
+          <div class="row gap-2"><b>用户主页</b><span class="badge badge-info num">index 1</span></div>
+          <div class="cap muted mt-2">个人概览 · 角色 · 模块入口</div>
+        </div>
+        <span class="arr"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      </div>
+      <div class="card card-hover mod-card" onclick="location.href='05-user-manager.html'">
+        <span class="mod-ico g2">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3h.1a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5h.1a1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>
+        </span>
+        <div class="grow">
+          <div class="row gap-2"><b>系统管理</b><span class="badge badge-neutral num">index -1</span></div>
+          <div class="cap muted mt-2">用户管理 · 子标签 · 预留入口</div>
+        </div>
+        <span class="arr"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 特效区占位 -->
+  <section class="mt-8">
+    <div class="row between mb-4">
+      <h2 style="font-size:var(--fs-h1)">特效区</h2>
+      <span class="note-chip">本期占位 · 形态待定</span>
+    </div>
+    <div class="fx-zone">
+      <i class="fx-blob fx-b1"></i><i class="fx-blob fx-b2"></i><i class="fx-blob fx-b3"></i>
+      <div style="position:relative;text-align:center">
+        <div style="font-size:30px">✨</div>
+        <b style="margin-top:6px;display:block">这里是视觉特效区</b>
+        <span class="cap muted">低 CPU 特效预留(粒子/流光/渐变流动),用户显式触发时才启用高开销渲染</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 骨架屏演示 -->
+  <section class="mt-8">
+    <div class="row between mb-4">
+      <h2 style="font-size:var(--fs-h1)">加载骨架(数据请求中)</h2>
+      <button class="btn btn-secondary btn-sm" onclick="toggleSkel(this)">演示:切换骨架/内容</button>
+    </div>
+    <div class="stats-grid" id="skelZone">
+      <div class="card stat-card"><div class="skel" style="width:60px;height:14px"></div><div class="skel mt-3" style="width:110px;height:30px"></div><div class="skel mt-3" style="width:150px;height:12px"></div></div>
+      <div class="card stat-card"><div class="skel" style="width:60px;height:14px"></div><div class="skel mt-3" style="width:90px;height:30px"></div><div class="skel mt-3" style="width:130px;height:12px"></div></div>
+      <div class="card stat-card"><div class="skel" style="width:60px;height:14px"></div><div class="skel mt-3" style="width:70px;height:30px"></div><div class="skel mt-3" style="width:120px;height:12px"></div></div>
+    </div>
+  </section>
+</main>
+
+<!-- Toast 容器 -->
+<div class="toasts" id="toasts"></div>
+
+<!-- ===================== 设计说明 ===================== -->
+<div class="tips-sec" style="padding-bottom:var(--sp-10)">
+  <div class="annotate">
+    <b>模块清单驱动</b> · 侧边栏/主页模块卡片均由 GET /portal/modules 下发 {code,name,url,index} 渲染,
+    排序规则:正数升序在前,负数区 -1 最先依次在后;无权限模块不渲染、路由不可达。
+  </div>
+  <div class="annotate">
+    <b>心跳(10s)</b> · 顶栏状态胶囊三态:已连接(绿·脉冲)/重连中(黄)/已断开(红,提示不强制下线)。
+    响应携带 policyVersion,与本地不一致时按需拉取模块清单与权限,侧边栏随之热更新;401 → 立即下线跳登录。
+  </div>
+  <div class="annotate">
+    <b>抽屉导航</b> · 桌面端可收起为图标栏(68px),模块内容区自适应新宽度;移动端(≤768px)变为遮罩抽屉。
+    顶栏与侧栏均固定悬浮,不随内容滚动。
+  </div>
+  <div class="annotate">
+    <b>keep-alive</b> · 模块切换走 /portal/{code} 路由,组件被 keep-alive 缓存,切走不销毁(onDeactivated 暂停重活/音频等可选),
+    返回时 onActivated 恢复现场。
+  </div>
+</div>
+
+<script>
+function toggleTheme(){const d=document.documentElement;d.dataset.theme=d.dataset.theme==='dark'?'light':'dark';localStorage.setItem('mock-theme',d.dataset.theme)}
+if(localStorage.getItem('mock-theme'))document.documentElement.dataset.theme=localStorage.getItem('mock-theme');
+function toggleSide(){document.getElementById('sidenav').classList.toggle('mini')}
+function toggleMenu(e){e.stopPropagation();document.getElementById('userMenu').classList.toggle('open')}
+document.addEventListener('click',()=>document.getElementById('userMenu').classList.remove('open'));
+function toast(msg,type='success',title='提示'){
+  const t=document.createElement('div');t.className='toast '+type;
+  t.innerHTML=`<span>${type==='success'?'✓':type==='error'?'✕':type==='warning'?'⚠':'ℹ'}</span><div><div class="t-title">${title}</div><div class="t-msg">${msg}</div></div>`;
+  document.getElementById('toasts').appendChild(t);setTimeout(()=>t.remove(),3200);
+}
+function doLogout(){toast('已退出登录,将跳转 /login(主动登出不回跳)','info','退出登录')}
+function toggleSkel(btn){
+  const z=document.getElementById('skelZone');
+  const skel=z.querySelector('.skel');const showing=!!skel;
+  if(showing){z.innerHTML=`<div class="card stat-card"><div class="row between"><span class="lbl">上次登录</span></div><div class="val">09-06 <small>14:32</small></div><div class="cap faint num">IP 192.168.1.7</div></div>
+  <div class="card stat-card"><div class="row between"><span class="lbl">账号状态</span></div><div class="val" style="font-size:24px">安全</div><div class="cap faint">密码修改于 3 天前</div></div>
+  <div class="card stat-card"><div class="row between"><span class="lbl">拥有的模块</span></div><div class="val num">2 <small>个</small></div><div class="cap faint">随策略变更自动刷新</div></div>`;
+    btn.textContent='演示:切换骨架/内容'}
+  else{location.reload()}
+}
+// 心跳状态演示轮换
+const hbStates=[['已连接','hb-chip'],['重连中…','hb-chip warn'],['已断开','hb-chip err']];
+let hi=0;setInterval(()=>{hi=(hi+1)%5;const [txt,cls]=hbStates[hi<3?hi:0];
+  const c=document.getElementById('hbChip');c.className=cls;document.getElementById('hbText').textContent=txt},5000);
+</script>
+</body>
+</html>
