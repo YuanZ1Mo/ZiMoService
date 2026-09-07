@@ -51,8 +51,13 @@ bool NetDock::Init()
     // per-IP 连接数护栏(0 = 不限):⚠ 单机压测全部连接同源 IP,设值小于压测并发 → 被拒连;
     // 公网/防慢连接场景可设为 512~2048。
     opts.maxConnectionsPerIP = 0;
-    // 指标端点(进程级计数,JSON);公网/暴露其他机器时建议挂 filter。
-    opts.metricsPath = "/zimo/metrics";
+    // 指标端点(进程级计数,JSON):必须挂在某一面根路径之下,per-port 门禁才能正确收敛——
+    //   /zimo/api/metrics 仅 39441 放行;前端面经 otherRootPaths("/zimo/api" 前缀)拒绝;
+    //   39440/80 重定向天然不可达。
+    // ⚠ 勿改回 "/zimo/metrics":路由全局共享,该路径不在任何门禁白名单内,
+    //   会唯一地从公网前端端口(80/443)泄漏(BUG-2 2026-09-07 修复)。
+    // 公网/暴露其他机器时建议挂 filter。
+    opts.metricsPath = "/zimo/api/metrics";
     opts.idleTimeoutSec = 90;              // keep-alive 空闲 90s 回收;调大可减少复用死连接型 NoHttpResponse
     opts.keepaliveRequests = 0;            // 单连接累计请求上限:0 = 不限次数回收(压测不触发次数回收竞态)
     opts.enableRequestStream = true;       // 上传流式落盘依赖,勿关
