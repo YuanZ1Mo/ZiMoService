@@ -1,6 +1,6 @@
 # DrogonHttpClient 设计文档(出站 HTTP/HTTPS 客户端)
 
-> 状态:待审阅 · 版本:v0.2(2026-09-02 评审修订) · 日期:2026-09-01
+> 状态:第一期已交付(v0.2/2026-09-02);第二期设计已定稿(2026-09-07 增补,文末 §14–§19) · 日期:2026-09-01
 > 范围:`ZmHttpClient` 门面 + `ZmHttpConnectionPool` 连接池 + trantor 流式下载通道
 > 依赖:Drogon 1.9.13(`HttpClient`/`trantor::TcpClient`/`trantor::EventLoopThread`,捆绑于 `ZiMoPublic\drogon`)、`ZmThreadPool`(`zm_util_thread.h`)、`ZMJSON`
 > 需求:服务器向外部服务发起 HTTP/HTTPS 出站请求的能力——第三方 API 调用、Webhook 回调、证书/资源拉取、大文件下载
@@ -405,4 +405,156 @@ ZmHttpDownloadChannel(自建 HttpClient-DL:trantor::EventLoopThread,Init 时启�
 * [ ] 出站访问日志单行格式与脱敏(`insecure` 标记);`DumpStats` 计数准确。
 
 * [ ] 铁律检查:**公面/普通 lane loop 零磁盘 IO**;下载通道 loop 直写盘但写超即 abort;大下载不抢占服务器三面事件循环与普通出站请求(独立双 lane);下载通道 DNS 无同步 getaddrinfo(代码审查)。
+
+***
+
+# 第二期设计(2026-09-07 增补)
+
+> 状态:已定稿(2026-09-07 用户评审:TLS CA 注入**本期不做**,其余采纳)· 依据:docs/issues/2026-09-07-drogon-httpclient-code-review.md
+> 未列出的行为沿用第一期;与第一期冲突处,**以第二期为准**。
+
+## 14. 差异总览
+
+| 维度 | 第一期 | 第二期 | 动机 |
+| --- | --- | --- | --- |
+| 续传事实源 | `.part.meta{url/etag/lm/offset}` | **`.part` 大小即 offset**;meta 仅 `{etag,lastModified}` 且一次写 | offset 与磁盘状态双源必不一致(评审 BUG-1/4) |
+| 变更检测 | `If-Match` + 412 分支 | **`If-Range`**(不匹配返 200 全量) | 标准续传语义,分支表收敛 |
+| 200 回退路径 | 断开重连重发 | **原连接续读**(响应体即全量,就地截断) | 消灭"重启被断开回调击杀"类缺陷(评审 BUG-2) |
+| 写盘模型 | dlLoop 直写 + 单写 >200ms 即 abort | **每会话写线程 + 有界队列(默认 64MB)** | 容忍慢盘突发;内存有界;loop 零磁盘,撤销铁律豁免 |
+| 响应解析 | 极简自研,宽松解析 | **fail-closed**(严格校验,歧义即报错) | chunked 自追加 UB、size 行误判 0 的土壤 |
+| 生命周期 | 仅 `await_ready` 查一次 IsReady | **首跳异步化** + 状态机全程状态检查 | 消 Close 竞态(UAF/回退 app loop/协程永挂) |
+| 失败连接 | 仅"下一跳规避" | 连接层失败**即移除替换**;Timeout 仅规避 | 死连接 busy=0 反被 least-busy 优先选中 |
+| 显式 Range 起点 | §10.3 承诺,未实现 | **不提供**(起点恒 = `.part` 大小) | 减少错位面,协议只有一条合法续传路径 |
+| TLS CA 注入普通 lane | trustCA 不生效 → 全局 `validateCert=false` 应急 | **本期不做**,维持 §8 现状(2026-09-07 决策) | — |
+| 状态机(ZmSendMachine) | 回调状态机 + 薄 awaiter | 保留,补根因最小复现(§17) | 三形态复用价值成立;纪律升级为结构保证 |
+
+## 15. 流式下载通道重设计
+
+### 15.1 续传协议(.part 即游标 + 一次写 sidecar + If-Range)
+
+**事实源唯一化**:`.part` 文件的现有大小就是"已落盘偏移"(N),不再持久化 offset。变更检测用 HTTP 标准头 `If-Range`(强 ETag 优先,无 ETag 用 Last-Modified;两者皆无则退化为仅 Content-Range 起点校验并记日志)。
+
+meta 侧车保留文件名 `.part.meta`,Schema 瘦身:
+
+```json
+{"etag": "...", "lastModified": "..."}
+```
+
+**写入时机只有一次**:会话解析到响应头(或重连后的新响应头)时,经写线程(§15.2)落盘;完成时随 `.part` 一起改名收尾并删除 meta;错误/中止保留。**没有周期更新、没有 offset 字段**——评审 BUG-1(meta 无人写)与 BUG-4(offset 与磁盘不一致)结构性不存在。
+
+**请求构造**(续传 N>0 时):
+
+```
+GET <path> HTTP/1.1
+Host: <BracketHost(host)>[:port]
+Range: bytes=<N>-
+If-Range: <meta.etag>
+Connection: close
+Accept-Encoding: identity
+```
+
+**分支表**(收敛为 4 行):
+
+| 条件 | 处置 |
+| --- | --- |
+| 无 `.part`(N=0,全新下载) | 普通 GET;响应头解析后经写线程写 meta |
+| `206` 且 Content-Range 首字节 == N | 唯一合法续传路径,续写 |
+| `200`(If-Range 不匹配 / 对端忽略 Range) | **原连接续读**(响应体即全量):写线程按序 `TRUNCATE(0)` 后,后续 body 从 0 落盘;重写 meta;游标归 0。**不重连** |
+| `206` 首字节 ≠ N,或 `416` | 服务端异常:断开 → 就地截断 → **重连一次**(epoch 守卫,§15.4)发普通 GET;仍异常 → `BadResponse` 终结 |
+
+原第一期 412 分支删除(If-Range 语义下"资源已变"表现为 200 全量;412 属服务器实现异常路径,归入末行处置)。
+
+### 15.2 写线程与背压(指令队列)
+
+**每会话一个写线程**(与服务器上传侧每连接写线程同一模式),dlLoop **零磁盘操作**,撤销第一期"事件循环磁盘豁免"。
+
+```
+dlLoop(读/解析/编排)                写线程(唯一盘上执行者)
+  OnRecv ─ retrieve → 节点入队 ──→  按 action 顺序执行:
+  指令队列 deque<Action>            WRITE(chunk) / TRUNCATE(0)
+  字节上限 downloadQueueMaxBytes    WRITE_META(json) / FINISH / ABORT
+  (默认 64MB,入队超限 → ABORT)     FINISH:排空 → 关句柄 → MoveFileExW 覆盖
+                                    → 删 .part.meta → Done(ok)
+                                    ABORT:关句柄(保留 .part/.meta)→ Done(err)
+```
+
+- **读侧入队**:`MsgBuffer` 按 `downloadChunkBytes` 粒度切节点(一次内存拷贝),`retrieve` 后即返回,loop 无阻塞。
+- **背压闭环**:写线程慢 → 队列积压 → 触顶(64MB)→ 会话 ABORT(保留 `.part`/`.meta` 可续传)。替代第一期"单次写 >200ms 即杀整个下载"——网络盘/机械盘合法抖动不再误杀,内存上界明确。
+- **写线程卡死兜底**:对端网络共享类阻塞 `WriteFile` 可能久挂,ABORT 时由 dlLoop 对句柄 `CancelIoEx` 解除阻塞,写线程走失败路径退出,保证 Done 必达。
+- **停滞守护(读侧)**:`downloadStallAbortMs` 内无收包且队列已空 → ABORT(第一期语义保留)。
+- **完成时序**:完成判定(收满/终结 chunk/连接关闭)在 dlLoop,入队 `FINISH` 后由写线程确认**队列排空 + 句柄关闭 + 改名成功**才回调——"残余字节未落盘"类缺陷在结构上不可能复发。
+- **Done 回调线程 = 写线程**(协程侧经 `resumeLoop` 亲和,与普通 lane 同约定)。
+- **文件打开**:`StartDownload` 提交时(调用方线程)完成:stat `.part` 定 N → 读 sidecar → `CreateFileW` + 定位/截断;失败同步返回 false,不占 loop。重连场景的新文件句柄由新连接的会话流程在提交时同样处理。
+- 并发度预期:同时下载数通常个位数,每会话一线程可接受;不做共享写线程池。
+
+### 15.3 响应解析器 fail-closed
+
+- chunk size 行**必须全为 hex** 且整行消费,否则 `BadResponse` 终结;单个 chunk 声明长度 > `downloadQueueMaxBytes` → `BadResponse`(防内存无界);
+- 头部行数/总长上限(256KB 保留);重复 `Content-Length`/`Transfer-Encoding` 冲突 → `BadResponse`;
+- `Content-Range` 解析失败按"无"处理,但 **206 无有效 Content-Range → `BadResponse`**(206 必须可验证首字节);
+- 状态行版本/格式畸形 → `BadResponse`;`1xx` 临时响应跳过保留。
+
+### 15.4 生命周期与并发
+
+- **连接代数(epoch)守卫**:每次(重)连接 `epoch_++`;OnConnected/OnRecv/OnDisconnect/OnConnectError/OnSslError 捕获注册时的 epoch,与当前不符即忽略——重连窗口内旧连接回调不再击杀会话(评审 BUG-2 的结构解,与 §15.1"200 原连接续读"双保险)。
+- 通道沿用单 `EventLoopThread`;`Shutdown` 顺序:停收新任务 → 全部连接 disconnect + 对在途写句柄 `CancelIoEx` → join 各会话写线程 → quit + join dlLoop。
+- 会话对象由 dlLoop 与写线程双方 shared_ptr 持有,终结路径(正常/错误/通道关闭)都收敛到"写线程 Done 必达一次"。
+
+## 16. 普通通道修订(修缺陷,不改架构)
+
+1. **路径编码**:`req->setPathEncode(false)`(drogon urlEncode 不保留 `%`,双重编码);代价是 ParseUrl 收紧——path 仅允许 pchar/`/`/`?`/`=`/`&` 白名单,裸空格/控制字符 → `BadServerAddress`。
+2. **生命周期竞态**:`NextAttempt`/`GetPoolClient` 入口查 `IsReady()`,未就绪 → `NetworkFailure` 终结(不再新建池/回退 app loop);**首跳异步化**(Start 把首跳 `queueInLoop` 到 lane loop)→ `await_suspend` 栈上不存在同步 Finish,薄桥"resume 最后一条语句"纪律升级为结构保证;`DownloadAwaiter::await_suspend` 处理 `StartDownload()==false` 同步收尾。
+3. **失败连接处置**:`NetworkFailure`(无响应)→ 该 client 从池中**移除**(锁内),池空则新建替换;`Timeout` 仅下一跳规避不移除(慢≠坏)。
+4. **Init 失败回滚**:lane pool 启动超时 → 删池、注销 loop、置回 Uninit,杜绝"假 Initialized"砖化。
+5. **multipart**:filename 转义——剔除控制字符、quoted-string 转义 `"` 与 `\`;**非 ASCII 以 UTF-8 原样入 quoted-string,不采用 RFC5987 `filename*`**(决议 2026-09-08:multipart 接收端是 drogon `MultiPartParser`,不识别 `filename*`,追加该参数反使自家服务器丢文件名;与服务端 `MakeContentDisposition` 用 RFC5987 不矛盾——下载的接收端是浏览器,生态不同);boundary 对**组装后完整 body** 查碰撞。
+6. **IPv6**:下载通道 Host 头与普通 lane 统一 `BracketHost`。
+7. **RegisterLoop 接线义务**:`ZmHttpServer::Open()` 自动把三面 loop 注册进客户端登记表(两模块双向写明协议义务);SendSync 的 loop 拒绝面自此全覆盖。
+8. **统计**:新增 `status4xx` 计数;`ok` 语义文档明确为"传输成功"。
+
+## 17. 状态机根因验证计划(实施前必做,半天)
+
+"协程帧内复杂值对象 + 跨线程 resume → 0xC0000005"的现行归因,与"跨线程 resume 堆上帧本身不撕裂内存"的语义认知冲突,疑似真实根因是**帧已销毁后 resume / 二次 resume** 的生命周期 bug。最小复现工程(独立小工程,三用例):
+
+- C1:帧内 `std::map`/`std::string`,drogon 回调线程正常跨线程 resume(控制组);
+- C2:同样帧,人为制造 resume-after-destroy(预期崩,验证根因形态);
+- C3:同样帧,二次 resume(预期崩)。
+
+**决策门**:C1 稳定不崩 → 归因改写,纪律从"帧内禁复杂对象"放宽为"禁止 resume-after-destroy/二次 resume"(可工具强化);C1 也崩 → 维持第一期工具链结论,状态机与纪律不动。无论哪个分支,`ZmSendMachine` 分层保留(三形态复用),差异只在纪律的性质与可检测性。
+
+**实施记录(2026-09-08,决策门已出)**:复现工程 `AI测试用目录\coro_frame_repro`(纯 C++20 协程,Task 语义对齐 drogon:急切启动 + final 挂起帧由持有者析构)。结果:
+
+- **C1 控制组:20000 轮 × 5 次(1/4 worker 各验证)全绿,ok=20000/20000,exit=0——帧内持 map/string 的跨线程 resume 稳定不崩**;
+- C2(resume-after-destroy)→ 0xC0000374 堆损坏;C3(double-resume)→ 0x80000003——预期崩,根因形态吻合。
+
+**结论:第一期"MSVC 工具链必崩"的归因不成立,真实根因是生命周期误用(resume-after-destroy / 二次 resume / destroy 与 resume 竞态)。纪律改写为:帧内可以持复杂值对象;禁止对已销毁/已完成帧 resume;禁止 destroy 与 resume 并发。** `ZmSendMachine` 分层按本节约定保留(三形态复用),§16.2 的"首跳异步化"仍实施(消灭 await_suspend 栈上同步 Finish 的结构隐患)。(注:复现中途一版 vector\<Task\> 持有骨架曾 3/3 崩,系该骨架自身持有方式存疑,已废弃,不作为工具链结论依据。)
+
+## 18. Options / API 变更
+
+| 项 | 变更 | 说明 |
+| --- | --- | --- |
+| `Options.downloadWriteMaxMs` | **删除** | 由队列上限替代(慢盘不再按单写耗时杀) |
+| `Options.downloadQueueMaxBytes` | **新增**,默认 64MB | 写侧背压硬上限,触顶 ABORT(保留续传) |
+| `Options.downloadStallAbortMs` | 语义收窄 | 仅读侧停滞(无收包且队列空) |
+| `DownloadCoro` 显式 Range 起点 | **不提供** | 起点恒 = `.part` 大小,减少错位面 |
+| `ZmDownloadResult` | 增 `resumedFrom`(N>0 时) | 可观测性 |
+| `.part.meta` Schema | `{url/etag/lastModified/offset}` → `{etag,lastModified}` | 一次写,无 offset |
+| TLS 相关 Options | 不变 | 二期不做 CA 注入(§14) |
+| 其余 API(SendCoro/Async/Sync/Upload 等) | 不变 | — |
+
+## 19. 第二期验收清单
+
+- [ ] **续传真实分支(不预置任何 sidecar)**:(a) 中断 → 重下走 206,无重叠/空洞;(b) If-Range 不匹配(服务端资源已变)→ 200 原连接续读 + 就地截断,成品正确;(c) 服务器忽略 Range → 同 (b);
+- [ ] 206 首字节不符 / 416 → 重连一次(epoch 守卫生效,旧连接回调不击杀会话),仍异常 → `BadResponse`;
+- [ ] sidecar 一致性:手工截短 `.part` → 下次续传起点 = 截短后大小;手工删 sidecar → 退化普通下载;
+- [ ] 慢盘/大队列:人为写阻塞 → 队列触顶 ABORT 保留 `.part/.meta` 可续;单次写耗时不触发误杀;
+- [ ] 解析器:非 hex size 行 / 206 无 Content-Range / 头冲突 → `BadResponse`,不落盘;
+- [ ] URL:`%20`/中文转义逐字节到服务端(echo 验证);裸空格 → `BadServerAddress`;
+- [ ] Close 竞态:Close 与在飞协程发送/下载并发 → 无崩溃,协程有终态;Close 后新请求快速失败;
+- [ ] 失败连接:死连接被移除,后续请求不再命中;Timeout 不移除;
+- [ ] Init 失败回滚:lane 启动超时 → `IsReady()==false`,可重新 Init;
+- [ ] multipart:含引号/CRLF 文件名上传,服务端解析正确;
+- [ ] IPv6 目标:普通 lane 与下载通道 Host 头格式正确;
+- [ ] RegisterLoop:服务器 handler 线程调 SendSync 被拒(接入后回归);
+- [ ] 根因复现:§17 三用例出结论,纪律文档随结论更新;
+- [ ] 既有回归:2GB+ SHA256、重试矩阵、重定向跨域剥头、multipart 上传、`MoveFileExW` 覆盖、chunked 下载逐字节一致。
 
