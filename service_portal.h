@@ -2,9 +2,9 @@
 #define SERVICE_PORTAL_H
 
 // ============================================================================
-// ServicePortal:业务层门户(重建,Drogon 版)
+// ServicePortal:业务层门户
 //  负责路由注册与业务模块编排:前端页面路由 / JRPC / RESTful / CORS 在此登记,
-//  各业务模块(modules 目录)经 ServicePortal 装配并注册自身接口
+//  各业务模块(modules 目录)由本类装配并注册自身接口
 //  (模块划分见《2026-09-05-用户系统模块设计.md》)。
 // ============================================================================
 
@@ -32,26 +32,50 @@ class ZmPortalModule;
 class ServicePortal
 {
 public:
-    /// @param netDock 网络层宿主(Phase1:NetDock::Init 后传入;本类存裸指针)
+    /**
+     * @brief 构造门户并绑定网络层宿主
+     *
+     * 只保存宿主指针(不持有所有权);真正的服务器引用与业务模块在 Init() 内建立。
+     *
+     * @param netDock 网络层宿主(须已完成 NetDock::Init,即三面已配置好)
+     */
     explicit ServicePortal(NetDock* netDock);
     ~ServicePortal();
 
-    /// Phase1:注册前端页面路由 / JRPC / RESTful 与 CORS,并装配各业务模块(modules 目录)
-    /// 必须在 ZmHttpServer::Open() 前调用
+    /**
+     * @brief 装配业务模块并注册全部路由与横切 advice(Phase1,须先于 Open)
+     *
+     * 顺序:创建业务模块(建库建表与种子)→ 前端面路由/门禁 → JRPC → RESTful 门禁与
+     * 业务接口 → CORS 预检与响应头。任一步失败只记日志,不中断后续注册。
+     */
     void Init();
 
-    /// 业务收尾(Phase3 前调用;本期无业务线程,保留接口)
+    /// @brief 业务收尾(Phase3 之前调用:先收业务线程,再 Close 网络层)
     void Shutdown();
 
-    /// 广播消息(39640 自定义 TCP,本期不接入;保留签名,恒 false)
+    /**
+     * @brief 向 39640 广播端口发送消息
+     *
+     * 广播服务(自定义 TCP)当前未接入,固定返回 false。
+     *
+     * @param topic   主题
+     * @param content 消息内容
+     * @param tag     标签
+     * @return 恒为 false(未接入)
+     */
     bool BroadcastMessage(const std::string& topic, const std::string& content,
                           const std::string& tag);
 
 private:
+    /// 创建数据库模块与全部业务模块(依赖注入;建库建表 + 种子)
     void CreateModules();
+    /// 注册前端面路由与页面门禁 advice
     void RegisterFrontendRoutes(ZmHttpFrontendServer* fe);
+    /// 注册 JSON-RPC 面的业务 method 处理(当前无业务接口)
     void RegisterJsonRpcRoutes(ZmHttpJsonRpcServer* jrpc);
+    /// 注册 RESTful 面门禁 advice 与各业务模块接口
     void RegisterRestfulRoutes(ZmHttpRestfulServer* rest);
+    /// 注册 CORS 预检(PreRouting)与响应头回显(PreSending)
     void RegisterRestfulCors(ZmHttpRestfulServer* rest);
 
     NetDock* m_netDock = nullptr;

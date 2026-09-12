@@ -239,8 +239,9 @@ drogon::Task<ZMJSON> ZmPermissionModule::ListRoles()
 
 drogon::Task<ZMJSON> ZmPermissionModule::ListPermCodes()
 {
+    // 注意:index 是 SQLite 保留字,列名必须加引号,否则准备语句直接语法错误
     auto rows = co_await m_db->QueryRows(
-        "SELECT code, name, module, url, type, index, enabled FROM permissions "
+        "SELECT code, name, module, url, type, \"index\", enabled FROM permissions "
         "ORDER BY sort ASC;",
         {});
     co_return rows;

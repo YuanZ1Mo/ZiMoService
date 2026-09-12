@@ -44,20 +44,31 @@ private:
     static std::string CheckOperable(const ZmSessionCtx& operatorCtx, int64_t targetUid,
                                      int targetLevel);
     /// 从请求提取 {1} 占位符 uid(先取参数,取不到则从路径解析)
-    static int64_t UidOf(const drogon::HttpRequestPtr& req);
+    /// 路径参数 uid 文本 → int64(非法返回 0;调用方按 uid<=0 → 400)
+    /// P3/v2.11:路径参数由路由形参直接传入,不再从 req 手工解析路径
+    static int64_t ParseUid(const std::string& s);
 
     drogon::Task<drogon::HttpResponsePtr> HandleList(drogon::HttpRequestPtr req);
     drogon::Task<drogon::HttpResponsePtr> HandleColumns(drogon::HttpRequestPtr req);
     drogon::Task<drogon::HttpResponsePtr> HandlePermCodes(drogon::HttpRequestPtr req);
-    drogon::Task<drogon::HttpResponsePtr> HandleGet(drogon::HttpRequestPtr req);
-    drogon::Task<drogon::HttpResponsePtr> HandlePatch(drogon::HttpRequestPtr req);
-    drogon::Task<drogon::HttpResponsePtr> HandleRole(drogon::HttpRequestPtr req);
-    drogon::Task<drogon::HttpResponsePtr> HandlePermissions(drogon::HttpRequestPtr req);
-    drogon::Task<drogon::HttpResponsePtr> HandleDisable(drogon::HttpRequestPtr req);
-    drogon::Task<drogon::HttpResponsePtr> HandleEnable(drogon::HttpRequestPtr req);
-    drogon::Task<drogon::HttpResponsePtr> HandleDelete(drogon::HttpRequestPtr req);
-    drogon::Task<drogon::HttpResponsePtr> HandleRestore(drogon::HttpRequestPtr req);
-    drogon::Task<drogon::HttpResponsePtr> HandleResetPassword(drogon::HttpRequestPtr req);
+    drogon::Task<drogon::HttpResponsePtr> HandleGet(drogon::HttpRequestPtr req,
+                                                   std::string uidStr);
+    drogon::Task<drogon::HttpResponsePtr> HandlePatch(drogon::HttpRequestPtr req,
+                                                   std::string uidStr);
+    drogon::Task<drogon::HttpResponsePtr> HandleRole(drogon::HttpRequestPtr req,
+                                                   std::string uidStr);
+    drogon::Task<drogon::HttpResponsePtr> HandlePermissions(drogon::HttpRequestPtr req,
+                                                   std::string uidStr);
+    drogon::Task<drogon::HttpResponsePtr> HandleDisable(drogon::HttpRequestPtr req,
+                                                   std::string uidStr);
+    drogon::Task<drogon::HttpResponsePtr> HandleEnable(drogon::HttpRequestPtr req,
+                                                   std::string uidStr);
+    drogon::Task<drogon::HttpResponsePtr> HandleDelete(drogon::HttpRequestPtr req,
+                                                   std::string uidStr);
+    drogon::Task<drogon::HttpResponsePtr> HandleRestore(drogon::HttpRequestPtr req,
+                                                   std::string uidStr);
+    drogon::Task<drogon::HttpResponsePtr> HandleResetPassword(drogon::HttpRequestPtr req,
+                                                   std::string uidStr);
 
     ZmHttpRestfulServer* m_rest = nullptr;
     ZmUserModule* m_user = nullptr;

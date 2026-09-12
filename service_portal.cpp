@@ -28,10 +28,19 @@
 using namespace drogon;
 using std::string;
 
+namespace
+{
+/// CORS 预检实现(定义在文件后部:OPTIONS 命中放行规则 → 200 + 允许头)
+void CorsPreflight(const HttpRequestPtr& req, AdviceCallback&& cb, AdviceChainCallback&& cc);
+/// CORS 响应头回显实现(定义在文件后部)
+void CorsEchoHeaders(const HttpRequestPtr& req, const HttpResponsePtr& resp);
+}  // namespace
+
 // ============================================================================
 // 构造 / 析构 / Init
 // ============================================================================
 
+/// 构造:仅保存宿主指针,服务器引用与业务模块在 Init() 内建立
 ServicePortal::ServicePortal(NetDock* netDock)
     : m_netDock(netDock)
 {
@@ -39,6 +48,12 @@ ServicePortal::ServicePortal(NetDock* netDock)
 
 ServicePortal::~ServicePortal() = default;
 
+/**
+ * @brief 装配业务模块并注册全部路由与横切 advice(Phase1,须先于 ZmHttpServer::Open)
+ *
+ * 顺序:取三面实例 → 创建业务模块(建库建表与种子)→ 前端面路由/门禁 →
+ * JRPC → RESTful 门禁与业务接口 → CORS。任一步失败只记日志,后续步骤继续。
+ */
 void ServicePortal::Init()
 {
     if (!m_netDock)
@@ -46,29 +61,43 @@ void ServicePortal::Init()
         DEFAULT_LOG_ERROR("ServicePortal::Init: NetDock 为空");
         return;
     }
+
+    // 从宿主取三面实例(业务层只通过这些引用注册路由,不接触底层框架 API)
     m_frontend = m_netDock->GetFrontendServer();
     m_jrpc = m_netDock->GetJsonRpcServer();
     m_restful = m_netDock->GetRestfulServer();
 
-    // 先创建业务模块(数据库建库建表种子;依赖注入)
+    // 先创建业务模块(数据库建库建表种子;依赖注入),后续路由注册依赖这些模块
     CreateModules();
 
+    // 按面注册:前端(页面/门禁)→ JRPC → RESTful(门禁 + 业务接口)→ CORS
     DEFAULT_LOG_INFO("Portal::Init 前端");
     RegisterFrontendRoutes(m_frontend);
     DEFAULT_LOG_INFO("Portal::Init JRPC");
     RegisterJsonRpcRoutes(m_jrpc);
     DEFAULT_LOG_INFO("Portal::Init REST");
     RegisterRestfulRoutes(m_restful);
-    DEFAULT_LOG_INFO("Portal::Init CORS");    // 预检+CORS 挂在 RESTful 面(业务层显式,FR-21;设计 §11.4)
+    DEFAULT_LOG_INFO("Portal::Init CORS");    // 预检 + CORS 响应头挂在 RESTful 面(业务层显式)
     RegisterRestfulCors(m_restful);
     DEFAULT_LOG_INFO("Portal::Init 完成");
 }
 
+/// 业务收尾:本期无业务线程可 join;真正的关停在 ServiceCenter::OnStop 里
+/// 先调本函数、再调 NetDock::Close(的"业务线程先收尾")
 void ServicePortal::Shutdown()
 {
-    // 本期无业务线程;业务期在此先 join 业务线程(FR-04)
 }
 
+/**
+ * @brief 向广播端口发送消息
+ *
+ * 广播服务(39640 自定义 TCP)尚未接入,固定返回 false;签名保留以便业务侧调用点稳定。
+ *
+ * @param topic   主题
+ * @param content 内容
+ * @param tag     标签
+ * @return 恒为 false
+ */
 bool ServicePortal::BroadcastMessage(const string& topic, const string& content,
                                      const string& tag)
 {
@@ -78,8 +107,14 @@ bool ServicePortal::BroadcastMessage(const string& topic, const string& content,
 }
 
 // ============================================================================
-// 业务模块装配(依赖方向:编排模块 → 数据服务模块 → DbModule;门禁最后装,先于接口注册)
+// 业务模块装配(依赖方向:编排模块 → 数据服务模块 → DbModule;门禁先装,以便业务
+// 接口注册时即可挂门禁 advice)
 // ============================================================================
+/**
+ * @brief 创建数据库模块与全部业务模块并完成依赖注入
+ *
+ * 数据库初始化失败时只记日志:其余模块仍会创建,相关接口在运行期返回内部错误。
+ */
 void ServicePortal::CreateModules()
 {
     // 数据访问(全新建库建表 + 种子;库文件 exe 同级 db\user.db)
@@ -114,118 +149,189 @@ void ServicePortal::CreateModules()
 
 // ============================================================================
 // 前端页面路由(80/443)
-// 页面组织与鉴权跳转规则见《2026-09-05-用户系统业务需求.md》§2.6/§3.1-3.3:
+// 页面组织与鉴权跳转规则见《2026-09-05-用户系统业务需求.md》:
 //   SPA 单一 index.html 由前端路由承载(/login /register /reset /force-reset /404
 //   与 /portal 及子路径);页面渲染 + 302 跳转 + 白名单全部由门禁 advice 处理
-//   (module_gate),本方法不再注册页面 handler。
+//   (module_gate),故本方法不注册页面 handler。
 // ============================================================================
+/**
+ * @brief 注册前端面(80/443)的页面门禁
+ *
+ * 页面响应与跳转全部由门禁 advice 承担,此处只做挂载。
+ *
+ * @param fe 前端面实例(primary);为空则跳过
+ */
 void ServicePortal::RegisterFrontendRoutes(ZmHttpFrontendServer* fe)
 {
     if (!fe)
         return;
-    // 鉴权门禁(前端面):白名单 / 302 / force_change 边界 / SPA 页面响应
     m_gate->SetupFrontendGate(fe);
 }
 
-// ============================================================================
-// JSON-RPC(39440):协议校验与信封由平台面内建(zm_net_http_jsonrpc_server),
-// 业务层只注册 method 处理器;ping 为平台内建,无需注册。
-// 本期无 JRPC 业务接口(用户系统全部走 RESTful)。
-// ============================================================================
+/**
+ * @brief 注册 JSON-RPC 面的业务 method(当前无业务接口)
+ *
+ * 协议校验与信封由平台面内建,业务层只需注册 method 处理器;当前未注册任何 method。
+ *
+ * @param jrpc JSON-RPC 面实例(当前未使用)
+ */
 void ServicePortal::RegisterJsonRpcRoutes(ZmHttpJsonRpcServer* jrpc)
 {
     (void)jrpc;
 }
 
-// ============================================================================
-// RESTful(39441 /zimo/api):门禁 advice 先行,再按模块注册业务接口
-// (注册与命名规范见《2026-09-05-用户系统模块设计.md》§5)。
-// ============================================================================
+/**
+ * @brief 注册 RESTful 面门禁与各业务模块接口
+ *
+ * 顺序有讲究:门禁 advice 必须**先注册**,使该面的鉴权裁决先于业务 handler 注册的
+ * 其他 advice 生效(接口注册与命名规范见《2026-09-05-用户系统模块设计.md》)。
+ *
+ * @param rest RESTful 面实例;为空则跳过
+ */
 void ServicePortal::RegisterRestfulRoutes(ZmHttpRestfulServer* rest)
 {
     if (!rest)
         return;
-    // 鉴权门禁(RESTful 面):会话校验 / force_change 边界 / 接口级权限(横切)
+
+    // 会话/强制改密/接口级权限的横切门禁
     m_gate->SetupRestfulGate(rest);
-    // 业务模块接口
+
+    // 各业务模块的接口(模块内部逐条注册路径与 handler)
     m_auth->RegisterRoutes();
     m_admin->RegisterRoutes();
     m_portal->RegisterRoutes();
 }
 
 // ============================================================================
-// RESTful CORS(39441;预检 + 响应附加头,业务层显式,FR-21;设计 §11.4)
-//   放行规则:CORS 白名单(Options.corsAllowedOrigins)命中,或"同站跨端口"
+// RESTful CORS(39441;预检 + 响应附加头,业务层显式)
+//   放行规则:CORS 白名单(SetCorsAllowedOrigins 声明)命中,或"同站跨端口"
 //   (Origin 与请求 Host 同 host,仅端口不同——页面 80/443 与 API 39441 场景)。
 // ============================================================================
 namespace
 {
-/// 同站判断:Origin(scheme://host[:port])与 Host 头(host[:port])去端口后一致
+/**
+ * @brief 去掉主机串里的端口段(IPv6 字面量按 ']' 之后判定)
+ *
+ * @param h host[:port],如 "[::1]:80"、"a:80"、"a"
+ * @return 去端口后的主机串
+ */
+string StripHostPort(string h)
+{
+    if (!h.empty() && h.front() == '[')
+    {   // IPv6 字面量:端口分隔符在 ']' 之后
+        size_t e = h.find(']');
+        return e == string::npos ? h : h.substr(0, e + 1);
+    }
+    size_t c = h.rfind(':');
+    return c == string::npos ? h : h.substr(0, c);
+}
+
+/**
+ * @brief 判断 Origin 与请求 Host 是否"同站"(忽略端口)
+ *
+ * 用于放行"同站跨端口"场景:页面在 80/443、API 在 39441,浏览器视其同站但会发
+ * CORS 预检,这种请求不经过白名单直接放行。
+ *
+ * @param origin     Origin 头(scheme://host[:port])
+ * @param hostHeader Host 头(host[:port])
+ * @return true 两者去端口后 host 相同;false 非同站或 Origin 格式不合法
+ */
 bool IsSameSiteHost(const string& origin, const string& hostHeader)
 {
     size_t p = origin.find("://");
     if (p == string::npos)
         return false;
+
+    // 取 scheme:// 之后的 host[:port] 部分再比对
     string o = origin.substr(p + 3);
-    auto stripPort = [](string h) -> string {
-        if (!h.empty() && h.front() == '[')
-        {   // IPv6 字面量
-            size_t e = h.find(']');
-            return e == string::npos ? h : h.substr(0, e + 1);
-        }
-        size_t c = h.rfind(':');
-        return c == string::npos ? h : h.substr(0, c);
-    };
-    return stripPort(o) == stripPort(hostHeader);
+    return StripHostPort(o) == StripHostPort(hostHeader);
 }
 }  // namespace
 
+/**
+ * @brief 注册 CORS 预检与响应头回显(仅 RESTful 面)
+ *
+ * 放行条件(两条满足其一):Origin 命中白名单(SetCorsAllowedOrigins 声明),或
+ * "同站跨端口"(Origin 与请求 Host 同 host,仅端口不同,如页面 443 → API 39441)。
+ * 两者都不满足 → 预检 403,且普通响应不回显任何 CORS 头(浏览器按跨域失败处理)。
+ *
+ * @param rest RESTful 面实例;为空则跳过
+ */
 void ServicePortal::RegisterRestfulCors(ZmHttpRestfulServer* rest)
 {
     if (!rest)
         return;
 
-    // CORS 白名单(Options.corsAllowedOrigins)+ 同站跨端口自动放行;
-    // 均未命中 → 预检 403、响应不回显 CORS 头,浏览器判跨域失败。
-    // OPTIONS 预检(FR-21)
+    // ── OPTIONS 预检:命中放行规则则 200 + 允许头,否则 403 ──
     rest->RegisterPreRouting([](const HttpRequestPtr& req, AdviceCallback&& cb,
                                 AdviceChainCallback&& cc) {
-        if (req->method() != Options)
-        {
-            cc();
-            return;
-        }
-        string origin = req->getHeader("Origin");
-        if (!ZmHttpServer::IsCorsOriginAllowed(origin) &&
-            !IsSameSiteHost(origin, req->getHeader("Host")))
-        {
-            // 白名单外且非同站:拒绝预检,不带任何 CORS 头(浏览器侧表现为跨域失败)
-            cb(ZmHttpServer::ErrorResponse(403, "origin not allowed"));
-            return;
-        }
-        ZMJSON d;
-        auto resp = ZmHttpServer::JsonResponse(200, d);
-        resp->addHeader("Access-Control-Allow-Origin", origin);
-        resp->addHeader("Access-Control-Allow-Credentials", "true");
-        resp->addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PATCH, DELETE");
-        resp->addHeader("Access-Control-Allow-Headers",
-                        "Origin, Content-Type, Accept, X-File-Size");
-        cb(resp);
+        CorsPreflight(req, std::move(cb), std::move(cc));
     });
 
-    // 响应附加 CORS 头(白名单命中或同站跨端口才回显 Origin + 凭据)
+    // ── 普通响应:同样按放行规则决定是否回显 CORS 头(预检响应已带,跳过) ──
     rest->RegisterPreSending([](const HttpRequestPtr& req, const HttpResponsePtr& resp) {
-        if (req->method() == Options)
-            return;   // 预检响应已带
-        string origin = req->getHeader("Origin");
-        if (!ZmHttpServer::IsCorsOriginAllowed(origin) &&
-            !IsSameSiteHost(origin, req->getHeader("Host")))
-            return;
-        if (req->getHeader("cookie").find("zm_session") != string::npos ||
-            resp->getStatusCode() >= k200OK)
-        {
-            resp->addHeader("Access-Control-Allow-Origin", origin);
-            resp->addHeader("Access-Control-Allow-Credentials", "true");
-        }
+        CorsEchoHeaders(req, resp);
     });
 }
+
+namespace
+{
+/**
+ * @brief CORS 预检:OPTIONS 命中放行规则 → 200 + 允许头,否则 403
+ *
+ * @param req 请求(读 Origin 与 Host)
+ * @param cb  短路回调
+ * @param cc  放行回调(非 OPTIONS 请求)
+ */
+void CorsPreflight(const HttpRequestPtr& req, AdviceCallback&& cb, AdviceChainCallback&& cc)
+{
+    if (req->method() != Options)
+    {
+        cc();   // 非预检请求交给后续处理
+        return;
+    }
+    string origin = req->getHeader("Origin");
+    if (!ZmHttpServer::IsCorsOriginAllowed(origin) &&
+        !IsSameSiteHost(origin, req->getHeader("Host")))
+    {
+        // 白名单外且非同站:拒绝预检,不带任何 CORS 头(浏览器侧表现为跨域失败)
+        cb(ZmHttpServer::ErrorResponse(403, "origin not allowed"));
+        return;
+    }
+
+    // 命中:回显 Origin 与凭据头,并声明允许的方法与请求头
+    ZMJSON d;
+    auto resp = ZmHttpServer::JsonResponse(200, d);
+    resp->addHeader("Access-Control-Allow-Origin", origin);
+    resp->addHeader("Access-Control-Allow-Credentials", "true");
+    resp->addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PATCH, DELETE");
+    resp->addHeader("Access-Control-Allow-Headers",
+                    "Origin, Content-Type, Accept, X-File-Size");
+    cb(resp);
+}
+
+/**
+ * @brief CORS 响应头回显:命中放行规则且(带会话或成功响应)才回显
+ *
+ * @param req  请求
+ * @param resp 即将发送的响应
+ */
+void CorsEchoHeaders(const HttpRequestPtr& req, const HttpResponsePtr& resp)
+{
+    if (req->method() == Options)
+        return;
+
+    string origin = req->getHeader("Origin");
+    if (!ZmHttpServer::IsCorsOriginAllowed(origin) &&
+        !IsSameSiteHost(origin, req->getHeader("Host")))
+        return;
+
+    // 带会话的响应与成功响应才回显(凭据头与实时状态码一起下发,避免缓存串味)
+    if (req->getHeader("cookie").find("zm_session") != string::npos ||
+        resp->getStatusCode() >= k200OK)
+    {
+        resp->addHeader("Access-Control-Allow-Origin", origin);
+        resp->addHeader("Access-Control-Allow-Credentials", "true");
+    }
+}
+}  // namespace

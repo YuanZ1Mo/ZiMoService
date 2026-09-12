@@ -41,22 +41,10 @@ std::string ZmUserAdminModule::CheckOperable(const ZmSessionCtx& op, int64_t tar
     return "";
 }
 
-int64_t ZmUserAdminModule::UidOf(const HttpRequestPtr& req)
+int64_t ZmUserAdminModule::ParseUid(const std::string& s)
 {
-    std::string s = req->getParameter("1");
-    if (s.empty())
-    {
-        // 兜底:从路径解析(/zimo/api/admin/users/{uid}[/suffix])
-        const std::string p(req->path());
-        const std::string marker = "/admin/users/";
-        size_t pos = p.find(marker);
-        if (pos != std::string::npos)
-        {
-            pos += marker.size();
-            size_t end = p.find('/', pos);
-            s = p.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
-        }
-    }
+    // P3/v2.11:路径参数经路由形参传入({1} → uidStr),不再从路径手工解析;
+    // 非法值返回 0(语义同旧版:调用方按 uid<=0 回 400 BAD_REQUEST)
     try
     {
         return std::stoll(s);
@@ -84,41 +72,41 @@ void ZmUserAdminModule::RegisterRoutes()
                          [this](HttpRequestPtr req) -> Task<HttpResponsePtr> {
                              return HandlePermCodes(std::move(req));
                          });
-    m_rest->RegisterCoro("/zimo/api/admin/users/{1}", HttpMethod::Get,
-                         [this](HttpRequestPtr req) -> Task<HttpResponsePtr> {
-                             return HandleGet(std::move(req));
+    m_rest->RegisterCoroWithPathParams("/zimo/api/admin/users/{1}", HttpMethod::Get,
+                         [this](HttpRequestPtr req, std::string uidStr) -> Task<HttpResponsePtr> {
+                             return HandleGet(std::move(req), std::move(uidStr));
                          });
-    m_rest->RegisterCoro("/zimo/api/admin/users/{1}", HttpMethod::Patch,
-                         [this](HttpRequestPtr req) -> Task<HttpResponsePtr> {
-                             return HandlePatch(std::move(req));
+    m_rest->RegisterCoroWithPathParams("/zimo/api/admin/users/{1}", HttpMethod::Patch,
+                         [this](HttpRequestPtr req, std::string uidStr) -> Task<HttpResponsePtr> {
+                             return HandlePatch(std::move(req), std::move(uidStr));
                          });
-    m_rest->RegisterCoro("/zimo/api/admin/users/{1}/role", HttpMethod::Post,
-                         [this](HttpRequestPtr req) -> Task<HttpResponsePtr> {
-                             return HandleRole(std::move(req));
+    m_rest->RegisterCoroWithPathParams("/zimo/api/admin/users/{1}/role", HttpMethod::Post,
+                         [this](HttpRequestPtr req, std::string uidStr) -> Task<HttpResponsePtr> {
+                             return HandleRole(std::move(req), std::move(uidStr));
                          });
-    m_rest->RegisterCoro("/zimo/api/admin/users/{1}/permissions", HttpMethod::Post,
-                         [this](HttpRequestPtr req) -> Task<HttpResponsePtr> {
-                             return HandlePermissions(std::move(req));
+    m_rest->RegisterCoroWithPathParams("/zimo/api/admin/users/{1}/permissions", HttpMethod::Post,
+                         [this](HttpRequestPtr req, std::string uidStr) -> Task<HttpResponsePtr> {
+                             return HandlePermissions(std::move(req), std::move(uidStr));
                          });
-    m_rest->RegisterCoro("/zimo/api/admin/users/{1}/disable", HttpMethod::Post,
-                         [this](HttpRequestPtr req) -> Task<HttpResponsePtr> {
-                             return HandleDisable(std::move(req));
+    m_rest->RegisterCoroWithPathParams("/zimo/api/admin/users/{1}/disable", HttpMethod::Post,
+                         [this](HttpRequestPtr req, std::string uidStr) -> Task<HttpResponsePtr> {
+                             return HandleDisable(std::move(req), std::move(uidStr));
                          });
-    m_rest->RegisterCoro("/zimo/api/admin/users/{1}/enable", HttpMethod::Post,
-                         [this](HttpRequestPtr req) -> Task<HttpResponsePtr> {
-                             return HandleEnable(std::move(req));
+    m_rest->RegisterCoroWithPathParams("/zimo/api/admin/users/{1}/enable", HttpMethod::Post,
+                         [this](HttpRequestPtr req, std::string uidStr) -> Task<HttpResponsePtr> {
+                             return HandleEnable(std::move(req), std::move(uidStr));
                          });
-    m_rest->RegisterCoro("/zimo/api/admin/users/{1}", HttpMethod::Delete,
-                         [this](HttpRequestPtr req) -> Task<HttpResponsePtr> {
-                             return HandleDelete(std::move(req));
+    m_rest->RegisterCoroWithPathParams("/zimo/api/admin/users/{1}", HttpMethod::Delete,
+                         [this](HttpRequestPtr req, std::string uidStr) -> Task<HttpResponsePtr> {
+                             return HandleDelete(std::move(req), std::move(uidStr));
                          });
-    m_rest->RegisterCoro("/zimo/api/admin/users/{1}/restore", HttpMethod::Post,
-                         [this](HttpRequestPtr req) -> Task<HttpResponsePtr> {
-                             return HandleRestore(std::move(req));
+    m_rest->RegisterCoroWithPathParams("/zimo/api/admin/users/{1}/restore", HttpMethod::Post,
+                         [this](HttpRequestPtr req, std::string uidStr) -> Task<HttpResponsePtr> {
+                             return HandleRestore(std::move(req), std::move(uidStr));
                          });
-    m_rest->RegisterCoro("/zimo/api/admin/users/{1}/reset-password", HttpMethod::Post,
-                         [this](HttpRequestPtr req) -> Task<HttpResponsePtr> {
-                             return HandleResetPassword(std::move(req));
+    m_rest->RegisterCoroWithPathParams("/zimo/api/admin/users/{1}/reset-password", HttpMethod::Post,
+                         [this](HttpRequestPtr req, std::string uidStr) -> Task<HttpResponsePtr> {
+                             return HandleResetPassword(std::move(req), std::move(uidStr));
                          });
     DEFAULT_LOG_INFO("ZmUserAdminModule: /admin/users/* 接口已注册");
 }
@@ -195,7 +183,7 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandlePermCodes(HttpRequestPtr 
     co_return ZmAuthGateModule::ApiOk(d);
 }
 
-drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleGet(HttpRequestPtr req)
+drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleGet(HttpRequestPtr req, std::string uidStr)
 {
     const std::string cookie = req->getCookie(ZmSessionModule::CookieName());
     auto ctx = co_await m_session->AuthAndTouch(cookie, ZmAuthGateModule::ClientIp(req));
@@ -208,7 +196,7 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleGet(HttpRequestPtr req)
     {
         co_return ZmAuthGateModule::ApiError(403, "PERM_DENIED", "无权限访问");
     }
-    int64_t uid = UidOf(req);
+    int64_t uid = ParseUid(uidStr);
     if (uid <= 0)
         co_return ZmAuthGateModule::ApiError(400, "BAD_REQUEST", "uid 非法");
     auto user = co_await m_user->FindByUid(uid);
@@ -223,7 +211,7 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleGet(HttpRequestPtr req)
 // ============================================================================
 // 修改主表属性(白名单 + 等级压制 + 状态联动吊销)
 // ============================================================================
-drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandlePatch(HttpRequestPtr req)
+drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandlePatch(HttpRequestPtr req, std::string uidStr)
 {
     const std::string cookie = req->getCookie(ZmSessionModule::CookieName());
     auto ctx = co_await m_session->AuthAndTouch(cookie, ZmAuthGateModule::ClientIp(req));
@@ -237,7 +225,7 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandlePatch(HttpRequestPtr req)
         co_return ZmAuthGateModule::ApiError(403, "PERM_DENIED", "无权限访问");
     }
     auto& op = ctx;
-    int64_t uid = UidOf(req);
+    int64_t uid = ParseUid(uidStr);
     if (uid <= 0)
         co_return ZmAuthGateModule::ApiError(400, "BAD_REQUEST", "uid 非法");
     auto target = co_await m_user->FindByUid(uid);
@@ -276,7 +264,7 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandlePatch(HttpRequestPtr req)
 // ============================================================================
 // 提权 / 降权
 // ============================================================================
-drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleRole(HttpRequestPtr req)
+drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleRole(HttpRequestPtr req, std::string uidStr)
 {
     const std::string cookie = req->getCookie(ZmSessionModule::CookieName());
     auto ctx = co_await m_session->AuthAndTouch(cookie, ZmAuthGateModule::ClientIp(req));
@@ -290,7 +278,7 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleRole(HttpRequestPtr req)
         co_return ZmAuthGateModule::ApiError(403, "PERM_DENIED", "无权限访问");
     }
     auto& op = ctx;
-    int64_t uid = UidOf(req);
+    int64_t uid = ParseUid(uidStr);
     if (uid <= 0)
         co_return ZmAuthGateModule::ApiError(400, "BAD_REQUEST", "uid 非法");
     std::string err;
@@ -300,6 +288,11 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleRole(HttpRequestPtr req)
     std::string roleCode = zm_json_get_str(body, "roleCode");
     if (roleCode.empty())
         co_return ZmAuthGateModule::ApiError(400, "BAD_REQUEST", "roleCode 不能为空");
+    // 存在性校验(DEF-5 2026-09-12):缺此校验时对不存在的 uid 会"谎报成功"
+    // (GetLevel 返 0 → CheckOperable 通过 → ChangeRole 对 0 行更新仍返回 true)
+    auto target = co_await m_user->FindByUid(uid);
+    if (!zm_json_has(target, "uid"))
+        co_return ZmAuthGateModule::ApiError(404, "USER_NOT_FOUND", "用户不存在");
     int targetLevel = co_await m_permission->GetLevel(uid);
     std::string deny = CheckOperable(op, uid, targetLevel);
     if (!deny.empty())
@@ -317,7 +310,7 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleRole(HttpRequestPtr req)
 // ============================================================================
 // 模块授权 / 解除
 // ============================================================================
-drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandlePermissions(HttpRequestPtr req)
+drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandlePermissions(HttpRequestPtr req, std::string uidStr)
 {
     const std::string cookie = req->getCookie(ZmSessionModule::CookieName());
     auto ctx = co_await m_session->AuthAndTouch(cookie, ZmAuthGateModule::ClientIp(req));
@@ -331,7 +324,7 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandlePermissions(HttpRequestPt
         co_return ZmAuthGateModule::ApiError(403, "PERM_DENIED", "无权限访问");
     }
     auto& op = ctx;
-    int64_t uid = UidOf(req);
+    int64_t uid = ParseUid(uidStr);
     if (uid <= 0)
         co_return ZmAuthGateModule::ApiError(400, "BAD_REQUEST", "uid 非法");
     std::string err;
@@ -342,6 +335,10 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandlePermissions(HttpRequestPt
     int grantType = zm_json_get_int(body, "grantType", 0);
     if (permCode.empty() || (grantType != 1 && grantType != 2))
         co_return ZmAuthGateModule::ApiError(400, "BAD_REQUEST", "permCode/grantType 非法");
+    // 存在性校验(DEF-5 2026-09-12;同 HandleRole:否则会对不存在用户写授权)
+    auto target = co_await m_user->FindByUid(uid);
+    if (!zm_json_has(target, "uid"))
+        co_return ZmAuthGateModule::ApiError(404, "USER_NOT_FOUND", "用户不存在");
     int targetLevel = co_await m_permission->GetLevel(uid);
     std::string deny = CheckOperable(op, uid, targetLevel);
     if (!deny.empty())
@@ -360,7 +357,7 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandlePermissions(HttpRequestPt
 // ============================================================================
 // 停用 / 启用
 // ============================================================================
-drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleDisable(HttpRequestPtr req)
+drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleDisable(HttpRequestPtr req, std::string uidStr)
 {
     const std::string cookie = req->getCookie(ZmSessionModule::CookieName());
     auto ctx = co_await m_session->AuthAndTouch(cookie, ZmAuthGateModule::ClientIp(req));
@@ -374,7 +371,7 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleDisable(HttpRequestPtr re
         co_return ZmAuthGateModule::ApiError(403, "PERM_DENIED", "无权限访问");
     }
     auto& op = ctx;
-    int64_t uid = UidOf(req);
+    int64_t uid = ParseUid(uidStr);
     if (uid <= 0)
         co_return ZmAuthGateModule::ApiError(400, "BAD_REQUEST", "uid 非法");
     auto target = co_await m_user->FindByUid(uid);
@@ -397,7 +394,7 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleDisable(HttpRequestPtr re
     co_return ZmAuthGateModule::ApiOk(ZMJSON::object());
 }
 
-drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleEnable(HttpRequestPtr req)
+drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleEnable(HttpRequestPtr req, std::string uidStr)
 {
     const std::string cookie = req->getCookie(ZmSessionModule::CookieName());
     auto ctx = co_await m_session->AuthAndTouch(cookie, ZmAuthGateModule::ClientIp(req));
@@ -411,7 +408,7 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleEnable(HttpRequestPtr req
         co_return ZmAuthGateModule::ApiError(403, "PERM_DENIED", "无权限访问");
     }
     auto& op = ctx;
-    int64_t uid = UidOf(req);
+    int64_t uid = ParseUid(uidStr);
     if (uid <= 0)
         co_return ZmAuthGateModule::ApiError(400, "BAD_REQUEST", "uid 非法");
     auto target = co_await m_user->FindByUid(uid);
@@ -434,7 +431,7 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleEnable(HttpRequestPtr req
 // ============================================================================
 // 删除 / 恢复(软删除)
 // ============================================================================
-drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleDelete(HttpRequestPtr req)
+drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleDelete(HttpRequestPtr req, std::string uidStr)
 {
     const std::string cookie = req->getCookie(ZmSessionModule::CookieName());
     auto ctx = co_await m_session->AuthAndTouch(cookie, ZmAuthGateModule::ClientIp(req));
@@ -448,7 +445,7 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleDelete(HttpRequestPtr req
         co_return ZmAuthGateModule::ApiError(403, "PERM_DENIED", "无权限访问");
     }
     auto& op = ctx;
-    int64_t uid = UidOf(req);
+    int64_t uid = ParseUid(uidStr);
     if (uid <= 0)
         co_return ZmAuthGateModule::ApiError(400, "BAD_REQUEST", "uid 非法");
     auto target = co_await m_user->FindByUid(uid);
@@ -469,7 +466,7 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleDelete(HttpRequestPtr req
     co_return ZmAuthGateModule::ApiOk(ZMJSON::object());
 }
 
-drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleRestore(HttpRequestPtr req)
+drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleRestore(HttpRequestPtr req, std::string uidStr)
 {
     const std::string cookie = req->getCookie(ZmSessionModule::CookieName());
     auto ctx = co_await m_session->AuthAndTouch(cookie, ZmAuthGateModule::ClientIp(req));
@@ -483,7 +480,7 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleRestore(HttpRequestPtr re
         co_return ZmAuthGateModule::ApiError(403, "PERM_DENIED", "无权限访问");
     }
     auto& op = ctx;
-    int64_t uid = UidOf(req);
+    int64_t uid = ParseUid(uidStr);
     if (uid <= 0)
         co_return ZmAuthGateModule::ApiError(400, "BAD_REQUEST", "uid 非法");
     auto target = co_await m_user->FindByUid(uid);
@@ -505,7 +502,7 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleRestore(HttpRequestPtr re
 // ============================================================================
 // 强制重置密码(临时密码 + force_change + 吊销会话)
 // ============================================================================
-drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleResetPassword(HttpRequestPtr req)
+drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleResetPassword(HttpRequestPtr req, std::string uidStr)
 {
     const std::string cookie = req->getCookie(ZmSessionModule::CookieName());
     auto ctx = co_await m_session->AuthAndTouch(cookie, ZmAuthGateModule::ClientIp(req));
@@ -519,7 +516,7 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleResetPassword(HttpRequest
         co_return ZmAuthGateModule::ApiError(403, "PERM_DENIED", "无权限访问");
     }
     auto& op = ctx;
-    int64_t uid = UidOf(req);
+    int64_t uid = ParseUid(uidStr);
     if (uid <= 0)
         co_return ZmAuthGateModule::ApiError(400, "BAD_REQUEST", "uid 非法");
     auto target = co_await m_user->FindByUid(uid);

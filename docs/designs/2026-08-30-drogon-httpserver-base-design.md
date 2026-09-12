@@ -1,11 +1,22 @@
-# DrogonHttpServer 基类设计文档(含三个服务器面详细设计)
+# ZmHttpServer 基类设计文档(含三个服务器面详细设计)
 
-> 状态:待审阅 · 版本:v2.6 · 日期:2026-08-31
-> 范围:`ZmHttpServer` 基类(`ZmHttpServer`,v2.3 前名 DrogonHttpServer)+ 三个派生服务器面(前端/JRPC/RESTful)的详细设计
+> 状态:已实施 · 版本:v2.19 · 日期:2026-09-12
+> 范围:`ZmHttpServer` 基类(平台层,`ZiMoPublic/net`)+ 三个派生服务器面(前端/JRPC/RESTful)的详细设计
 > 需求:基于 `2026-08-30-drogon-httpserver-requirements.md`(25 条 FR + D1\~D7)
 > 依赖:Drogon 1.9.13(头文件 + 静态库在 `ZiMoPublic\drogon`)、`ZmThreadPool`(`zm_util_thread.h`)、Drogon ORM
 > 修订:v2.6 生命周期重构(用户决策,对齐 drogon 单次 run 硬约束):实例级 Open/Close/BootCoordinator 引用计数 → **进程级静态状态机** `Uninit→Initialized→Opened→Closed`;全局参数收敛进 `ZmHttpServer::Options` 经 `Init(opts)` 一次性注入;全局 advice(/ping/访问日志/JSONP)从"首个 Open 经 once_flag"改为 `Init` 内注册;派生面收敛为"端口+路由登记"(删除实例 Open/Close/IsOpen);三个 Manager 与 NetDock 生命周期委托同步删除。运行期唯一可热更新能力:证书 `reloadSSLFiles()`;不支持运行期单端口启停/热重启(重启须进程级)。
 > 修订:v2.1 评审联动:①SPA 回落改用 advice(setImplicitPage 语义为"目录解析",非 SPA 回落,头文件核实);②补四个 advice 挂点到基类接口;③新增 per-port 门禁纪律(全局路由表下恢复旧"端口隔离"行为);④AccessLogger 经 `loadConfigJson` 注入最小配置;⑤方案乙改为定时器链驱动;⑥deadline 定时器放连接所属 loop;⑦AddFilter/RegisterCoro 顺序赋约束;⑧JsonpResponse 改收 req;⑨命名统一 DrogonHttpServer;⑩宿主分层(NetDock/Manager/Portal)并入 §2.5(本期交付 = 基类 + 三面 + 测试接口,业务路由延后);v2 并入原 network-layer-design 的三面细节并修正其过时说法;v1.1 根据代码评审修正(共享 app() 协调、水位机制、证书热加载、Range 解析、Filter 适配、WS onAuth、去重纪律、基类形态);v2.4(还原恢复)流式接收定版:`RegisterStreamCoro` 增 `maxBytes` 路由级上限(X-File-Size 早拒内置 + attributes 透传),`SaveStreamToFile` 落盘助手;全局上传上限 4GB→10GB(FR-03/FR-15);FR-17 访问日志 = PreRouting/PostHandling advice(`PUBLIC_LOG_*` 单行),弃 AccessLogger 插件;v2.5 JSONP 改自动识别型:全局 PreSending advice(GET + 白名单 callback + JSON 响应 → 自动包装),白名单抽 `IsValidJsonpCallback` 复用,开关 `SetAutoJsonp`(默认开),`JsonpResponse` 保留显式通道;v2.6 一对象一端口:`AddListener` 单次设置(重复报错忽略),`GetPorts/GetBindIps` 删、改 `GetPort()/GetBindIp()`,`IsHttps()`=监听 useSSL;前端 HTTPS 模式拆两实例(ZmHttpFrontendServer redirectOnly);Manager 持 primary+redirect;门禁按单端口比较;v2.7 关闭语义修正:FR-04"在飞请求 graceful 收尾"边界——drogon 无 drain API,`quit()` 后挂起协程不再调度,在飞 HTTP 由业务层保障(守护线程 join/断点),验收清单同步
+> 修订:v2.9(2026-09-12 评审 P1,已实施并实测)路由归属机制:新增 §4.6 —— root 三态(前缀 / 空 / 兜底 `/`)+ **R1** 业务路由归属校验(跨面注册拒绝)+ **R2** 平台路由必须归属具体面(`/ping` 经 `MarkShared` 声明共享;`metricsPath` 游离 → **Open() 拒绝启动**)+ **R3** 运行期 `[ROUTE-LEAK]` 归属网;前端门禁外来前缀由宿主手工登记改为**按归属表推导**(`AddOtherRootPath` 降级为兜底口子);`/ping` 名单单源化(去除各面硬编码)。背景:原 `/zimo/metrics` 从公网前端端口泄漏(commit c7b5814);实测中另发现并修复"业务前端页面 advice 无端口判定,把 `/ping` 在 39440/39441 一并 302 到 /login(FR-23 名存实亡)"。
+> 修订:v2.10(2026-09-12 评审 P2,已实施并实测)业务/平台边界收敛:新增平台响应助手 **`FileResponse`/`RedirectResponse`/`NotFoundResponse`**(业务层不再构造 drogon 响应 —— 业务出现 `drogon::HttpResponse::new*` 即越界,§2.4);**页面响应条件请求补齐**(实测 `/login` → 200+ETag/Last-Modified,+INM → **304**;此前 §16.1.1 宣告的页面 304 因落在无调用者的平台 SPA 分支上而未生效);**删除平台侧重复实现** `AddSpaFallback`/`m_spaFallbacks`(页面/SPA 策略归业务 module_gate,平台只留 docroot 策略 `AddDeniedPath`);§11.2 页面路由表改为「行为契约 / 实现位置」双列。
+> 修订:v2.11(2026-09-12 评审 P3,已实施并实测)路由注册双路径:新增 **`RegisterCoroWithPathParams`**(路径参数写形参 → drogon **原生绑定**,不再走正则;arity==0 编译期 `static_assert`、路径无 `{N}` 运行期拒绝);**更正 §4.1 根因**——`{1}` 路径的 `exit(1)` 源于类型擦除致 `paramCount()==0`(`HttpBinder.h:217` + `HttpControllersRouter.cc:368`),**不是"访问违例"、不是本捆绑缺陷**;admin 模块 9 条带参路由迁至新入口,**删除 `UidOf` 的手写路径解析**(其 `getParameter("1")` 分支恒为空、marker 硬编码、解析失败静默返回 0);实测 9 条路由全部正确绑定(非法 uid→400、不存在→404、嵌套参数→403 业务守卫),另修复既有缺陷 **DEF-5(2026-09-12)**:`HandleRole`/`HandlePermissions` 缺存在性校验(对不存在的 uid 谎报成功:role→200、permissions→400)→ 补 `FindByUid` → **404 USER_NOT_FOUND**,同模块 9 个带 uid 的 handler 全数核查通过;实测:不存在 uid→404、正常改角色/授权→200、自身操作→403、等级压制→403/400 全部符合预期。
+> 修订:v2.12(2026-09-12 评审 P4,已实施)**文档与代码对齐**(纯文档,无行为变更):§3.1 类摘要按 `zm_net_http_server.h` 重写(补齐 5 个 `Options` 字段:`nonStreamBodyLimit`/`clientMaxMemoryBodySize`/`maxConnectionsPerIP`/`metricsPath`/`corsAllowedOrigins`;补 P1–P3 新增接口;删不存在的 `SetTicketDisabled`/`SetImplicitPage`,标出 `AddOtherRootPath` 属前端面);标题与 §2.5/§7/§11/§15 更正文件名与类名(`DrogonHttpServer`→`ZmHttpServer`、`drogon_http_common.h`/`drogon_http_server.h`/`net/rest_util.h`/`http_server_manager.*` 均不存在或已并入);§11.4 鉴权 helper 按实现改写为 `ZmAuthGateModule` 三层(`SetupRestfulGate`/`Authorize`/`CheckCtxSync`,`RequireModule` 未采纳);§11.3/§11.4/§14 标注**实施状态**(filehub/音频/JRPC 业务未实施 —— 文档此前把设计目标写成了现状)。
+> 修订:v2.13(2026-09-12 P6,已实施并实测)自动 JSONP 改为**机制全局 + 授权逐路由 + 行为差量**:新增 `ZmJsonpOptions`(全局基线:`paramNames`/`wrapErrors`/`maxBodyBytes`/`enabled`)与 `ZmJsonpOverride`(**optional 差量**:未设置 = 继承基线)、`SetJsonpEnabled(prefix, over)`(**前缀匹配**,兼容 `{N}` 路由);删除全局开关 `SetAutoJsonp`。默认保持 `enabled=true`(观察期,**避免未声明的老客户端静默失效**),对未声明却被包装的路由按路径打一次 WARN;启动期打印各声明的合并选项。**不做逐路由**:回调名字符集(安全边界)、包装语法、默认姿态。实测:未声明路由 `callback` 包装生效且告警仅 1 次;`paramNames`/`wrapErrors`/`maxBodyBytes` 三项覆盖均生效(含 `{N}` 路径前缀命中);非法回调名/静态资源不受影响。
+> 修订:v2.14(2026-09-12 P6 收尾,已实施并实测)deadline 收尾优化:超时状态 `ZmDeadlineState` **共享**给定时器,响应回调在发出响应那一刻置空(**不再被定时器按值捕获而滞留到 deadlineMs** —— 该回调持有连接与请求对象含 body);业务先完成时 `invalidateTimer(tid)`(注意 trantor 语义:取消只删 id,对象仍留到到期,**收益主要是释放 cb**);新增 `deadlineMs==0` 注册期守卫(否则 runAfter(0) 会让每个请求立即 504);§7 同步更新。实测(?ms=50 / deadline 1000ms):cb 在响应时刻(0ms 延迟)释放并注销定时器 tid;慢 handler(3s/1s)→ 504 @1.21s;守卫 → 注册期 ERROR + 路由 404。
+> 修订:v2.15(2026-09-12 用户决策,已实施并实测)**移除手写指标端点**:删除 `Options.metricsPath`、`Init` 中的注册块、全部进程级计数(`s_metricTotal`/`2xx-5xx`/`inflight`/`lat[4]`/`s_startupEpoch`)及 PreRouting/PreSending 中的计数更新(访问日志与请求 ID 完整保留,实测 `X-Request-Id` 与日志行首 id 正常)。理由:无消费者 + 位于受 RESTful 会话门禁约束的 `/zimo/api/metrics`(无 cookie → 401 → **监控无法抓取**)+ 无 label/无历史。需要监控时改用 `utils/monitoring` + `PromExporter`(§16.3)。连带:§4.6 R2 闸门(`DeferPlatformRoute`)失去唯一调用者,保留为后续平台路由的归属闸门(头文件注释已标明);R2 错误提示纠正为"**仅 MarkShared 不满足本闸门**"(此前"或改用 MarkShared"具误导性)。
+> 修订:v2.16(2026-09-12 用户决策,已实施并实测)**移除 R2 平台路由闸门**:删除 `DeferPlatformRoute` + 入队结构 + Open 期"平台路由必须归属具体面"校验(其唯一调用方为手写指标端点,已于 v2.15 移除);Open 期仍保留 ①root 声明冲突 ②已登记路由归属复检 + 只读快照固化 + JSONP 授权快照。R1(业务路由注册期归属校验)与 R3(运行期 `[ROUTE-LEAK]` 归属网)不变。**替代约束(写进文档,靠约定而非机制)**:新增平台路由须自行确保落在某个面的 root 下或 `MarkShared` —— 否则会在所有端口可达(含公网前端);R3 会在它被实际服务时告警,但**只告警不拦**。实测:启动日志不再有"平台路由 … 已注册"行、`/ping` 三面 200、admin/portal 200、metrics 404。
+> 修订:v2.17(2026-09-12 用户决策,已实施并实测)**CORS 白名单移出 `Options`**:`Options.corsAllowedOrigins` → **`SetCorsAllowedOrigins(vector)`**(Open 前声明,运行期 ERROR 拒绝;与 `SetJsonpDefaults`/`SetRootPath` 同款)。至此 `Options` 回归**纯传输/框架参数**(17 项),业务策略一律经 `SetXxx` 声明 —— 原先"传输参数与业务策略混装"的问题从结构上消除(不再需要注释分组)。顺带**修正语义描述**:白名单是**跨站**许可表,**同站跨端口**(Origin 与 Host 同 host)由业务侧硬逻辑放行、不经名单;空名单 = 只放行同站跨端口(原文"空 = 拒绝一切跨域"不准确)。实测三条路径:同站 → 200 + ACAO;仅靠名单(`http://127.0.0.1` vs Host `localhost:39441`)→ 200 + ACAO;`https://evil.example` → 预检 403 且响应无 ACAO。
+> 修订:v2.18(2026-09-12 用户决策,已实施)**移除 JSON-RPC 面的内建 `ping` method**:`ZmHttpJsonRpcServer` 构造不再注册任何 method(改 `= default`),业务经 `RegisterMethod` 注册;HTTP 层的存活探针沿用全局 `/ping`(共享路径,三面可达)。§11.1/§11.3/§13.2 同步。
+> 修订:v2.19(2026-09-12 用户决策,已实施)JSONP 逐前缀**例外**:`ZmJsonpOverride` 增 `std::optional<bool> enabled`(未设置 = 继承基线,声明默认启用),`SetJsonpEnabled(prefix, {enabled = false})` 可把某前缀在全局 `enabled=true` 的观察期下单独关掉 —— 此前只能"全局翻 false + 逐条正面声明"。替代旧手法:把 `paramNames` 差量置空(靠"候选名一个都不命中"绕行),该写法无文档、无日志且极易写错 —— `o.paramNames = {}` 在 `std::optional` 语义下是**重置为未设置**(实测 MSVC:has_value=0),静默回到继承基线,须显式写 `std::vector<std::string>{}`。判定序在命中声明前缀后补 `enabled` 检查(例外前缀同时免打"未声明"观察期告警,它是显式决策);启动日志行改「JSONP 声明」并补 `enabled=`。v2.13"不做逐路由默认姿态"的边界据此澄清:全局基线只决定**未声明**路由的姿态,例外是逐前缀的显式决策。验证:已按目标形态落地并实测(见 §4.7 落地状态) —— 未声明路由带 `callback` → 裸 JSON;`/ping` 声明后 → `cb(...)`(39441 与 443 两面一致);`/ping` 声明为例外 + 全局开 → 裸 JSON,同刻未声明的 `auth/me` 照旧被包(例外分支被真实覆盖);非法回调名 → 裸 JSON;启动日志打印 `enabled` 位。
 
 ***
 
@@ -105,7 +116,7 @@ ServiceCenter
 
 * **Manager** 职责:仅配置本面服务器(`AddListener`/`SetDocumentRoot`/`SetRootPath`/`Setup`),并暴露 `GetServer()` 给 NetDock;**不再有 Open/Close/IsOpen**(生命周期归静态基类)。
 
-* **ServicePortal** 职责:路由注册与 handler 业务逻辑(全部),不感知 Drogon API(经基类接口)。
+* **ServicePortal** 职责:路由注册与 handler 业务逻辑(全部)。**业务/平台边界(v2.10 精确化,替代原"不感知 Drogon API"口号)**:业务可持有 drogon 的**值类型与协程类型**(`HttpRequestPtr`/`Task`,它们是 ORM 与 handler 签名的通用货币,封杀无收益);但**响应构造与缓存/条件请求语义必须经平台助手**(`JsonResponse`/`ErrorResponse`/`FileResponse`/`RedirectResponse`/`NotFoundResponse`),业务层出现 `drogon::HttpResponse::new*` 即越界(可 grep 检查)。理由:`module_gate.ServeIndex` 曾自行 `newFileResponse` 组装页面,漏掉 Last-Modified/ETag/304 → §16.1.1 宣告的页面 304 在真实路径上不生效,平台侧另有一套 SPA 回落(无调用者)形成双实现 —— 机制必需单源。
 
 * 三个面均无业务可挂时(本期测试),仅注册测试路由;`RegisterRoutes()` 纯虚仍由各派生面实现(实现为"本面内置路由 + 测试路由")。
 
@@ -116,12 +127,11 @@ ServiceCenter
 | 文件                                   | 位置             | 内容                                                                       |
 | ------------------------------------ | -------------- | ------------------------------------------------------------------------ |
 | `zm_net_http_server.h/.cpp`          | ZiMoPublic/net | 基类 `ZmHttpServer`(静态生命周期 Init/Open/Close + Options + 响应助手 + RunOnPool + advice 挂点 + 公共类型) |
-| `zm_net_http_frontend_server.h/.cpp` | ZiMoPublic/net | 前端面 `ZmHttpFrontendServer`:document root + SPA advice + 404 + 页面路由 + 重定向 |
+| `zm_net_http_frontend_server.h/.cpp` | ZiMoPublic/net | 前端面 `ZmHttpFrontendServer`:docroot 静态 + 自定义 404 + 路径封禁(`AddDeniedPath`)+ 80→443 重定向;**页面/SPA 归业务层 advice**(§11.2,v2.10) |
 | `zm_net_http_jsonrpc_server.h/.cpp`  | ZiMoPublic/net | JRPC 面 `ZmHttpJsonRpcServer`:`/zimo/jrpc` handler + 信封分发                 |
 | `zm_net_http_restful_server.h/.cpp`  | ZiMoPublic/net | RESTful 面 `ZmHttpRestfulServer`:业务路由注册 + WebSocket + CORS 挂点             |
-| `net/rest_util.h`                    | ZiMoService    | 业务辅助 `RequireModule`(业务层,声明先保留)                                          |
-| `net_dock.h/.cpp`(重建既有空文件)           | ZiMoService    | 宿主:持有三 Manager,Init(全局 Options + 三面配置),Open/Close 转发静态,暴露 GetXxxServer() |
-| `http_server_manager.h/.cpp` 等(重建)   | ZiMoService    | 各持有本面服务器派生类实例,仅配置(AddListener/Setup/GetServer),无生命周期委托(名字不变)            |
+| `net_dock.h/.cpp`                      | ZiMoService(根目录) | 宿主:持有三 Manager,Init(全局 Options + 三面配置),Open/Close 转发静态,暴露 GetXxxServer() |
+| `http_frontend_manager.h/.cpp` 等      | ZiMoService    | 三个宿主 Manager(前端/JRPC/RESTful):各持有本面服务器派生类实例,仅配置(AddListener/Setup/GetServer),无生命周期委托 |
 
 ***
 
@@ -130,141 +140,145 @@ ServiceCenter
 ### 3.1 基类(抽象基类:一个纯虚 `RegisterRoutes()`,其余 virtual 可覆写)
 
 ```cpp
-// net/drogon_http_common.h
-using CoroHandler = std::function<
-    drogon::Task<drogon::HttpResponsePtr>(const drogon::HttpRequestPtr&)>;
+// 权威定义:ZiMoPublic/net/zm_net_http_server.h(本节为摘要,v2.12 起与代码对齐)
+//   历史注:曾计划拆分 net/drogon_http_common.h(公共类型)与 net/drogon_http_server.h,
+//   二者均已并入基类头文件;实际文件位置与命名见 §2.5。
 
-struct SendFileStreamOptions {
-    size_t   chunkSize      = 1 * 1024 * 1024;   // 分块粒度(FR-12 方案乙)
-    size_t   interBlockMs   = 50;                // 块间定时器间隔(定时器链节流,见 §6.1)
-    size_t   watermarkBytes = 8 * 1024 * 1024;   // 严格水位目标(可选增强,见 §6.1)
-    int64_t  stallAbortMs   = 120 * 1000;        // 对端停滞放弃
-    std::function<void(uint64_t sent, uint64_t total)> onProgress;  // 进度回调(可选)
+using ZmHttpCoroHandler = std::function<
+    drogon::Task<drogon::HttpResponsePtr>(drogon::HttpRequestPtr)>;   // 首参按值!见 §4.1
+using ZmHttpStreamHandler = std::function<drogon::Task<drogon::HttpResponsePtr>(
+    drogon::HttpRequestPtr, drogon::RequestStreamPtr)>;
+
+struct ZmHttpSendFileOptions {                 // 方案乙行为参数(FR-12,§6.1)
+    size_t  chunkSize      = 1 * 1024 * 1024;
+    size_t  interBlockMs   = 50;               // 0 = 发完即调度(自适应)
+    size_t  watermarkBytes = 8 * 1024 * 1024;  // 可选增强
+    int64_t stallAbortMs   = 120 * 1000;
+    std::function<void(uint64_t sent, uint64_t total)> onProgress;
 };
 
-// net/drogon_http_server.h —— 基类(v2.6:生命周期静态化)
-class ZmHttpServer
+class ZmHttpServer              // 抽象基类:一个纯虚 RegisterRoutes(),其余 virtual 可覆写
 {
 public:
-    virtual ~ZmHttpServer() = default;
-
-    // ── 全局运行参数(进程级全局,drogon 运行期不可改;经 Init 一次性注入) ──
+    // ── 全局运行参数(进程级;经 Init 一次性注入,运行期不可改) ──
     struct Options {
-        size_t threadNum = 0;              // 事件循环线程数(0 = 自动 = CPU 核数)
-        size_t maxConnections = 8192;      // 最大连接数护栏(0 大概率不限,慎用)
-        size_t clientMaxBodySize = 10ULL*1024*1024*1024;  // 单请求体上限(0 无特殊语义,别设 0)
-        size_t idleTimeoutSec = 90;        // keep-alive 空闲回收秒(0 = 关闭空闲回收)
-        size_t keepaliveRequests = 0;      // 单连接请求数上限(0 = 不限次数回收)
-        bool enableRequestStream = true;   // 上传流式落盘开关
-        size_t workPoolSize = 8;           // 业务工作池线程数(切勿设 0)
-        bool gzip=false, brotli=false;     // 动态压缩
-        bool gzipStatic=false, brotliStatic=false;  // 静态压缩(本捆绑仅 gzip 生效)
-        bool ticketDisabled = false;       // TLS SessionTicket 禁用
-        std::string certFile, keyFile;     // 全局证书(空 = 纯 HTTP)
+        size_t threadNum = 0;                  // 事件循环线程数(0 = 自动 = CPU 核数)
+        size_t maxConnections = 8192;          // 连接数护栏
+        size_t clientMaxBodySize = 10ULL * 1024 * 1024 * 1024;   // 框架级上限(**含流式**)
+        size_t nonStreamBodyLimit = 256ULL * 1024 * 1024;        // 非流式 PreRouting 预检 413(0=关)
+        size_t clientMaxMemoryBodySize = 64 * 1024;              // 超限落临时文件(drogon 默认 64KB)
+        size_t maxConnectionsPerIP = 0;        // per-IP 连接数(0=不限;⚠ 单机压测同源 IP)
+        size_t idleTimeoutSec = 90;            // keep-alive 空闲回收
+        size_t keepaliveRequests = 0;          // 单连接请求数上限(0=不限)
+        bool   enableRequestStream = true;     // 流式上传开关(业务依赖,保持 true)
+        size_t workPoolSize = 8;               // RunOnPool 工作池(切勿设 0)
+        bool   gzip = false, brotli = false;                 // 动态压缩
+        bool   gzipStatic = false, brotliStatic = false;     // 静态孪生文件发送(非现场压缩)
+        bool   ticketDisabled = false;         // TLS SessionTicket 禁用(FR-11)
+        std::string certFile, keyFile;         // 全局证书(空 = 纯 HTTP)
     };
 
-    // ── 静态生命周期(进程级一次;状态机 Uninit→Initialized→Opened→Closed) ──
-    static bool Init(const Options& opts);   // 一次性;重复调用报错
-    static bool Open();                      // 后台 app().run(),绑定失败 300ms fail-fast
-    static void Close();                     // quit+join;幂等;Closed 终态
-    static bool IsInitialized();
-    static bool IsOpened();
+    // ── 静态生命周期(进程级一次;Uninit→Initialized→Opened→Closed) ──
+    static bool Init(const Options& opts);
+    static bool Open();
+    static void Close();
+    static bool IsInitialized();   static bool IsOpened();
+    static bool ReloadCertificates();          // 运行期唯一可热更新能力(FR-10)
 
-    bool IsHttps() const;                    // 本面监听 useSSL(一对象一端口,v2.6)
-    uint16_t GetPort() const;                // 本面监听端口(未设置 = 0)
-    std::string GetBindIp() const;           // 本面绑定地址(0.0.0.0/:: = 通配)
-
-    // ── 监听配置(FR-02,per-listener SSL 指 useSSL/useOldTLS,证书全局经 Init;必须先于 Open)
-    //   一对象一端口(v2.6):仅允许设置一次,重复设置报错忽略;多端口面用多个实例 ──
+    // ── 本面属性 / 监听配置(一对象一端口,v2.5) ──
+    bool IsHttps() const;   uint16_t GetPort() const;   std::string GetBindIp() const;
     virtual void AddListener(uint16_t port, bool useSSL = false,
-                             const std::string& ip = "0.0.0.0",
-                             bool useOldTLS = false,
+                             const std::string& ip = "0.0.0.0", bool useOldTLS = false,
                              const std::vector<std::pair<std::string, std::string>>& sslConfCmds = {});
 
-    // ── TLS(FR-10/11;证书统一经 Init 的 Options 全局 setSSLFiles 保证热加载) ──
-    virtual bool ReloadCertificates();               // reloadSSLFiles()(运行期唯一可热更新)
-    virtual void SetTicketDisabled(bool disable);    // 全局 sslConfCmds 追加 Options=-SessionTicket
+    // ── 路由归属(P1/v2.9;设计 §4.6) ──
+    virtual void SetRootPath(const std::string& path);   // 前缀 | 空(不拥有) | "/"(兜底)
+    virtual const std::string& GetRootPath() const;
+    bool IsCatchAllRoot() const;   bool HasRoot() const;   std::string FaceDesc() const;
+    static const ZmHttpServer* LookupOwner(std::string_view path);
+    static bool IsSharedPath(std::string_view path);
+    static void MarkShared(const std::string& path);
 
-    // ── 阻塞工作池(FR-19;单一静态共享池,大小可配,默认 8,首次 RunOnPool 前生效) ──
-    static void SetWorkPoolSize(size_t n);  static size_t GetWorkPoolSize();
-
-    // ── 协程路由(FR-05,带可选 filter 约束) ──
+    // ── 路由注册(§4.1 三条形态) ──
     virtual void RegisterCoro(const std::string& path, drogon::HttpMethod m,
-                              CoroHandler h,
+                              ZmHttpCoroHandler h,
                               const std::vector<std::string>& filters = {});
+    template <typename F>                       // P3/v2.11:路径参数即形参 → drogon 原生绑定
+    void RegisterCoroWithPathParams(const std::string& path, drogon::HttpMethod m, F&& h,
+                                    const std::vector<std::string>& filters = {});
     virtual void RegisterCoroWithDeadline(const std::string& path, drogon::HttpMethod m,
-                                          CoroHandler h, size_t deadlineMs,
+                                          ZmHttpCoroHandler h, size_t deadlineMs,
                                           const std::vector<std::string>& filters = {});
+    virtual void RegisterStreamCoro(const std::string& path, drogon::HttpMethod m,
+                                    ZmHttpStreamHandler h,
+                                    const std::vector<std::string>& filters = {},
+                                    uint64_t maxBytes = 0);
+    virtual void RegisterMultipartCoro(const std::string& path, drogon::HttpMethod m,
+                                       ZmMultipartHandler h,
+                                       const std::vector<std::string>& filters = {},
+                                       uint64_t maxBytes = 256ULL << 20);
+    virtual void RegisterWebSocket(const std::string& path, const WsCallbacks& cb);
 
-    // ── Filter(FR-06;std::function 适配为 HttpFilter,见 §4.2) ──
+    // ── Filter / advice 挂点(§4.2/§4.3;签名与 Drogon 1.9.13 一致) ──
     virtual void AddFilter(const std::string& name,
                            const std::function<bool(const drogon::HttpRequestPtr&,
                                                     drogon::HttpResponsePtr&)>& f);
+    virtual void RegisterPreRouting(...);    virtual void RegisterPostRouting(...);
+    virtual void RegisterPostHandling(...);  virtual void RegisterPreSending(...);
 
-    // ── 静态文件 + SPA + 404(FR-20) ──
-    virtual void SetDocumentRoot(const std::string& www);
-    virtual void SetImplicitPage(const std::string& file);
-    virtual void SetNotFoundPage(const std::string& file);
+    // ── 响应助手(业务层构造响应的唯一入口;P2/v2.10 边界,§2.4) ──
+    static drogon::HttpResponsePtr JsonResponse(int status, const ZMJSON& data);
+    static drogon::HttpResponsePtr ErrorResponse(int status, const std::string& msg);
+    static drogon::HttpResponsePtr JsonpResponse(const drogon::HttpRequestPtr& req, const ZMJSON& data);
+    static drogon::HttpResponsePtr FileResponse(const drogon::HttpRequestPtr& req,
+                                                const std::string& filePath);      // 页面/小文件(含 304)
+    static drogon::HttpResponsePtr RedirectResponse(const std::string& url, int status = 302);
+    static drogon::HttpResponsePtr NotFoundResponse(const drogon::HttpRequestPtr& req = nullptr);
+    static void SetCorsAllowedOrigins(const std::vector<std::string>& origins);   // v2.17:业务策略
+    static bool IsCorsOriginAllowed(const std::string& origin);                  // 判据(业务 advice 调用)
+    static ZMJSON FromDrogonJson(const Json::Value& v);
+    static Json::Value ToDrogonJson(const ZMJSON& v);
 
-    // ── 本面业务根路径(v2.3,可自定义) ──
-    virtual void SetRootPath(const std::string& path);   // 空 = 关闭本面门禁
-    virtual const std::string& GetRootPath() const;
-    virtual void AddOtherRootPath(const std::string& path);  // 前端面登记外来前缀
-
-    // ── 文件传输(FR-12,双路径;Range 由基类内部解析) ──
-    virtual drogon::Task<drogon::HttpResponsePtr>
-    SendFileCoro(const drogon::HttpRequestPtr& req, const std::string& path,
-                 const std::string& attachmentName = "");
-    virtual drogon::Task<drogon::HttpResponsePtr>
-    SendFileStreamCoro(const drogon::HttpRequestPtr& req, const std::string& path,
-                       const std::string& attachmentName,
-                       const SendFileStreamOptions& opts = {});
-    virtual drogon::Task<drogon::HttpResponsePtr>
-    SendFileHybridCoro(const drogon::HttpRequestPtr& req, const std::string& path,
-                       const std::string& attachmentName,
-                       size_t threshold = 2ULL*1024*1024*1024,
-                       const SendFileStreamOptions& streamOpts = {});
-
-    // ── 流式(FR-13;工厂:返回流式响应,调用方自行设头) ──
+    // ── 文件传输 / 流式(FR-12/13) ──
+    virtual drogon::Task<drogon::HttpResponsePtr> SendFileCoro(...);          // 方案甲(含 Range/304)
+    virtual drogon::Task<drogon::HttpResponsePtr> SendFileStreamCoro(...);    // 方案乙(定时器链)
+    virtual drogon::Task<drogon::HttpResponsePtr> SendFileHybridCoro(...);    // 阈值自动路由
     using StreamCb = std::function<void(drogon::ResponseStreamPtr)>;
     static drogon::HttpResponsePtr MakeStreamResponse(StreamCb cb, bool disableKickoff = true);
+    static drogon::Task<bool> SaveStreamToFile(drogon::RequestStreamPtr stream,
+                                               const std::string& destPath,
+                                               const ZmHttpUploadFileOptions& opts = {},
+                                               bool* tooLarge = nullptr);
 
-    // ── WebSocket(FR-16;onAuth 收完整握手请求) ──
-    struct WsCallbacks {
-        std::function<void(const drogon::WebSocketConnectionPtr&, const drogon::HttpRequestPtr&)> onOpen;
-        std::function<void(const drogon::WebSocketConnectionPtr&)> onClose;
-        std::function<bool(const drogon::HttpRequestPtr& /*握手请求*/)> onAuth;  // false → 升级回调内 close 拒绝
-        std::function<void(const drogon::WebSocketConnectionPtr&, std::string&&, drogon::WebSocketMessageType)> onMessage;
-    };
-    virtual void RegisterWebSocket(const std::string& path, const WsCallbacks& cb);
-
-    // ── 全局横切 advice(FR-07;同名注册重复由基类报错,详见 §4.3) ──
-    // 签名与 Drogon 1.9.13 一致:PreRouting/PostRouting 可拦截(3 参);
-    // PostHandling/PreSending 为观察(2 参 void(req, resp)),按头文件契约取双向接口。
-    virtual void RegisterPreRouting(std::function<void(const drogon::HttpRequestPtr&, drogon::AdviceCallback&&, drogon::AdviceChainCallback&&)> a);
-    virtual void RegisterPostRouting(std::function<void(const drogon::HttpRequestPtr&, drogon::AdviceCallback&&, drogon::AdviceChainCallback&&)> a);
-    virtual void RegisterPostHandling(std::function<void(const drogon::HttpRequestPtr&, const drogon::HttpResponsePtr&)> a);
-    virtual void RegisterPreSending(std::function<void(const drogon::HttpRequestPtr&, const drogon::HttpResponsePtr&)> a);
-
-    // ── 统一响应助手(FR-08/09/24,静态) ──
-    static drogon::HttpResponsePtr JsonResponse(int status, const Json::Value& data);
-    static drogon::HttpResponsePtr ErrorResponse(int status, const std::string& msg);
-    static drogon::HttpResponsePtr JsonpResponse(const drogon::HttpRequestPtr& req, const Json::Value& data);
-
-    // ── 阻塞离核(FR-19,静态模板) ──
+    // ── 限流(§16.4) / 阻塞离核(FR-19) ──
+    static drogon::RateLimiterPtr CreateRateLimiter(drogon::RateLimiterType type,
+                                                    size_t capacity, double timeUnitSec);
+    class ZmIpRateLimiter { public: static Create(...); bool Check(req, resp); };
+    static void SetIpBlocked/UnblockIp/SetIpQuota/SetIpAllowed/RemoveRateRule(...);
+    static bool IsRateRuleHit(const std::string& ip);
     template <typename T> static drogon::Task<T> RunOnPool(std::function<T()> fn);
+    static void SetWorkPoolSize(size_t n);   static size_t GetWorkPoolSize();
 
 protected:
-    virtual void RegisterRoutes() = 0;   // 派生面实现:注册自己路径前缀的路由
-    std::vector<uint16_t> m_listeners;   // 本面监听端口
-    bool m_setupDone = false;
-
-    // ── per-port 辅助(共享路由表下恢复"端口隔离",见 §4.5) ──
-    static uint16_t LocalPort(const drogon::HttpRequestPtr& req);  // ntohs(getLocalAddr().portNetEndian())
-    bool IsLocalPortIn(const drogon::HttpRequestPtr& req) const;   // 请求本地端口 ∈ m_listeners
+    virtual void RegisterRoutes() = 0;        // 派生面:注册自己路径前缀的路由
+    bool CheckRouteOwnership(const std::string& path, const char* what);   // R1
+    static bool ValidateRouteOwnership();     // Open 期一致性校验 + 只读快照固化
+    struct ZmFileMeta { bool found, sizeFailed; size_t size; int64_t mtimeSec; };
+    static ZmFileMeta FetchFileMeta(const std::string& path);
+    static std::pair<std::string, std::string> CacheHeaders(const ZmFileMeta& m);
+    static drogon::HttpResponsePtr Maybe304(const drogon::HttpRequestPtr& req,
+                                            const ZmFileMeta& m,
+                                            const std::pair<std::string, std::string>& cacheHeaders);
+    bool IsLocalPortIn(const drogon::HttpRequestPtr& req) const;   // 本地端口 ∈ 本面监听
+    struct ZmHttpListener { uint16_t port; bool useSSL; std::string ip; bool useOldTLS;
+                            std::vector<std::pair<std::string, std::string>> sslConfCmds; };
+    ZmHttpListener m_listener;   bool m_listenerSet = false, m_setupDone = false;
+    std::string m_rootPath;
+    // 注:`AddOtherRootPath` 为**前端面**专有(兜底拒绝前缀),不在基类;
+    //     `SetTicketDisabled` 已收敛进 `Options.ticketDisabled`;
+    //     `SetImplicitPage` 从未实现(SPA 走业务页面 advice,§11.2)。
 };
 ```
-
 **运行参数说明(v2.6)**:全部全局运行参数收敛进 `Options`,经 `Init(opts)` 一次性注入(drogon 无运行时 getter,且运行期不可改配置,故不再提供实例 `SetXxx/GetXxx`)。工作池大小保留静态 `SetWorkPoolSize`(首次 RunOnPool 前生效)。
 
 ### 3.2 运行线程模型
@@ -288,15 +302,26 @@ protected:
 
 ## 4. 路由与分发(FR-05\~09,24)
 
-### 4.1 RegisterCoro
+### 4.1 路由注册:两条路径(RegisterCoro / RegisterCoroWithPathParams)
 
-`app().registerHandler(path, CoroHandler, {method} + filter 约束)`——`HttpBinder` 支持 `Task<HttpResponsePtr>` 返回型。路径参数 `/xxx/{1}` 经 `req->getParameter("1")` 读取。
+`app().registerHandler(path, handler, {method} + filter 约束)`——`HttpBinder` 支持 `Task<HttpResponsePtr>` 返回型。
 
-**v2.2 实测修订(Windows 环境)**:
+**两条注册路径(v2.11 定版;按"是否有路径参数"分工)**:
 
-* `CoroHandler` 形参改用**按值** `HttpRequestPtr`——本捆绑 drogon 的 `FunctionTraits` 协程特化仅匹配 `Task<Resp>(*)(HttpRequestPtr, ...)`(member/functor 链落点;const 引用会静默落入无 `first_param_type` 的基础匹配);
+| 入口 | handler 形态 | 路径参数怎么拿 | 注册方式 |
+| --- | --- | --- | --- |
+| `RegisterCoro(path, m, h, filters)` | `std::function<Task<HttpResponsePtr>(HttpRequestPtr)>`(**类型擦除**) | `req->getRoutingParameters()[N-1]`(或平台助手) | 无 `{N}` → `registerHandler`;含 `{N}` → `registerHandlerViaRegex` + 手工转换 |
+| **`RegisterCoroWithPathParams(path, m, h, filters)`** | **带形参的任意可调用体**(`[](HttpRequestPtr req, std::string uid) -> Task<HttpResponsePtr>`) | **函数形参**(`{1}` → 第 1 个形参) | `registerHandler` **原生绑定**(不经正则) |
 
-* 含 `{1}` 占位符的路径经 `app().registerHandler` 在本环境**访问违例**——`RegisterCoro` 内部统一改走 `registerHandlerViaRegex` + 手工转换(`PathPatternToRegex`:`{N}`→`([^/]+)`),捕获组经 `req->getRoutingParameters()` 读取;
+**⚠ 路径参数与 `getParameter` 无关(常被误解)**:`getParameter("k")` 只读 **query 串**(`HttpRequestImpl.h:200`),路径参数走 `routingParameters_` —— drogon **原生注册也不填** `getParameter("1")`。故读路径参数只有两种正当方式:形参(推荐)或 `getRoutingParameters()`;**手工 `find("/xxx/")` 切字符串是错的**(前缀一改即静默失效)。
+
+**为什么必须有第二个入口(v2.11 根因,已源码核实)**:`ZmHttpCoroHandler` 把形参擦成 `std::function<... (HttpRequestPtr)>` → `HttpBinder::paramCount()` = `traits::arity` = **0**(`HttpBinder.h:217`)→ 含 `{N}` 的路径命中 `addHttpPath` 的占位符校验 `place > paramCount` → **`LOG_ERROR` + `exit(1)`**(`HttpControllersRouter.cc:368-374`)——是**类型擦除的必然结果,不是本捆绑缺陷、升级 drogon 也修不掉**。v2.2 曾把它记为"访问违例",v2.11 更正。带形参的 handler `arity ≥ 1`,paramCount 正确,`{N}` 自然可用。
+
+**守卫(用错就失败得早)**:`RegisterCoroWithPathParams` 的 `arity==0` → 编译期 `static_assert`;路径无 `{N}` → 运行期 ERROR + 拒绝注册。**语义差异**:原生 `{N}`→`([^/]*)`(允许空段),旧 `PathPatternToRegex` 用 `([^/]+)`(要求非空)——迁移后 `/xxx/` 这类空段请求会进入 handler(业务自校验),不再被路由层 404。
+
+**v2.2 实测修订(仍然有效)**:
+
+* `CoroHandler` 形参须**按值** `HttpRequestPtr`——本捆绑 drogon 的 `FunctionTraits` 协程特化仅匹配 `Task<Resp>(*)(HttpRequestPtr, ...)`(member/functor 链落点;const 引用会静默落入无 `first_param_type` 的基础匹配)。`RegisterCoroWithPathParams` 同样受此约束(已在 `static_assert` 文案中提示);
 
 * 禁止给已注册 handler 再套一层 `co_await h(req)` 包装协程(会崩),基类直接注册业务 `std::function`。
 
@@ -326,13 +351,76 @@ protected:
 
 `app()` 路由表全局,旧版"各端口只服务各面路由"的行为无法自然成立(80 端口也会命中 `/zimo/api/*`、39441 也会返回 `/login` 静态页)。**每个派生面在** **`RegisterRoutes()`** **内注册自己的 PreRouting 门禁 advice**,策略:
 
-* 前端面:请求本地端口 ∈ {本面监听端口}(经 `IsLocalPortIn`)且路径以 `/zimo/` 开头 → 404;
+* 前端面:请求本地端口 ∈ {本面监听端口}(经 `IsLocalPortIn`)且路径**归属其他面**(`LookupOwner(path) != this`,按归属表推导)→ 404;
 
-* JRPC 面:本地端口 ∈ {39440} 且路径非 `/zimo/jrpc`(且非 `/ping`) → 404;
+* JRPC 面:本地端口 ∈ {39440} 且路径非本面 root(`/zimo/jrpc`)且非**平台共享路径** → 404;
 
-* RESTful 面:本地端口 ∈ {39441} 且路径非 `/zimo/api/*`(且非 `/ping`) → 404。
+* RESTful 面:本地端口 ∈ {39441} 且路径非本面 root(`/zimo/api`)及其子路径且非**平台共享路径** → 404。
 
-门禁 advice 注册顺序保持在 SPA/重定向 advice **之前**,保证裁决唯一;`/ping`(基类默认,FR-23)三方均可达(旧版里 `/zimo/api/ping` 与全局 `/ping` 并存,路径不同无冲突)。
+**外来前缀的来源(v2.9)**:由**归属表推导**(§4.6),不再由宿主手工登记 —— 新增服务器面或改 root 自动生效(旧 `AddOtherRootPath` 降级为兜底口子)。**共享路径名单亦单源**:`IsSharedPath`(当前仅 `/ping`),各面门禁不再各自硬编码。
+
+门禁 advice 注册顺序保持在 SPA/重定向 advice **之前**,保证裁决唯一;`/ping`(基类 `MarkShared` 声明,FR-23)三方均可达(旧版里 `/zimo/api/ping` 与全局 `/ping` 并存,路径不同无冲突)。
+
+> ⚠ 实测注意(2026-09-12):业务层的前端页面 advice(module_gate)无端口判定,会把非 `/zimo/` 路径(含 `/ping`)在所有端口一并 302 到 `/login` → 共享路径必须在业务门禁内显式放行,**否则 FR-23 名存实亡**(本次已修)。
+
+### 4.6 路由归属机制(P1/v2.9;把"归属"从约定变成机制,已实施)
+
+> 动机:`/zimo/metrics` 曾从公网前端端口(80/443)泄漏 —— 它由 `Init` 注册为**游离全局路由**:不属于任何面的 root,各面 per-port 门禁(黑名单式)全都放行它(commit c7b5814 靠"把路径挪进 `/zimo/api`"修好,机制未改)。同类风险还有**跨面注册**:门禁按端口判定,`fe.RegisterCoro("/zimo/api/x")` 完全合法且静默可达。本节把归属写成可验证、可失败的机制。
+
+**不变式**:每条已注册路由都归属于某个声明了 root 的服务器面,或显式声明为平台共享。
+
+**root 三态(`SetRootPath`)**:`SetRootPath` 即登记进程级归属表(root 唯一)。
+
+| 取值 | 语义 | 例 |
+| --- | --- | --- |
+| `"/zimo/api"` | 本面**拥有**该前缀(最长段前缀匹配) | JRPC `/zimo/jrpc`、RESTful `/zimo/api` |
+| 不调用(空) | **不拥有任何前缀**,不得注册业务路由(纯 advice 垫片) | 前端 `redirectOnly` 实例 |
+| `"/"` | **兜底归属**(全局至多一个实例;未被其他面认领的路径归它) | 前端完整面 |
+
+重复 root / 多个兜底 / 同一端口被两面登记 → 记入归属冲突,`Open()` 拒绝启动。
+
+**两条规则(v2.16:平台路由闸门 R2 已移除)**:
+
+* **R1 业务路由**(`RegisterCoro` / `RegisterCoroWithDeadline` / `RegisterStreamCoro` / `RegisterMultipartCoro` / `RegisterWebSocket`):路径归属必须是本面,否则 ERROR + **拒绝注册**(既不注册也不会泄漏);`Open()` 后不可再注册路由(否则会绕过 R3 快照)。
+* ~~**R2 平台路由闸门**~~(**v2.16 移除**):原规则要求"由 `Init` 注册的平台路由必须归属某个具体面,否则拒绝启动";其唯一调用方是手写指标端点(v2.15 已删),故整条移除。**替代约束**:新增平台路由时须自行确保它落在某个面的 root 下或 `MarkShared` —— 不归属任何面的路由会在**所有**端口可达(含公网前端,历史泄漏见本节动机),运行期由 **R3 归属网**告警兜底(只告警、不拦)。
+* **R3 运行期归属网**(PreSending 统一出口;快照零锁两次查表):已服务响应(状态 < 400)的归属面 ≠ 端口所属面 → `[ROUTE-LEAK]` WARN —— 命令式门禁漏网时的唯一可见信号。豁免:共享路径、未声明 root 的垫片实例(它只发 301/302,不是路由)。
+
+**门禁来源改为推导**:前端门禁不再由宿主手工登记外来前缀,改为 `LookupOwner(path) != this` → 404;新增服务器面或改 root 自动生效。`AddOtherRootPath` 降级为"归属表之外的额外前缀"兜底口子。
+
+**实现要点**:`SetRootPath` 从内联改为实现(登记归属表);Open 期校验保留 ①root 声明冲突 ②已登记路由归属复检(平台路由闸门 R2 于 v2.16 移除);`LookupOwner/IsSharedPath` 在 `Open()` 固化快照后零锁;归属表为进程级只增不清(与静态生命周期一致,仅 Phase1 写)。
+
+**验收(P1,2026-09-12 实测通过)**:① ~~平台路由游离 → 拒绝启动~~(**v2.16 随 R2 一并移除该闸门**;历史实测见 v2.9 修订行);② 跨面注册 → 注册期 ERROR + 不可达;③ `/ping` 三面 200、外来前缀三面 404、`/zimo/api/metrics` 仅 39441 可达(业务门禁 401);④ 正常配置下无 `[ROUTE-LEAK]` 误报(80→443 重定向实例已豁免)。
+
+### 4.7 自动 JSONP:机制全局 + 授权逐路由 + 行为差量(P6/v2.13,例外开关 v2.19,已实施)
+
+> 动机:JSONP 的**转换规则**是通用的(不含业务语义),所以出口(PreSending advice)保持全局;但"**这个接口是否允许被任意站点的 `<script>` 跨站读取**"是逐接口的安全决策 —— JSONP 天然绕过同源/CORS,与 CORS 白名单(管"允许哪些 Origin")方向相反。原实现是全局开关 `SetAutoJsonp`(默认开),等于给所有 GET JSON 接口开了跨站读取口子。
+
+**三层职责**:
+
+| 层 | 接口 | 说明 |
+| --- | --- | --- |
+| 全局基线 | `SetJsonpDefaults(ZmJsonpOptions)` | `paramNames={"callback"}` / `wrapErrors=true` / `maxBodyBytes=256KB` / `enabled=true`(观察期默认,见下) |
+| 逐路由授权 | `SetJsonpEnabled(prefix, ZmJsonpOverride)` | **前缀匹配(含子路径,最长前缀优先)** —— 用前缀而非精确路径,因为路由模式含 `{N}` 时实际请求路径与声明串不相等;声明默认启用,`enabled=false` = **例外**(不包装,也不打未声明告警) |
+| 差量覆盖 | `ZmJsonpOverride{enabled / paramNames / wrapErrors / maxBodyBytes}` | **`std::optional` 语义:未设置 ≠ 设为默认值**(否则空结构体会把全局基线拍回去);其余字段继承基线。注意 `o.paramNames = {}` 在此语义下是**重置为未设置**,要置空列表须写 `std::vector<std::string>{}` |
+
+```cpp
+// 业务层(Open 前;与归属声明同期)
+ZmHttpServer::SetJsonpEnabled("/zimo/api/legacy/");                       // 用全局基线
+ZmHttpServer::ZmJsonpOverride o;  o.paramNames = {"cb"};                   // 只改回调名
+ZmHttpServer::SetJsonpEnabled("/zimo/api/legacy/old/", o);
+ZmHttpServer::ZmJsonpOverride ex; ex.enabled = false;                      // 例外(v2.19)
+ZmHttpServer::SetJsonpEnabled("/zimo/api/secret", ex);
+```
+
+**判定顺序**(PreSending,零锁读启动期快照):GET? → `CT_APPLICATION_JSON`? → 命中声明前缀?(命中 → 该前缀 `enabled=false` 则放行;未命中 → 用全局基线,`enabled=false` 则不包)→ `wrapErrors`/`maxBodyBytes` → 回调名合法? → 包装。例外与授权同表竞争,仍按最长前缀优先。
+
+**迁移路径(为什么默认仍是 en=true)**:任何依赖 JSONP 的调用方都在工作,直接翻默认会让未声明的老客户端静默失效。故:**观察期**保持 `enabled=true`,但对"**未声明路由却被包装**"按路径打一次 `[JSONP] 未声明路由 ...` WARN;确认无外部调用方后置 `enabled=false`(一行),此后只有 `SetJsonpEnabled` 声明的路由可被 JSONP 读取。启动期会打印每条声明的合并后选项(便于发现拼错的前缀)。
+
+**明确不做**:回调名**字符集白名单**不做逐路由覆盖(它是 XSS 边界,放宽须全局单点评审);包装语法形态(`cb(json);` 等)与未声明路由的默认姿态也只留在全局 —— 它们是全局语法/安全契约,逐路由分化会让客户端与审计都不可控。v2.19 的逐前缀 `enabled` 是**例外开关**不是默认姿态:它只决定"这条已声明前缀包不包",不改变未声明路由的姿态。
+
+**边界**:JSON-RPC 面为纯 POST 信封,天然不触发;静态资源/HTML 因 CT 不符不触发;显式 `JsonpResponse` 的产物已是 JS(CT 非 JSON),不会被二次包装(§4.4)。
+
+**本服务落地状态(v2.19,目标形态已切)**:`net_dock.cpp` 置全局 `enabled=false` 并声明 `SetJsonpEnabled("/ping")`(探针保留 JSONP,`/ping` 为三面共享路径故各面一致)。切换依据:12 天运行日志(2026-08-31\~09-12)中 36 次带 `callback` 的请求**全部来自 127.0.0.1**(两个非回环客户端 192.168.1.7/.20 从未使用过该参数),即无真实 JSONP 调用方;早先被自动包装的 9 条路径(`/ping`、`/zimo/api/auth/me`、`/zimo/api/admin/users` 等)均为本机自测触发。**代价**:此后"漏声明"的症状由"照包 + WARN"变为"静默不包"(前端 `<script>` 会拿到裸 JSON),故新增需跨站读取的接口时须同步 `SetJsonpEnabled`。
 
 ### 4.4 响应助手(FR-08/09/24)
 
@@ -341,10 +429,13 @@ protected:
 | `JsonResponse(status, data)` | `newHttpJsonResponse(data)` + `setStatusCode`;成功为**裸 JSON**(与 auth.js 一致)                                                               |
 | `ErrorResponse(status, msg)` | 统一错误包 `{error:{code,message}}`(与 auth.js 一致)                                                                                            |
 | `JsonpResponse(req, data)`   | 显式助手:读 `req->getParameter("callback")`:有合法值 → `cb(json);`(Content-Type `application/javascript`);白名单 `[A-Za-z0-9_.]`(复用 `IsValidJsonpCallback`),非法值返回 400;无参数 → 常规 JSON                                                                   |
+| `FileResponse(req, path)`   | **页面/小文件**(P2/v2.10):单次 stat → `Last-Modified` + 强 ETag;`If-None-Match` 优先 / `If-Modified-Since` 兜底 → 304(无 body);文件不可用 → 404(记 WARN);Cache-Control 由调用方设置(平台不覆盖)。⚠ 不带 Range —— 大文件/断点续传走 `SendFileCoro`/`SendFileHybridCoro` |
+| `RedirectResponse(url, status=302)` | 跳转响应(默认 302;需要 301 语义时显式传 301/303/307/308) |
+| `NotFoundResponse(req=nullptr)` | 404(当前线程为服务器 loop 且已 `SetNotFoundPage` 时回自定义 404 页) |
 
 > 接口修正:v2.1 起 `JsonpResponse` 接收 `req`(FR-24"检测 query callback 参数"由基类完成,业务层只传数据)。
 >
-> **v2.5 自动识别型 JSONP(与主流 Koa/Spring 中间件语义一致)**:基类首个 `Open()` 经 once\_flag 注册一条全局 **PreSending advice**——规则收敛:请求为 GET 且带合法 `callback`(白名单 `[A-Za-z0-9_.]`,≤128)且响应 Content-Type 为 `CT_APPLICATION_JSON` 时,自动改写 `resp` 为 `cb(json);` + `CT_TEXT_JAVASCRIPT`;任一规则不满足 → 原样返回(不污染普通 REST/前端静态/WS 升级)。三面共享;开关 `SetAutoJsonp(false)` 可关闭(默认开)。<br/>**边界**:JSON-RPC 面(39440)为纯 POST 信封,天然不触发;访问日志(PostHandling)先于 PreSending 执行,记录的字节数为包装前大小。
+> **v2.5 自动识别型 JSONP(与主流 Koa/Spring 中间件语义一致;v2.13 起授权逐路由)**:`Init` 注册一条全局 **PreSending advice**——规则:GET + 合法回调名(白名单 `[A-Za-z0-9_.]`,≤128)+ 响应 `CT_APPLICATION_JSON` → 改写 `resp` 为 `cb(json);` + `CT_TEXT_JAVASCRIPT`;任一不满足 → 原样返回(不污染普通 REST/前端静态/WS 升级)。**授权与行为已收到逐路由**(`SetJsonpEnabled`/`SetJsonpDefaults`),详见 **§4.7**。<br/>**边界**:JSON-RPC 面(39440)为纯 POST 信封,天然不触发;访问日志先于 PreSending 执行,记录的字节数为包装前大小。
 
 * handler 未捕获异常由 Drogon `HttpBinder` 自动转 500(FR-08);404 页由 `SetNotFoundPage` 承载。
 
@@ -360,7 +451,7 @@ protected:
 
 * `ReloadCertificates()` → `app().reloadSSLFiles()`(热加载,换内容不换路径)。
 
-* `SetTicketDisabled(true)` → 全局 `setSSLConfigCommands` 追加 `Options=-SessionTicket`(FR-11 开关,默认不启用)。
+* `Options.ticketDisabled = true`(经 `Init` 全局 `setSSLConfigCommands` 追加 `Options=-SessionTicket`,FR-11 开关,默认不启用)。
 
 * **HTTPS 模式 80→443 重定向(FR-22,v2.1 定版)**:`HttpFrontendServer` 额外 `AddListener(80, false)`,并注册 PreRouting advice:本地端口 == 80 → 301 `https://{host}{path}`(**不采用** **`SecureSSLRedirector`** **插件**——它全局作用于所有非 SSL 监听,会把 39440/39441 的请求一并重定向;也不注册 `/{1}` 通配 handler——会串扰其他监听端口;一律经 `LocalPort()` 判定后走 advice)。
 
@@ -435,28 +526,27 @@ resp = drogon::HttpResponse::newFileResponse(path, offset, length, true, dispNam
 连接级空闲超时框架内置;业务级 deadline 基类封装 `RegisterCoroWithDeadline`,内部**复刻旧版 TryReply 门**:
 
 ```cpp
-void DrogonHttpServer::impl::runWithDeadline(
-    const drogon::HttpRequestPtr& req,
-    std::function<void(const drogon::HttpResponsePtr&)> cb,
-    CoroHandler h, size_t deadlineMs)
-{
-    auto gate    = std::make_shared<std::atomic<bool>>(false);  // TryReply 门
-    auto connWk  = req->getConnectionPtr();                     // 弱引用守卫
-    auto loop    = connWk.lock() ? connWk.lock()->getLoop() : app().getLoop();  // 连接所属 loop(v2.1:不用主 loop)
-    loop->runAfter(deadlineMs / 1000.0,
-        [gate, cb, connWk] {
-            if (!gate->exchange(true)) {
-                auto c = connWk.lock();
-                if (!c || !c->connected()) return;   // 连接已关,不发
-                cb(Response504());
-            }
-        });
-    // 业务协程经 RunOnPool 等离核后,返回前:
-    //   if (gate->exchange(true)) 丢弃;   // 已被超时占位
-    //   auto c = connWk.lock(); if (!c || !c->connected()) 丢弃;  // 连接已关
-    //   cb(resp);
-}
+// 实际实现:`ZmHttpServer::RegisterCoroWithDeadline`(注册期包装为 callback-form handler)
+// ── v2.14 定版:超时状态**共享**给定时器,响应回调在"发出响应那一刻"清空 ──
+struct ZmDeadlineState {
+    std::atomic<bool> answered{false};                 // 原子门(TryReply 门):只回一次
+    std::function<void(const HttpResponsePtr&)> cb;    // 完成即置空
+    std::weak_ptr<trantor::TcpConnection> connWk;      // 弱引用守卫
+};
+loop = 连接所属 loop(v2.1:不用主 loop)
+tid  = loop->runAfter(deadlineMs/1000.0, [st]{          // 保存 TimerId 供注销
+           if (st->answered.exchange(true)) return;    // 业务已回
+           连接不在/已断 → return;  否则 st->cb(504) 后 st->cb = nullptr;
+       });
+finish(resp):                       // 业务成功/异常共用收尾
+    if (st->answered.exchange(true)) return;           // 已被超时占位
+    loop->invalidateTimer(tid);                        // 幂等;内部 runInLoop → 跨线程安全
+    连接在 → st->cb(resp);  最后 st->cb = nullptr;      // ← 关键
 ```
+
+**为什么要 v2.14(旧写法的两个代价)**:① 旧实现把 `cb` **按值捕获进定时器** → 该回调持有的 `TcpConnectionPtr` 与请求对象(**含 body**)会被多留到 `deadlineMs`,大 body + 长 deadline 下滞留可观(实测:50ms 完成的请求,旧写法要到 1s 才释放);② 定时器没注销 → 到点空转一次。
+**注意 trantor 的取消语义**:`invalidateTimer` 只从 id 集合删除,定时器对象本身仍留到到期才弹出 —— 所以**真正的收益来自"完成即清空 cb"**,注销只是顺手(避免空转)。
+**footgun 守卫**:`deadlineMs == 0` 会 `runAfter(0)` → 每个请求立即 504,故注册期拒绝并提示改用 `RegisterCoro`。
 
 **纪律**:原子门保证只回一次;弱引用 + `connected()` 保证晚到不碰已销毁连接;流式/下载端点不设死线。
 
@@ -468,7 +558,7 @@ void DrogonHttpServer::impl::runWithDeadline(
 
 ```cpp
 template <typename T>
-drogon::Task<T> DrogonHttpServer::RunOnPool(std::function<T()> fn)
+drogon::Task<T> ZmHttpServer::RunOnPool(std::function<T()> fn)
 {
     struct Awaiter : drogon::internal::CallbackAwaiter<T>
     {
@@ -510,7 +600,7 @@ drogon::Task<T> DrogonHttpServer::RunOnPool(std::function<T()> fn)
 
 * 访问日志:`ZmHttpServer::Init` 一次性注册一对 advice(PreRouting 记起始时间入 req attributes;PostHandling 结算耗时),单行 `PUBLIC_LOG_*` 输出(与运行日志同文件、按标签区分),覆盖 方法/路径/状态码/耗时/字节数/两端端口;不自建 access.log、不使用 AccessLogger 插件(v2.4 定版,与代码一致;v2.6 注册点从"首个 Open"移入 Init)。
 
-* 健康检查:`/ping` 在 `ZmHttpServer::Init` 内默认注册 → `{"pong":true}`(FR-23)。
+* 健康检查:`/ping` 在 `ZmHttpServer::Init` 内默认注册 → `{"pong":true}`(FR-23),并经 `MarkShared("/ping")` 声明为**平台共享路径**(各面门禁与归属网单源豁免,§4.6 R2)。
 
 ***
 
@@ -520,8 +610,8 @@ drogon::Task<T> DrogonHttpServer::RunOnPool(std::function<T()> fn)
 
 | 面                    | 端口     | 职责              | 关键注册                                                                                                                                         |
 | -------------------- | ------ | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `HttpFrontendServer` | 80/443 | 静态 + SPA + 页面路由 | `SetDocumentRoot` + SPA 回落 advice + `SetNotFoundPage` + 页面别名 handler + `/share/{token}` 302 + HTTPS 模式 80→443 重定向(FR-22) + per-port 门禁(§4.4) |
-| `HttpJsonRpcServer`  | 39440  | JSON-RPC        | `RegisterCoro("/zimo/jrpc", Post, ...)` + method 分发器(ping/-32700/-32601),**JSON-RPC 信封单列** + per-port 门禁                                     |
+| `HttpFrontendServer` | 80/443 | 静态(docroot)+ 自定义 404 + 路径封禁 + 80→443 重定向 | `SetDocumentRoot` + `SetNotFoundPage` + `AddDeniedPath`(docroot 策略)+ HTTPS 模式 80→443 重定向(FR-22)+ per-port 门禁(§4.4/§4.6);**页面/SPA/页面跳转由业务层 advice(module_gate)承载**,响应经 `FileResponse`/`RedirectResponse` 助手(v2.10) |
+| `HttpJsonRpcServer`  | 39440  | JSON-RPC        | `RegisterCoro("/zimo/jrpc", Post, ...)` + method 分发器(-32700/-32601),**JSON-RPC 信封单列** + per-port 门禁                                     |
 | `HttpRestfulServer`  | 39441  | ★ 业务 API        | 各业务模块 `RegisterCoro("/zimo/api/...", ...)` + `RegisterWebSocket` + **显式挂 CORS** + per-port 门禁                                                |
 
 三者共享 `app()`;路由靠路径前缀区分;全局项(/ping/访问日志 advice/JSONP)由 `ZmHttpServer::Init` 一次性注册(去重纪律 §2.3)。
@@ -529,36 +619,49 @@ drogon::Task<T> DrogonHttpServer::RunOnPool(std::function<T()> fn)
 ### 11.2 前端服务器 `ZmHttpFrontendServer`(80/443)
 > **v2.6 一对象一端口**:HTTPS 模式下前端由**两个实例**构成——`ZmHttpFrontendServer(redirectOnly=false)` 挂 443(完整面:静态/SPA/404/门禁)+ `ZmHttpFrontendServer(redirectOnly=true)` 挂 80(**仅** 80→443 重定向 advice,FR-22);无证书模式仅一个完整面(80,HTTP)。SPA 回落/封禁前缀由业务层 `AddSpaFallback/AddDeniedPath` 配置,平台不硬编码页面路径。
 
-**静态文件**:`SetDocumentRoot(wwwRoot)` 内置防目录穿越、MIME、Range;Cache-Control 语义保留:HTML 不缓存、JS/CSS 靠 `?v=` 破缓存(经 `SetStaticFileHeaders` 或页面别名 handler 按扩展名设置,见旧 [SendFile](file:///a:/ZiMo/ZiMoService/http_server_manager.cpp#L238-L257))。
+**静态文件**:`SetDocumentRoot(wwwRoot)` 内置防目录穿越、MIME、Range;Cache-Control 语义保留:HTML 不缓存、JS/CSS 靠 `?v=` 破缓存(经 `SetStaticFileHeaders` 或页面别名 handler 按扩展名设置,(实现见 §16.1.2 `SetStaticCachePolicy` + PreSending 加头;旧 libevent 版 SendFile 已随宿主层移除))。
 
 **页面路由表(前端端口)**:
 
-| 路径                                                      | 行为                                        | 注册方式                                                                  |
-| ------------------------------------------------------- | ----------------------------------------- | --------------------------------------------------------------------- |
-| `/`                                                     | `html/index.html`                         | `RegisterCoro("/", Get, ...)` → `newFileResponse`                     |
-| `/login` `/register` `/reset` `/force-reset`            | 对应 `html/*.html`                          | 同上,逐条 handler                                                         |
-| `/404`                                                  | `html/404.html`                           | handler                                                               |
-| `/portal` 与 `/portal/*`                                 | SPA history fallback → `html/portal.html` | **SPA 回落 advice**(主方案,v2.1 定版;`setImplicitPage` 语义为"目录解析",不能做 SPA 回落) |
-| `/share/{token}`                                        | 302 → RESTful 端口分享页                       | `RegisterCoro("/share/{1}", Get, ...)` → `newRedirectionResponse`     |
-| `/html/*` `/css/*` `/js/*` `/resource/*` `/favicon.ico` | 物理静态文件                                    | `SetDocumentRoot` 直接命中                                                |
-| `/doc/*`                                                | **不可达**(404)                              | 前端面 advice 拦截 `/doc/*`(www 下物理存在,必须显式封禁)                              |
-| 其余未匹配                                                   | `html/404.html`(状态码 404)                  | `SetNotFoundPage("html/404.html")`                                    |
+> **v2.10 更新(P2)**:页面/SPA 路由**不由平台面实现**,而由业务层页面 advice(`module_gate`:
+> 白名单页/`/portal` SPA/`/force-reset`/`/` 跳转,含会话判定)**承载**;平台只提供
+> docroot 静默服务(StaticFileRouter)、`SetNotFoundPage`、路径封禁口子,以及页面响应的
+> **条件请求助手**(`FileResponse`)。下表为**行为契约**(由业务 advice 实现),非平台注册表;
+> 平台侧原 `AddSpaFallback`/`m_spaFallbacks` 分支已删(P2:双实现且无调用者)。
 
-**前端面 advice 链(v2.1 定版,注册顺序):**
+| 路径                                                      | 行为                                        | 实现位置(v2.10)                                                          |
+| ------------------------------------------------------- | ----------------------------------------- | --------------------------------------------------------------------- |
+| `/`                                                     | 无会话 → 302 `/login`;有会话 → 302 `/portal`      | 业务页面 advice(`module_gate`)                                             |
+| `/login` `/register` `/reset` `/404`                     | 白名单页(已登录访问 → 302 `/portal`;`/404` 恒渲染)    | 同上 + `ZmHttpServer::FileResponse`(条件请求 304 同源)                        |
+| `/force-reset`                                          | 无会话 → 302 `/login?redirect=…`;有会话 → SPA 页壳  | 同上                                                                    |
+| `/portal` 与 `/portal/*`                                 | SPA 页壳(无会话 → 302 `/login?redirect=<path>`)   | 同上;`setImplicitPage` 语义为"目录解析",不能做 SPA 回落,故不用                            |
+| `/share/{token}`                                        | 302 → RESTful 端口分享页                       | 业务路由(`RegisterCoro` → `ZmHttpServer::RedirectResponse`)                |
+| `/assets/*` `/svg/*` `/css/*` `/js/*` `/html/*` `/favicon.ico` | 物理静态文件(drogon StaticFileRouter,含 IMS→304) | `SetDocumentRoot` 直接命中                                                |
+| 物理存在的敏感目录(如历史 `www/doc`)                                 | **不可达**(404)                              | `AddDeniedPath`(平台 docroot 访问策略;**当前发布目录无此类目录,故无调用者**)              |
+| 其余未匹配                                                   | 自定义 404 页(状态码 404)                        | `SetNotFoundPage("html/404.html")`                                    |
+
+**前端面 advice 链(v2.10,注册顺序):**
 
 ```cpp
-// 1. 80→443 重定向(HTTPS 模式):本地端口 == 80 → 301
-// 2. per-port 门禁(§4.4):本地端口 ∈ {80,443} 且路径以 /zimo/ 开头 → 404
-// 3. SPA 回落:本地端口 ∈ {80,443} 且路径以 /portal(/../) 开头 → cb(portal.html)
-// 4. /doc/* 封禁:路径以 /doc/ 或 == /doc 开头 → cb(404)
-// 放行规则统一:cc() 交 document root / 404
+// 平台面(本面 Setup;仅重定向实例 / 仅门禁与封禁)
+// 1. 80→443 重定向(HTTPS 模式,独立实例):本地端口 == 80 → 302(FR-22)
+// 2. per-port 门禁(§4.4/§4.6):本地端口 ∈ {80,443} 且路径归属其他面 → 404
+// 3. 路径封禁(AddDeniedPath;当前无调用者)→ cb(404)
+// 放行规则统一:cc() 交业务页面 advice / StaticFileRouter
+// 业务面(module_gate,后注册 → 后执行)
+// 4. 共享路径(/ping)放行 → 静态资源放行 → 白名单页/SPA/跳转(会话判定,响应经
+//    ZmHttpServer::FileResponse(条件请求 304)/ RedirectResponse / NotFoundResponse)
 ```
 
-> 当前 `www` 下无物理 `/portal` 目录,`/portal/*` 全部回落 portal.html(与旧 PortalModule 语义等价);advice **按本地端口 + /zimo/ 前缀双重要求**,39441/39440 不受影响。
+> v2.10:`/portal/*` 的 SPA 回落由**业务层** advice 承担(平台侧重复实现 `AddSpaFallback` 已删);
+> 页面响应经平台 **`FileResponse`** 助手 → 页面获得 `Last-Modified`/`ETag`,命中条件请求回 304
+> (§16.1.1 宣告的"页面 304"至此在真实路径生效)。advice 按本地端口判定,39441/39440 不受影响。
 
 **防穿越**:`SetDocumentRoot` 自带路径规范化与穿越防护;若业务层自行解析物理路径,沿用旧 `GetFullPathNameW` + 根包含校验逻辑。
 
 ### 11.3 JSON-RPC 服务器 `ZmHttpJsonRpcServer`(39440)
+
+> **实施状态(v2.12)**:平台面已实现(`/zimo/jrpc` 单 handler + 协议校验 -32700/-32600/-32602/-32601/-32603);**当前未注册任何 method**(`ServicePortal::RegisterJsonRpcRoutes` 为空,平台内建 `ping` 已移除)。
 
 > v2.3:根路径默认 `ZM_HTTP_JRPC_SERVER_ROOT_URI`(`/zimo/jrpc`),可经 manager Init `rootPath` / `SetRootPath` 自定义;门禁与 handler 注册同源。本节与下节的 `/zimo/*` 写法均为默认值示意。
 >
@@ -573,21 +676,25 @@ srv.RegisterCoro("/zimo/jrpc", Post,
         if (解析失败) { 回信封 { jsonrpc:"2.0", id:null, error:{code:-32700, message:"Parse error"} }; }
         std::string method = body.get("method", "").asString();
         Json::Value rsp; rsp["jsonrpc"] = "2.0"; rsp["id"] = body["id"];
-        if (method == "ping")      { rsp["result"] = Json::objectValue; rsp["result"]["pong"] = true; }
+        if (method == "<业务方法>") { rsp["result"] = ...; }
         else                       { rsp["error"]["code"] = -32601; rsp["error"]["message"] = "Method not found: " + method; }
-        co_return HttpServerBase::JsonResponse(200, rsp);   // 注意:JRPC 信封单列,不复用 REST ErrorResponse
+        co_return ZmHttpServer::JsonResponse(200, rsp);   // 注意:JRPC 信封单列,不复用 REST ErrorResponse
     });
 ```
 
 * 请求/响应信封 `jsonrpc`、`id` 字段按 JSON-RPC 2.0 保留;
 
-* 方法表扩展:仅在分发器加分支(现仅 `ping`)。
+* 方法表扩展:业务侧经 `RegisterMethod` 注册(分发器不再内建任何 method)。
 
 ### 11.4 RESTful 服务器 `ZmHttpRestfulServer`(39441)
 
+> **实施状态(v2.12)**:已实现并验证 —— auth(`/auth/*`)、portal(`/portal/*`)、userAdmin(`/admin/users/*`;v2.11 起带参路由走 `RegisterCoroWithPathParams`);**filehub(`/portal/filehub/*`)与音频流(`/portal/serverAudioStream/*`)未实现**(P3/P4 未开工,下方路由表为设计目标);filehub/audio 的权限种子已留在 DB。
+
 > v2.3:根路径默认 `ZM_HTTP_RESTFUL_SERVER_ROOT_URI`(`/zimo/api`),同上可自定义。
 
-**注册策略**:显式注册,路径保留 `/zimo/api` 前缀(省去旧"剥根前缀"步骤)。每个业务模块新增 `RegisterDrogonRoutes(HttpServerBase&)`,内部逐条 `RegisterCoro`;旧 `ServicePortal::RestfulRequestCB` 分发链拆散为各模块路由注册,调用顺序等价性保留:auth → filehub → audio → portal → ping。
+**注册策略**:显式注册,路径保留 `/zimo/api` 前缀(省去旧"剥根前缀"步骤)。每个业务模块新增 `RegisterRoutes()`(经 manager 取得本面 server),内部逐条 `RegisterCoro`;旧 `ServicePortal::RestfulRequestCB` 分发链拆散为各模块路由注册,调用顺序等价性保留:auth → filehub → audio → portal → ping。
+
+**路径参数写法(v2.11 约定)**:路径含 `{N}` 的路由**一律用 `RegisterCoroWithPathParams`**,参数写成 handler 形参(如 `[](HttpRequestPtr req, std::string uidStr)`);读参数用形参,**不得**手工解析 `req->path()`(前缀一改即静默失效),也不用 `getParameter("1")`(它只读 query 串,路径参数恒为空)。无路径参数的路由用 `RegisterCoro`。
 
 **路由表(前缀** **`/zimo/api`)**:
 
@@ -595,26 +702,32 @@ srv.RegisterCoro("/zimo/jrpc", Post,
 
 * 门户 `/portal/`:GET `/portal/info`;GET `/portal/userManager`(分页);GET `/portal/userManager/{id}`;POST `/portal/userManager/{id}/{action}`。
 
-* 文件中心 `/portal/filehub/`:GET `/list` `/search` `/download` `/shares` `/tasks` `/task_status` `/zip_task_download`;POST `/upload` `/mkdir` `/rename` `/move` `/copy` `/delete` `/zip` `/share` `/unshare` `/task_create` `/task_cancel` `/task_delete` `/zip_download` `/share_commit` `/share_cancel`;POST `/portal/filehubAdmin/sync`(手动一致性)。`zip_download` 走 query(`task_id`+`ids`),迁移后保持 query 语义(见旧 [HandleZipStart](file:///a:/ZiMo/ZiMoService/modules/module_file_hub.h#L233-L234))。
+* 文件中心 `/portal/filehub/`:GET `/list` `/search` `/download` `/shares` `/tasks` `/task_status` `/zip_task_download`;POST `/upload` `/mkdir` `/rename` `/move` `/copy` `/delete` `/zip` `/share` `/unshare` `/task_create` `/task_cancel` `/task_delete` `/zip_download` `/share_commit` `/share_cancel`;POST `/portal/filehubAdmin/sync`(手动一致性)。`zip_download` 走 query(`task_id`+`ids`),迁移后保持 query 语义((旧 libevent 版 `HandleZipStart` 已随宿主层移除;filehub 未实施,§11.4))。
 
 * 音频 `/portal/serverAudioStream/`:GET `/stream`(流式,§6.2);GET `/status`(采集快照)。
 
 * 系统:GET `/ping` → `{"pong":true}`。
 
-**鉴权 helper(替代各模块** **`AuthAndTouch`** **前置块)**:
+**鉴权机制(v2.12 按实现更正)**:
 
-```cpp
-// net/rest_util.h —— 统一鉴权 + 模块权限(语义对齐旧 UserModule::RequireModule)
-// 返回 false 时已写好 401/403 响应
-bool RequireModule(const HttpRequestPtr& req, HttpResponsePtr& resp,
-                   const char* moduleCode /* 可空 */, UserModule::UserInfo* outUi);
-```
+**实际落点 = 业务层 `ZmAuthGateModule`**(`modules/module_gate.{h,cpp}`),不是平台 `RequireModule`
+(该 helper 未采纳,`net/rest_util.h` 不存在):
 
-* 读 `req->getCookie("zm_session")` → DB 会话校验(现有逻辑原样);会话失效 → 401,模块未授权 → 403;
+| 层 | 接口 | 作用 |
+| --- | --- | --- |
+| 粗判(advice) | `SetupRestfulGate(rest)` | 同步 PreRouting:非 `/zimo/api` 路径放行;免鉴权接口(register/login)放行;无 cookie → **401**;其余放行进 handler |
+| 完整校验(handler 首行) | `drogon::Task<ZmGateResult> Authorize(req, requiredPerm)` | 会话查库(`SessionModule::AuthAndTouch`)+ 状态/删除/强制改密边界 + 可选权限点;`ok=false` 时按 `status/code/message` 直接回 |
+| 同步判定 | `ZmAuthGateModule::CheckCtxSync(ctx, path)` | handler 已自行 `AuthAndTouch` 后用(避免嵌套协程 Task 链卡死,见模块头注释) |
+| 模块/接口辅助 | `ApiError/ApiOk/ClientIp/ApiPermForPath/IsForceChangeAllowedApi` | 统一响应与权限点映射 |
 
-* **在每个 handler 内显式调用**(与现风格一致);也可抽成 `AuthFilter` 挂到路由组(§4.2),二选一,保持一致性即可。
+* **双保险次序**:advice 只做"cookie 存在性粗判"(防无效请求进 handler);真正的会话有效期、账号状态、权限点由 handler 首行 `Authorize()` 完成 —— 与旧 `AuthAndTouch` 语义等价。
+* **advice 必须同步回调**(本捆绑 drogon 的 advice/filter 回调跨线程会卡死链),故异步查库一律留在 handler 协程内。
 
-**CORS + 凭据**:由业务层显式挂到 `HttpRestfulServer`:`RegisterPreSending` advice 追加 `Access-Control-Allow-Origin`(回显 Origin)+ `Access-Control-Allow-Credentials: true` + OPTIONS 预检(复用 Drogon `HttpOptionsMiddleware` 或自写);配置项与现 CORS 白名单一致。
+**CORS + 凭据(v2.17 语义定版)**:白名单经 `ZmHttpServer::SetCorsAllowedOrigins`(Open 前声明;**不再放在 `Options`** —— 它是业务策略,与 `SetJsonp*`/`SetRootPath` 同款)注入,平台只提供**判据** `IsCorsOriginAllowed(origin)`;实际行为由业务 advice 决定(`service_portal::RegisterRestfulCors`,仅 RESTful 面):
+· **跨站**:Origin 命中白名单 → 预检 200 + 回显 `Access-Control-Allow-Origin` + `Credentials: true`;不在名单 → 预检 **403**、普通响应**不回显**任何 CORS 头;
+· **同站跨端口**:Origin 与 Host 同 host、仅端口不同(页面 80/443 → API 39441)→ 业务侧硬逻辑放行,**不经过白名单**;
+· **空名单** = 只放行同站跨端口,任何跨站 Origin 一律拒绝。
+· 实测(2026-09-12):同站 → 200 + ACAO;`http://127.0.0.1` 对 Host `localhost:39441`(不同站、仅靠名单)→ 200 + ACAO;`https://evil.example` → 预检 403 且响应无 ACAO。
 
 ### 11.5 会话与鉴权映射
 
@@ -632,11 +745,11 @@ bool RequireModule(const HttpRequestPtr& req, HttpResponsePtr& resp,
 
 | 现有接口                                                         | 迁移后                                                                            |
 | ------------------------------------------------------------ | ------------------------------------------------------------------------------ |
-| `XxxModule::DispatchRest(loop, verb, path, task, body, len)` | `XxxModule::RegisterDrogonRoutes()`(逐条 `RegisterCoro`)+ 内部 `Handle*(req, ...)` |
+| `XxxModule::DispatchRest(loop, verb, path, task, body, len)` | `XxxModule::RegisterRoutes()`(逐条 `RegisterCoro`/`RegisterCoroWithPathParams`)+ 内部 `Handle*(req[, uidStr])` |
 | `XxxModule::RegisterHttpRoutes(HttpServerManager*)`(80 端口)   | 并入 `HttpFrontendServer::RegisterRoutes()`(§11.2 表)                             |
 | `ServicePortal::RestfulRequestCB`(分发链)                       | 拆散为各模块路由注册(§11.4),保留顺序等价性:auth → filehub → audio → portal → ping               |
 | `ServicePortal::JrpcRequestReadCB`                           | `HttpJsonRpcServer::RegisterRoutes()`(§11.3)                                   |
-| `ZmReqLoopRest::ResponseJson/ResponseError`                  | `rest_util.h` 响应助手(§4.4)                                                       |
+| `ZmReqLoopRest::ResponseJson/ResponseError`                  | `ZmHttpServer` 响应助手(§4.4)                                                        |
 | `ZmReqLoopJrpc::ResponseJson`                                | `HttpJsonRpcServer` 信封封装(§11.3)                                                |
 
 ***
@@ -674,7 +787,7 @@ bool RequireModule(const HttpRequestPtr& req, HttpResponsePtr& resp,
 
 1. 三个端口(80/443、39440、39441)行为与迁移前一致:路径、状态码、响应体、cookie、CORS 头
 2. 前端:静态文件 / 页面别名 / SPA 刷新回落 / 自定义 404 / `/share/{token}` 302 均正常;`doc/` 目录不可达
-3. JRPC:`POST /zimo/jrpc` 的 `ping` 返回 `{"pong":true}`;非法 JSON 返回 -32700;未知 method 返回 -32601
+3. JRPC:`POST /zimo/jrpc` 非法 JSON → -32700;未注册 method → -32601(平台不内建任何 method)
 4. RESTful:auth 全端点、portal 信息/用户管理、filehub 全端点(含 Range 206、>10GB 大文件、zip 打包流)、音频流、`/ping` 全部通过
 5. 鉴权:会话失效 401、模块未授权 403、`zm_session` cookie 读写一致
 6. 线程纪律:handler 内无阻塞操作(代码评审);文件中心/音频/登录在高并发下无事件循环卡顿
@@ -687,25 +800,25 @@ bool RequireModule(const HttpRequestPtr& req, HttpResponsePtr& resp,
 
 ## 14. 分阶段实施计划
 
-| 阶段           | 内容                                                                   | 产出                  |
-| ------------ | -------------------------------------------------------------------- | ------------------- |
-| P0           | vcxproj 增加 drogon 头文件/库目录 + 链接项;最小 `app()` 引导跑通 80 端口                | 可编译、可 curl 通        |
-| P1           | 前端服务器:document root + 页面别名 + SPA 回落 + 404 + 分享 302                   | 现有前端页面完整可用          |
-| **P1.5(本期)** | **三面 + 测试接口**:JRPC 信封、REST 测试组、WS echo、Range/deadline 验证;业务路由**不接入** | 三端口测试接口全绿           |
-| P2           | RESTful 基础:响应助手 + 鉴权 helper + CORS + auth/portal 路由                  | 登录/门户/用户管理可用        |
-| P3           | RESTful 文件中心:filehub 全路由 + 上传/下载(Range)/zip 流式                       | 文件中心可用              |
-| P4           | RESTful 音频 + JSON-RPC:stream/status 流式 + `/zimo/jrpc` 分发器            | 远程音频 + JRPC ping 可用 |
-| P5           | 收尾:证书热载、关闭顺序、压测(线程模型纪律)、广播回归                                         | 全量回归通过              |
+| 阶段      | 内容                                                                   | 产出                  | 状态(v2.12) |
+| ------- | -------------------------------------------------------------------- | ------------------- | --------- |
+| P0      | vcxproj 增加 drogon 头文件/库目录 + 链接项;最小 `app()` 引导跑通 80 端口                | 可编译、可 curl 通        | ✅ 已完成     |
+| P1      | 前端面:docroot + 自定义 404 + 重定向;页面/SPA 归业务 advice(§11.2)                 | 现有前端页面完整可用          | ✅ 已完成     |
+| P1.5    | 三面 + 测试接口:JRPC 信封、REST 测试组、WS echo、Range/deadline 验证                | 三端口测试接口全绿           | ✅ 已完成(测试路由已移除) |
+| P2      | RESTful 基础:响应助手 + 鉴权 + CORS + auth/portal/userAdmin 路由              | 登录/门户/用户管理可用        | ✅ 已完成(见 `docs/tests/2026-09-06-用户系统验证报告.md`) |
+| P3      | RESTful 文件中心:filehub 全路由 + 上传/下载(Range)/zip 流式                       | 文件中心可用              | ❌ 未实施(无模块;权限种子已留) |
+| P4      | RESTful 音频 + JSON-RPC:stream/status 流式 + JRPC 业务方法                     | 远程音频 + JRPC 业务可用    | ❌ 未实施(无音频模块;JRPC 仅内建 `ping`) |
+| P5      | 收尾:证书热载、关闭顺序、压测、广播回归                                                 | 全量回归通过              | 🟡 部分(证书热载/关闭语义已实现;压测与广播回归未做) |
 
 ***
 
 ## 15. 改动清单(v2.6:生命周期静态化重构)
 
-1. 新增 `net/drogon_http_common.h`(公共类型 + RunOnPool 声明)
-2. 新增 `net/drogon_http_server.h/.cpp`(具体基类 + 静态生命周期 Init/Open/Close + Options + 去重 + 响应助手 + advice 挂点)
+1. 新增 `net/zm_net_http_server.h`(公共类型 + RunOnPool 声明;原计划的 `drogon_http_common.h` 已并入)
+2. ~~新增 `net/drogon_http_server.h/.cpp`~~(与第 1 项合并为 `zm_net_http_server.h/.cpp`:基类 + 静态生命周期 + Options + 去重 + 响应助手 + advice 挂点)
 3. 新增 `net/http_frontend_server.h/.cpp` / `net/http_jsonrpc_server.h/.cpp` / `net/http_restful_server.h/.cpp`
-4. 新增 `net/rest_util.h`(响应助手别名 + `RequireModule` 声明)
-5. **重建**既有空壳 `net_dock.h/.cpp`(持有三 Manager,`Init` 内先 `ZmHttpServer::Init(opts)` 全局一次再配置三面,Open/Close 转发静态,暴露 GetXxxServer)与 `http_server_manager.h` / `http_jsonrpc_manager.h` / `http_restful_manager.h`(.cpp)(各持有并**仅配置**本面服务器,无生命周期委托)
+4. ~~新增 `net/rest_util.h`~~(未采纳:响应助手落在基类,鉴权落在 `ZmAuthGateModule`)
+5. 重建既有空壳 `net_dock.h/.cpp`(宿主层,置于服务工程根目录)(持有三 Manager,`Init` 内先 `ZmHttpServer::Init(opts)` 全局一次再配置三面,Open/Close 转发静态,暴露 GetXxxServer)与 `http_server_manager.h` / `http_jsonrpc_manager.h` / `http_restful_manager.h`(.cpp)(各持有并**仅配置**本面服务器,无生命周期委托)
 6. `service_center.cpp`:`OnStart` 建 NetDock → `NetDock::Init()`(全局 Init + 三面配置)→ 建 Portal(注册路由,Phase1)→ `NetDock::Open()`(静态);`OnStop`:`Portal.Shutdown()` → `NetDock::Close()`(静态)
 7. `service_portal.h/.cpp`:构造时经 NetDock 取三面 server 引用注册路由(本期测试路由);`Shutdown()` 业务收尾
 8. `ZiMoService.vcxproj`:接入 drogon 库目录 + `DROGON_STATIC_DEFINE/TRANTOR_STATIC_DEFINE` + 链接项(drogon/trantor/jsoncpp/cares/lz4/sqlite3/libssl/libcrypto),移除旧 `libcrypto_static/libssl_static` + 新增文件
@@ -735,12 +848,14 @@ net_dock 显式启用后生效)。接口演进:基类(§2 类层次)同一位置
 - 发送路径事实:文件型响应发送不经 304 特殊分支(`HttpServer.cc:1002-1026`),
   **"PreSending 改写响应为 304"方案不可行**(仍会 sendFile 正文)。
 
-**16.1.1 B 档:SPA 回落补齐(编码)**:
-`http_frontend_server.cpp:139-161` 的 `newFileResponse(page)` 不经 StaticFileRouter,
-无 Last-Modified/ETag/304。方案:把 `FetchFileMeta/CacheHeaders/Maybe304`
-(现匿名 namespace)提升为 `ZmHttpServer` protected static,SPA 分支改走
-`FetchFileMeta → CacheHeaders → Maybe304`(命中 cb(304);否则 newFileResponse +
-addHeader(Last-Modified/ETag));`SendFile*` 共用同一 helper(行为单源)。
+**16.1.1 B 档:SPA/页面回落补齐(编码;v2.10 修正落地位置)**:
+原方案只把 `FetchFileMeta/CacheHeaders/Maybe304` 提升为 protected static 并让**平台**的
+SPA 分支使用 —— 但该分支(`AddSpaFallback`)无调用者,**生产页面路径是业务层
+`module_gate::ServeIndex` 的裸 `newFileResponse`,仍无 Last-Modified/ETag/304**,
+即本节宣告的修复此前**未在真实路径生效**(v2.10 实测确认)。
+**v2.10 定版**:提升为**公开响应助手 `ZmHttpServer::FileResponse(req, path)`**
+(单次 stat → LM + 强 ETag → 304;文件不可用 → 404 并记 WARN),`SendFile*`、业务页面
+(ServeIndex)、以及任何后续页面响应共用同一实现(行为单源);平台侧重复的 SPA 分支删除。
 
 **16.1.2 缓存头策略(A 档)**:
 drogon 静态响应默认 `Expires: 1970`(`StaticFileRouter.cc:544-546`);1.9.13
@@ -790,10 +905,11 @@ static drogon::Task<int64_t> SaveMultipartFile(const ZmMultipartResult::File& f,
 是否经 `clientMaxMemoryBodySize` 落盘 / 纯内存),据此定建议 maxBytes;
 消毒攻击集。失败 → 改设计(文件通道复用写线程)。
 
-### 16.3 请求 ID 与指标端点(FR-17 扩展)
+### 16.3 请求 ID(FR-17 扩展;指标端点已于 v2.15 移除)
 
 ```
-Options.metricsPath;   // 指标端点路径(空=不注册),建议 /zimo/metrics
+// 指标端点(v2.15 已移除):原实现为手写进程级计数 + JSON,经 `Options.metricsPath`
+// 注册;无消费者,且受 RESTful 面会话门禁限制(无 cookie → 401)无法被监控抓取。
 ```
 
 **请求 ID**:恒启(无开关)。PreRouting 生成 `zm-<unix秒>-<原子序>` 入
@@ -803,9 +919,9 @@ attributes("ZmRequestId"),**透传优先**(请求带 `X-Request-Id` 且合法
 **结算点(实测修正)**:drogon 1.9.13 的 PostHandling advice **仅覆盖 controller/binder
 响应路径**,静态目录(含 304)、Range、重定向、advice 拦截响应不经 —— 访问日志与
 指标结算统一挂 **PreSending**(handleResponse 统一出口),PreRouting 生成+结算同一对 advice。
-**指标端点**:Init 注册 GET handler,输出 JSON;计数器(原子,每请求 1-4 次):
-total / status2xx-5xx / inflight / 延迟四桶(<10/10-100/100-1000/1000+ ms) /
-uptime_s。**零第三方依赖**(zb/文本协议格式后续任务)。
+**指标端点(v2.15 移除)**:原为 `Options.metricsPath` 注册的手写 GET handler(进程级原子计数:total / 2xx-5xx / inflight / 延迟四桶 / uptime_s),**已整体删除**。
+删除理由:① 无任何消费者;② 它位于 `/zimo/api/metrics`,受 RESTful 面会话门禁约束(无 cookie → 401),**监控系统无法抓取**;③ 进程内计数无历史、无 label,不足以当监控用。
+需要监控时的方向:drogon 自带 `utils/monitoring`(Counter/Gauge/Histogram)+ `PromExporter` 插件(标准 Prometheus 文本 + label);注意其路由同样要落在某个面 root 下,且要正面解决"门禁 vs 可抓取"的冲突(§4.6)。
 
 ### 16.4 限流(**已实施 2026-09-04**;设计→实现,RL 全系验证通过)
 
@@ -854,7 +970,7 @@ bool IsRateRuleHit(const std::string& ip);         // 审计/日志标注
 
 **16.4.4 动态规则与管理入口(宿主选一/组合)**:
 1. **管理 API**(推荐):RESTful 面 `/zimo/api/admin/rate`(POST/DELETE/GET),
-   复用 `RequireModule` 鉴权(仅 admin 模块);
+   复用 `ZmAuthGateModule` 鉴权(仅 admin 模块);
 2. **规则文件热重载**:`Options.rateRulesFile`(JSON 基线表),mtime 变化/信号重注入;
 3. TTL 可选:封禁带有效期(惰性过期,不耗定时器);操作加审计日志(PUBLIC_LOG)。
 
@@ -879,10 +995,10 @@ RL7 并发压测下统计:命中数与 isAllowed 数一致(SafeRateLimiter 无�
 | 项 | 用例(简) | 预期 |
 |---|---|---|
 | 静态 304 | 静态 js/index + IMS;Range+IMS;.gz 孪生 + IMS | 304 无 body(内建);U 系列详见前文用例 |
-| SPA | /portal → 200 带 LM/ETag;+IMS → 304 | 修复点 16.1.1 主线 |
+| SPA/页面 | /login → 200 带 LM/ETag/Cache-Control:no-cache;+INM → **304(实测 2026-09-12)**;/portal 未登录 → 302 | 修复点 16.1.1(v2.10 定版:经 `FileResponse` 助手) |
 | 缓存头 | 默认再校验态;extPolicy 长缓存(按 .js);非静态无注入 | 16.1.2 |
 | Multipart | 字段×2+文件×1;无 boundary 400;2MB>maxBytes 413+无残留;`../../x.sh` 消毒为 `x.sh`;字段-文件混序 | M 系列 |
-| 请求 ID | 响应带 X-Request-Id;上游透传;非法字符重生成;日志行首一致;metrics 递增 | R 系列 |
+| 请求 ID | 响应带 X-Request-Id;上游透传;非法字符重生成;日志行首一致 | R 系列 |
 | 限流 | 固定/滑动窗口边界;per-IP 互不影响;封禁/解封即时生效;动态阈值;白名单穿越 | RL 系列(§16.4.6)——2026-09-04 实测:RL1 ✅(5→第6个起 429);RL4 ✅(block/unblock 机制生效);RL5 ✅(白名单穿透限额 10/10);RL6 ✅(动态 quota 立即生效 2→3rd 429);RL7 ✅(并发 30 = 5×200+25×429,SafeRateLimiter 无竞态);RL2/RL3 为算法/结构级保证(kSlidingWindow 参数即用;桶 key=IP) |
 
 ### 16.6 实施顺序

@@ -11,7 +11,7 @@
 #pragma comment(lib, "Wtsapi32.lib")
 
 // ============================================================================
-// 生命周期回调(相位契约,设计 §2.2/§2.4)
+// 生命周期回调(相位契约)
 //   OnStart(Phase1/2):NetDock::Init(配置三面+全局参数) → Portal::Init(注册路由) → NetDock::Open
 //   OnStop (Phase3):  Portal::Shutdown(业务收尾) → NetDock::Close(quit+join) → 释放
 // ============================================================================
@@ -48,7 +48,7 @@ void ServiceCenter::OnStop()
 {
     DEFAULT_LOG_INFO("ServiceCenter::OnStop");
 
-    // Phase3:业务收尾先于框架关闭(FR-04:业务线程 join → 再 quit+join)
+    // Phase3:业务收尾先于框架关闭(业务线程 join → 再 quit+join)
     if (m_servicePortal)
         m_servicePortal->Shutdown();
     if (m_netDock)
