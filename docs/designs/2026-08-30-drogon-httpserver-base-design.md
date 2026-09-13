@@ -17,6 +17,7 @@
 > 修订:v2.17(2026-09-12 用户决策,已实施并实测)**CORS 白名单移出 `Options`**:`Options.corsAllowedOrigins` → **`SetCorsAllowedOrigins(vector)`**(Open 前声明,运行期 ERROR 拒绝;与 `SetJsonpDefaults`/`SetRootPath` 同款)。至此 `Options` 回归**纯传输/框架参数**(17 项),业务策略一律经 `SetXxx` 声明 —— 原先"传输参数与业务策略混装"的问题从结构上消除(不再需要注释分组)。顺带**修正语义描述**:白名单是**跨站**许可表,**同站跨端口**(Origin 与 Host 同 host)由业务侧硬逻辑放行、不经名单;空名单 = 只放行同站跨端口(原文"空 = 拒绝一切跨域"不准确)。实测三条路径:同站 → 200 + ACAO;仅靠名单(`http://127.0.0.1` vs Host `localhost:39441`)→ 200 + ACAO;`https://evil.example` → 预检 403 且响应无 ACAO。
 > 修订:v2.18(2026-09-12 用户决策,已实施)**移除 JSON-RPC 面的内建 `ping` method**:`ZmHttpJsonRpcServer` 构造不再注册任何 method(改 `= default`),业务经 `RegisterMethod` 注册;HTTP 层的存活探针沿用全局 `/ping`(共享路径,三面可达)。§11.1/§11.3/§13.2 同步。
 > 修订:v2.19(2026-09-12 用户决策,已实施)JSONP 逐前缀**例外**:`ZmJsonpOverride` 增 `std::optional<bool> enabled`(未设置 = 继承基线,声明默认启用),`SetJsonpEnabled(prefix, {enabled = false})` 可把某前缀在全局 `enabled=true` 的观察期下单独关掉 —— 此前只能"全局翻 false + 逐条正面声明"。替代旧手法:把 `paramNames` 差量置空(靠"候选名一个都不命中"绕行),该写法无文档、无日志且极易写错 —— `o.paramNames = {}` 在 `std::optional` 语义下是**重置为未设置**(实测 MSVC:has_value=0),静默回到继承基线,须显式写 `std::vector<std::string>{}`。判定序在命中声明前缀后补 `enabled` 检查(例外前缀同时免打"未声明"观察期告警,它是显式决策);启动日志行改「JSONP 声明」并补 `enabled=`。v2.13"不做逐路由默认姿态"的边界据此澄清:全局基线只决定**未声明**路由的姿态,例外是逐前缀的显式决策。验证:已按目标形态落地并实测(见 §4.7 落地状态) —— 未声明路由带 `callback` → 裸 JSON;`/ping` 声明后 → `cb(...)`(39441 与 443 两面一致);`/ping` 声明为例外 + 全局开 → 裸 JSON,同刻未声明的 `auth/me` 照旧被包(例外分支被真实覆盖);非法回调名 → 裸 JSON;启动日志打印 `enabled` 位。
+> 修订:v2.20(2026-09-13 评审 P7,已实施并实测)正确性与边界收口:**① 方案乙状态机归位连接 loop** —— 原定时器与读回执投 `app().getLoop()`,导致跨线程读写非原子 `bytesSent_`(`TcpConnectionImpl.h:262`;x64 对齐读实际良性,但严格意义是未定义行为),且所有并发下载的块发送串行挤在主 loop;改为 `Run()` 时由 `connWk` 定型 `m_loop`(取不到退回主 loop,与 `ZmDeadlineState` 同款取值顺序),此后全部回执与定时器投连接 loop —— 状态单线程、停滞判定同线程读写、主 loop 不再承担分块发送。**② `RegisterCoroWithPathParams` 增占位符编号校验** —— 编号越界(`N > arity`;协程特化的 arity **不含** `HttpRequestPtr`)/编号 0/重复编号/超长编号(会让 drogon 的 `std::stoi` 抛未捕获异常)一律注册期 ERROR + 拒绝注册,此前这些形态会被 drogon 的 `addHttpPath` 直接 `exit(1)` 杀进程(`HttpControllersRouter.cc:368-383`);守卫自此真正兑现"用错就失败得早"。**③ 路由归属冲突改为按当前声明重算** —— 删掉只增的 `s_ownerConflicts`,改 `s_rootClaims`/`s_portClaims`(一对象一条,覆盖式写入)+ 由声明表重建归属表,Open 期分别按当前声明重算 root 冲突与**端口冲突**(原只有 root;端口侧另有"重登记不释放旧端口"的残留),改掉声明即自愈 —— v2.9 起"修正配置后可重试 Open"至此名副其实。**④ 运行期只读纪律补齐** —— `RegisterMethod` 增 run 后拒绝守卫(与 `RegisterCoro` 同款);`SetNotFoundPage` 路径改 UTF-8 → wide(原窄串经 filesystem 按 ANSI 解码,中文安装路径下静默降级为框架默认 404 页;drogon 读文件自身经 `toNativePath` 转 wide,故校验一处即可)。**⑤ 限流专项桶改为挂在 overlay 规则上**(`ZmQuotaSlot` 随规则存亡、桶懒建、算法由首建者定型、参数未变则沿用槽),删除 `Impl` 内无界的 `quotaBuckets` 与死变量 `quotaCount`(原注释称"与 maxEntries 共用上限"但从未实现;专项桶也不该有驱逐 —— 驱逐等于重置额度放行一波),`Check` 命中专项规则时稳态不再取锁。**⑥ 上传成功补发终态进度** —— 原 `written == len` 判据不成立(读的是累计落盘量 vs 当前块长),业务实际收不到 100%;改由写线程回执带回落盘总量、成功路径在 `done` 之前报满量,并把 `onProgress`/`done` 回调线程由主 loop 统一到**请求所属 loop**(与 `RunOnPool` 的取值一致)。**⑦ 方案乙读盘异常留痕** —— 读失败记 ERROR(+`GetLastError`)与"提前读到文件尾"记 WARN;两条路径都按"发完"收尾(流正常关闭),纯 200 无 Content-Length 客户端无从察觉、206 可由 `Content-Range` 判定 —— 这是文档化的边界,不再是无痕静默。**⑧ 可观测收口** —— `X-Request-Id` 属性缺失时补 `zm-unknown` 且与访问日志行首共用同一取值(对齐同函数内 `ZmAccessStartMs` 的既有防御),并记录"`RecordAccessStart` 必须是首个 PreRouting advice"的顺序不变式(短路 advice 的响应仍经 PreSending 结算,位置后移即出现空 ID);框架层解析期拒绝(如超大 Content-Length)根本不走 advice 管道,**没有**该头与安全头属既有边界。另清理头文件错位/陈旧注释(悬空 `///<`、错挂在 `s_corsOrigins` 上的 JSONP 校验块),把回调名白名单契约归位到 `ZmJsonpOptions::paramNames`。实测:9 条 admin 路由注册正常、归属快照固化(面 3/共享 1/端口 4)、`/ping` 三面 200 与 JRPC 信封正常;方案乙 5MB+12345(5×1MB+尾块)下载字节级一致、16MB 流式上传进度末笔为全量且落盘 sha256 一致;源文件被写入者独占期间下载返回 **200 + chunked + 0 字节**(客户端无从察觉)且服务端 ERROR 精确落点;`X-Request-Id` 在正常 200 与"我方闸门 413(PreRouting 短路)"两类响应上均为真实 ID。
 
 ***
 
@@ -317,7 +318,7 @@ protected:
 
 **为什么必须有第二个入口(v2.11 根因,已源码核实)**:`ZmHttpCoroHandler` 把形参擦成 `std::function<... (HttpRequestPtr)>` → `HttpBinder::paramCount()` = `traits::arity` = **0**(`HttpBinder.h:217`)→ 含 `{N}` 的路径命中 `addHttpPath` 的占位符校验 `place > paramCount` → **`LOG_ERROR` + `exit(1)`**(`HttpControllersRouter.cc:368-374`)——是**类型擦除的必然结果,不是本捆绑缺陷、升级 drogon 也修不掉**。v2.2 曾把它记为"访问违例",v2.11 更正。带形参的 handler `arity ≥ 1`,paramCount 正确,`{N}` 自然可用。
 
-**守卫(用错就失败得早)**:`RegisterCoroWithPathParams` 的 `arity==0` → 编译期 `static_assert`;路径无 `{N}` → 运行期 ERROR + 拒绝注册。**语义差异**:原生 `{N}`→`([^/]*)`(允许空段),旧 `PathPatternToRegex` 用 `([^/]+)`(要求非空)——迁移后 `/xxx/` 这类空段请求会进入 handler(业务自校验),不再被路由层 404。
+**守卫(用错就失败得早)**:`RegisterCoroWithPathParams` 的 `arity==0` → 编译期 `static_assert`;路径无 `{N}`、**编号越界/编号 0/重复编号/超长编号** → 运行期 ERROR + 拒绝注册(v2.20 补齐:越界与重复会被 drogon 的 `addHttpPath` 判为致命并 `exit(1)`,超长编号则让其 `std::stoi` 抛未捕获异常,故一律前置拦截 —— 编号上界是 `arity`,而协程特化的 arity **不含** `HttpRequestPtr`;占位符少于形参不拦,drogon 对缺失参数回落 `req->as<T>()`)。**语义差异**:原生 `{N}`→`([^/]*)`(允许空段),旧 `PathPatternToRegex` 用 `([^/]+)`(要求非空)——迁移后 `/xxx/` 这类空段请求会进入 handler(业务自校验),不再被路由层 404。
 
 **v2.2 实测修订(仍然有效)**:
 
@@ -369,7 +370,7 @@ protected:
 
 **不变式**:每条已注册路由都归属于某个声明了 root 的服务器面,或显式声明为平台共享。
 
-**root 三态(`SetRootPath`)**:`SetRootPath` 即登记进程级归属表(root 唯一)。
+**root 三态(`SetRootPath`)**:`SetRootPath` 声明本面 root(v2.20:声明写进 `s_rootClaims` —— 一对象一条、覆盖式;归属表由声明表**重建**,两者不会各自漂移)。
 
 | 取值 | 语义 | 例 |
 | --- | --- | --- |
@@ -377,7 +378,7 @@ protected:
 | 不调用(空) | **不拥有任何前缀**,不得注册业务路由(纯 advice 垫片) | 前端 `redirectOnly` 实例 |
 | `"/"` | **兜底归属**(全局至多一个实例;未被其他面认领的路径归它) | 前端完整面 |
 
-重复 root / 多个兜底 / 同一端口被两面登记 → 记入归属冲突,`Open()` 拒绝启动。
+重复 root / 多个兜底 / 同一端口被两面登记 → `Open()` 按**当前声明表**重算冲突并拒绝启动(v2.20:改掉声明即自愈 —— 原为累积的冲突记录,改配置也照样拒启,"修正后可重试 Open"名不副实)。
 
 **两条规则(v2.16:平台路由闸门 R2 已移除)**:
 
@@ -387,7 +388,7 @@ protected:
 
 **门禁来源改为推导**:前端门禁不再由宿主手工登记外来前缀,改为 `LookupOwner(path) != this` → 404;新增服务器面或改 root 自动生效。`AddOtherRootPath` 降级为"归属表之外的额外前缀"兜底口子。
 
-**实现要点**:`SetRootPath` 从内联改为实现(登记归属表);Open 期校验保留 ①root 声明冲突 ②已登记路由归属复检(平台路由闸门 R2 于 v2.16 移除);`LookupOwner/IsSharedPath` 在 `Open()` 固化快照后零锁;归属表为进程级只增不清(与静态生命周期一致,仅 Phase1 写)。
+**实现要点**:`SetRootPath` 从内联改为实现(写声明表 → 重建归属表);Open 期校验三项并按当前声明重算 ①root 声明冲突 ②**端口登记冲突**(v2.20 补;端口侧与 root 同病:两面同端口、且重登记不释放旧端口)③已登记路由归属复检(平台路由闸门 R2 于 v2.16 移除);`LookupOwner/IsSharedPath` 在 `Open()` 固化快照后零锁;声明表与归属表均为进程级、仅 Phase1 写(声明可覆盖,故"只增不清"仅指路由登记表)。
 
 **验收(P1,2026-09-12 实测通过)**:① ~~平台路由游离 → 拒绝启动~~(**v2.16 随 R2 一并移除该闸门**;历史实测见 v2.9 修订行);② 跨面注册 → 注册期 ERROR + 不可达;③ `/ping` 三面 200、外来前缀三面 404、`/zimo/api/metrics` 仅 39441 可达(业务门禁 401);④ 正常配置下无 `[ROUTE-LEAK]` 误报(80→443 重定向实例已豁免)。
 
@@ -483,13 +484,15 @@ trantor AsyncStream::send() 返回 false = 连接已关闭,非"缓冲满"(AsyncS
 * **默认:定时器链节流(内存有界,v2.1 定版)**——`newAsyncStreamResponse` 的回调是普通函数,不能同步 while+runAfter,故实现为**定时器链状态机**(全部运行在事件循环线程,无锁):
 
 ```
-回调(newAsyncStreamResponse 内,事件循环线程):
-  stream 存入状态对象 St { stream(排他持有), 文件句柄/偏移, 剩余字节, lastSentBytes, lastSentTime }
-  St::Next():读 chunkSize → stream->send(块) → 记录进度
-              → stream->getLoop()->runAfter(interBlockMs, St::Next) 让发送与缓冲排水
-              → 若 send() 返回 false(连接已关)或已发完 → stream->close() 结束
-  停滞判定:每次 Next 检查"距上次 send 成功超出 stallAbortMs 且缓冲未空" → close()
-  (真字节水位为可选增强:setHighWaterMarkCallback,复杂,由 O1 实测后定)
+回调(newAsyncStreamResponse 内 —— 框架在连接 loop 上调用,HttpServer::sendResponse 断言在 loop 内):
+  St::Run()   : 由 connWk 定型 m_loop(连接 loop;取不到退回 app().getLoop())
+                → 打开文件句柄(UTF-8→wide,FILE_SHARE_READ)→ SetFilePointerEx 定位(Range 起点)→ 驱动第一块
+  St::Next()  : 读一块的任务投 HttpIoPool(I/O 线程 ReadFile,绝不阻塞事件循环)
+                → 读毕 queueInLoop 回执 m_loop → stream->send(块) → 推进进度
+                → m_loop->runAfter(interBlockMs, St::Next) 让发送与缓冲排水
+                → send() 返回 false(连接已关)或已发完 → Finish()(幂等:在途读归零后关句柄 + 关流)
+  停滞判定    : 每次 Next 比较 conn->bytesSent() 差值,冻结超过 stallAbortMs → 放弃(客户端可 Range 续传)
+                (send() 成功只代表排入发送缓冲,不代表对端消费,故以套接字实发字节为准)
 ```
 
 预读窗口 = 1 块(**内存有界**,不以字节计数,验收词相应放宽);块间延时与 `chunkSize` 可配(`SendFileStreamOptions` 增加 `interBlockMs`,默认 50ms)。
@@ -498,12 +501,14 @@ trantor AsyncStream::send() 返回 false = 连接已关闭,非"缓冲满"(AsyncS
 
 * **停滞放弃**:持续无进展 > `stallAbortMs`(默认 120s)→ `stream->close()`(客户端 Range 续传)。`onProgress` 可选回调。
 
+* **读盘异常与截断(v2.20)**:读失败记 ERROR(带 `GetLastError`)、提前读到文件尾记 WARN;两条路径都按"发完"收尾 —— 流正常关闭、不发错误帧,故 **纯 200 响应(无 Content-Length)客户端无从察觉**,只有 206 能靠 `Content-Range` 声明长度判定。现实可构造的触发是"文件存在但读打开失败"(例:正被写入者独占 —— 存在性检查走 `GetFileAttributesW`,不打开文件,故能通过;此时响应已是 200 + 空体,服务端 ERROR 是唯一线索);"发送中删/截断"因句柄以 `FILE_SHARE_READ` 打开(未授 WRITE/DELETE)而不可达 —— 写者/删者/改名者都会拿到共享冲突。方案甲不适用本条:它带 Content-Length(或 sendfile 区间长度),body 与声明长度一致,文件缩小还会在框架重新 stat 时得 416。
+
 ```cpp
 // 方案甲
 resp = drogon::HttpResponse::newFileResponse(path, offset, length, true, dispName, CT_NONE, "", req);
 ```
 
-> 注:v2.1 核实 `AsyncStream` 无 `getLoop()` 接口,定时器经 `drogon::app().getLoop()->runAfter()` 注册(IO 线程池首个 loop,回调不在连接线程——stream send 为线程安全,状态机仅在定时器回调与流回调内变动,无并发)。
+> 注(v2.20 更正 v2.1 的落点):`AsyncStream` 无 `getLoop()` 接口,定时器与读回执一律投**连接所属 loop**(`m_loop`)。状态机因此全程单线程:`m_loop` 既是工厂回调的执行线程,也是 `conn->bytesSent()` 的唯一读写线程(该值是非原子 `size_t`,跨线程读属未定义行为);主 loop 不承担分块发送,并发下载之间也不再互相串行。`ResponseStream::send` 本身可跨线程调用(trantor `AsyncStreamImpl` 内部 `queueInLoop`),但同 loop 归属省掉一次跨线程唤醒与一次整块拷贝。
 
 **Hybrid**:文件 < `threshold`(默认 2GB)→ 方案甲;≥ → 方案乙。
 
@@ -517,7 +522,7 @@ resp = drogon::HttpResponse::newFileResponse(path, offset, length, true, dispNam
 
 ### 6.3 上传(FR-15)
 
-全局 `setClientMaxBodySize(10GB)`(单请求上限)+ `enableRequestStream(true)`;**流式接收封装(v2.4 定版,与代码一致)**:`RegisterStreamCoro(path, method, h, filters, maxBytes=0)`——业务协程 handler 携带框架注入的 `RequestStreamPtr`(内部绑定 Drogon stream-handler 三参回调 → `async_run` 桥接协程);`maxBytes` 为**路由级上限**(默认 0 = 不额外限制,全局 10GB 兜底):基类入口按 `X-File-Size` 自动早拒(超限 → null reader 丢弃 + 413,不进入业务),并写入 `req` attributes(`ZmStreamMaxBytes`)供业务落盘兜底取用;`SaveStreamToFile(stream, destPath, opts, &tooLarge)`:落盘状态机,块到即写 + `opts.maxBytes` 兜底(超限置 `tooLarge` 并清理半成品)。
+全局 `setClientMaxBodySize(10GB)`(单请求上限)+ `enableRequestStream(true)`;**流式接收封装(v2.4 定版,与代码一致)**:`RegisterStreamCoro(path, method, h, filters, maxBytes=0)`——业务协程 handler 携带框架注入的 `RequestStreamPtr`(内部绑定 Drogon stream-handler 三参回调 → `async_run` 桥接协程);`maxBytes` 为**路由级上限**(默认 0 = 不额外限制,全局 10GB 兜底):基类入口按 `X-File-Size` 自动早拒(超限 → null reader 丢弃 + 413,不进入业务),并写入 `req` attributes(`ZmStreamMaxBytes`)供业务落盘兜底取用;`SaveStreamToFile(stream, destPath, opts, &tooLarge)`:落盘状态机 —— 事件循环入队(FIFO 有界,积压超限即中止,内存有界)、专用写线程顺序落盘(磁盘 I/O 不占事件循环)、三种终局统一收尾(写盘失败/超限删半成品,排空后保留)。**进度回调(v2.20 定版)**:按 `opts.progressIntervalMs` 节流(首块必过闸),**成功路径由写线程回执带回落盘总量、在 `done` 之前补发一次满量回调** → 业务必然收到 100%(原判据 `written == len` 不成立:读的是累计落盘量、比的是当前块长,而末块在 `OnData` 时刻尚未落盘);进度与完成回调都在**请求所属 loop** 执行(与数据块回调同线程,业务侧无需加锁)。
 
 ***
 
@@ -598,7 +603,8 @@ drogon::Task<T> ZmHttpServer::RunOnPool(std::function<T()> fn)
 
 ## 10. 可观测(FR-17/23)
 
-* 访问日志:`ZmHttpServer::Init` 一次性注册一对 advice(PreRouting 记起始时间入 req attributes;PostHandling 结算耗时),单行 `PUBLIC_LOG_*` 输出(与运行日志同文件、按标签区分),覆盖 方法/路径/状态码/耗时/字节数/两端端口;不自建 access.log、不使用 AccessLogger 插件(v2.4 定版,与代码一致;v2.6 注册点从"首个 Open"移入 Init)。
+* 访问日志:`ZmHttpServer::Init` 一次性注册一对 advice(PreRouting `RecordAccessStart` 记起始时间 + 生成/透传请求 ID 入 req attributes;**PreSending `FinalizeResponse` 结算**耗时、回写 `X-Request-Id`、写单行 `PUBLIC_LOG_*`),覆盖 方法/路径/状态码/耗时/字节数/两端端口;不自建 access.log、不使用 AccessLogger 插件(v2.4 定版;v2.6 注册点从"首个 Open"移入 Init;结算点 v2.20 据实测更正 —— drogon 1.9.13 的 PostHandling 只覆盖 controller/binder 路径,静态/304/Range/重定向/拦截响应都不经,故统一挂 PreSending)。
+  **顺序不变式(v2.20)**:`RecordAccessStart` 必须是**首个** PreRouting advice —— 后续 advice 一旦短路(如 body 闸门 413),该响应仍会经 PreSending 结算,若本 advice 被排到短路者之后,那些响应会取到缺失的 `ZmRequestId`(drogon 对缺失键返回空串)。`FinalizeResponse` 对缺失值补 `zm-unknown`,响应头与日志行首共用同一取值(对齐同函数内 `ZmAccessStartMs` 的既有防御)。框架层解析期拒绝(超大 Content-Length 等)根本不走 advice 管道,该头与安全头都不会出现 —— 既有边界,非本层可修。
 
 * 健康检查:`/ping` 在 `ZmHttpServer::Init` 内默认注册 → `{"pong":true}`(FR-23),并经 `MarkShared("/ping")` 声明为**平台共享路径**(各面门禁与归属网单源豁免,§4.6 R2)。
 
@@ -620,6 +626,7 @@ drogon::Task<T> ZmHttpServer::RunOnPool(std::function<T()> fn)
 > **v2.6 一对象一端口**:HTTPS 模式下前端由**两个实例**构成——`ZmHttpFrontendServer(redirectOnly=false)` 挂 443(完整面:静态/SPA/404/门禁)+ `ZmHttpFrontendServer(redirectOnly=true)` 挂 80(**仅** 80→443 重定向 advice,FR-22);无证书模式仅一个完整面(80,HTTP)。SPA 回落/封禁前缀由业务层 `AddSpaFallback/AddDeniedPath` 配置,平台不硬编码页面路径。
 
 **静态文件**:`SetDocumentRoot(wwwRoot)` 内置防目录穿越、MIME、Range;Cache-Control 语义保留:HTML 不缓存、JS/CSS 靠 `?v=` 破缓存(经 `SetStaticFileHeaders` 或页面别名 handler 按扩展名设置,(实现见 §16.1.2 `SetStaticCachePolicy` + PreSending 加头;旧 libevent 版 SendFile 已随宿主层移除))。
+> **路径编码契约(v2.20)**:文档根与自定义 404 页(`SetDocumentRoot` / `SetNotFoundPage`)的路径参数均为 **UTF-8**,平台侧一律先 `UTF-8 → wide` 再进 `filesystem`;窄串会被按 ANSI 码页解码,中文安装路径下会静默降级(404 页退回框架默认页)。drogon 自身读文件经 `utils::toNativePath` 转 wide,故校验一处即可。
 
 **页面路由表(前端端口)**:
 
@@ -684,7 +691,7 @@ srv.RegisterCoro("/zimo/jrpc", Post,
 
 * 请求/响应信封 `jsonrpc`、`id` 字段按 JSON-RPC 2.0 保留;
 
-* 方法表扩展:业务侧经 `RegisterMethod` 注册(分发器不再内建任何 method)。
+* 方法表扩展:业务侧经 `RegisterMethod` 注册(分发器不再内建任何 method);**run 之后调用被拒绝并记 ERROR**(v2.20)—— method 表启动期只写、运行期只读(读取侧在事件循环上无锁),守卫与 `RegisterCoro` 家族同款。
 
 ### 11.4 RESTful 服务器 `ZmHttpRestfulServer`(39441)
 
@@ -916,6 +923,9 @@ static drogon::Task<int64_t> SaveMultipartFile(const ZmMultipartResult::File& f,
 attributes("ZmRequestId"),**透传优先**(请求带 `X-Request-Id` 且合法
 `[A-Za-z0-9-_.-]` ≤128 → 原样使用);PreSending 回写 `X-Request-Id`
 (含 304/重定向);访问日志行首加 `[zm-...]`(**格式变更,解析脚本需同步**)。
+**缺失兜底与顺序不变式(v2.20)**:回写与日志改用**同一个取值**,属性缺失时补 `zm-unknown`;
+`RecordAccessStart` 必须是首个 PreRouting advice(详见 §10) —— 否则被短路 advice 处理的响应
+会出现空 ID。框架层解析期拒绝的响应不走 advice 管道,本就无该头。
 **结算点(实测修正)**:drogon 1.9.13 的 PostHandling advice **仅覆盖 controller/binder
 响应路径**,静态目录(含 304)、Range、重定向、advice 拦截响应不经 —— 访问日志与
 指标结算统一挂 **PreSending**(handleResponse 统一出口),PreRouting 生成+结算同一对 advice。
@@ -941,11 +951,12 @@ attributes("ZmRequestId"),**透传优先**(请求带 `X-Request-Id` 且合法
 drogon::RateLimiterPtr CreateRateLimiter(drogon::RateLimiterType type,
                                          size_t capacity,
                                          std::chrono::duration<double> timeUnit);
-/// 逐 IP 桶:有界 LRU(默认 10000,~2MB),惰性淘汰防泄漏
-drogon::RateLimiterPtr CreatePerIpRateLimiter(drogon::RateLimiterType type,
-                                              size_t capacity,
-                                              std::chrono::duration<double> timeUnit,
-                                              size_t maxEntries = 10000);
+/// 逐 IP 桶协调器:默认桶有界(默认 10000),满时按插入序驱逐;专项桶见 16.4.3
+static std::shared_ptr<ZmIpRateLimiter>
+ZmIpRateLimiter::Create(drogon::RateLimiterType type, size_t capacity,
+                        double timeUnitSec, size_t maxEntries = 10000);
+bool ZmIpRateLimiter::Check(const drogon::HttpRequestPtr& req,
+                            drogon::HttpResponsePtr& resp);   // false = 已限流(429 已填)
 // ── 专项 overlay(运行期可调;规则量 ≤ 数千条) ──
 void SetIpBlocked(const std::string& ip);          // 封禁 → 直接 429(不消费配额)
 void UnblockIp(const std::string& ip);
@@ -959,9 +970,15 @@ bool IsRateRuleHit(const std::string& ip);         // 审计/日志标注
 **16.4.3 执行链与热路径**:
 ```
 请求(preRouting/filter)→ 查 overlay(COW 快照,原子指针读 = 零锁)
-  封禁 → 429(短路);白名单 → 放行;专项 → 用专项配额建(复用)桶;
-  默认  → LRU 桶查/建 → isAllowed() 失败 → 429
+  封禁 → 429(短路);白名单 → 放行;专项 → 取规则上的额度槽(懒建 / 复用,稳态零锁);
+  默认  → 有界桶查/建(满则按插入序驱逐) → isAllowed() 失败 → 429
 ```
+- **专项桶的生命周期(v2.20)**:额度槽 `ZmQuotaSlot` 挂在 overlay 规则条目上 —— 规则删除即随
+  最后一份快照释放(不留派生态残留)、参数未变则沿用同一槽(额度状态延续)、参数变更换新槽;
+  一个 IP 一条规则对应一个桶(**进程级,跨实例/跨面共享**),条目数恒等于规则数,**不做驱逐**
+  (驱逐 = 重置额度 = 放行一波)。默认桶相反:key 是来访 IP(攻击者可控)→ 必须有界,
+  `maxEntries` 满时按插入序驱逐。两类桶的 key 来源不同,**不可共用一个上限/驱逐队列**
+  (共用会让攻击者用洪水挤掉管理侧设的额度状态)。
 - **规则表 COW**:`std::atomic<std::shared_ptr<const RuleMap>>`,写 = copy+swap
   (低频、微秒级);事件循环无锁读;
 - **适配形态**:`AddFilter("rate-limit", ...)` 注册为 filter,挂到

@@ -1,6 +1,6 @@
 # DrogonHttpClient 设计文档(出站 HTTP/HTTPS 客户端)
 
-> 状态:第一期已交付(v0.2/2026-09-02);第二期设计已定稿(2026-09-07 增补,文末 §14–§19) · 日期:2026-09-01
+> 状态:第一期已交付(v0.2/2026-09-02);第二期设计已定稿(2026-09-07 增补,文末 §14–§19);**2026-09-13 代码评审修订**:§15.1 增 3xx 跟随与响应编码校验、§15.2 文件打开改工作池 + 停滞看护并入写侧判据 + 写失败原因保真、§15.3 chunk 尾部 CRLF 加严、§15.4 受理/停止原子性与回调弱引用、§7.2 重试面加 429 与 HTTP-date、§16 增第 9–16 条 · 日期:2026-09-01
 > 范围:`ZmHttpClient` 门面 + `ZmHttpConnectionPool` 连接池 + trantor 流式下载通道
 > 依赖:Drogon 1.9.13(`HttpClient`/`trantor::TcpClient`/`trantor::EventLoopThread`,捆绑于 `ZiMoPublic\drogon`)、`ZmThreadPool`(`zm_util_thread.h`)、`ZMJSON`
 > 需求:服务器向外部服务发起 HTTP/HTTPS 出站请求的能力——第三方 API 调用、Webhook 回调、证书/资源拉取、大文件下载
@@ -82,7 +82,9 @@ Uninit → Initialized(ZmHttpClient::Init(opts)) → Closed(ZmHttpClient::Close(
 
 * 所有 `HttpClientPtr` 经 `newHttpClient(host, port, ssl, loop=本客户端 loop)` **显式绑定自建 loop**,全程不依赖 `app()`。
 
-* `Close()`(**三步序,不可颠倒**):① 下载通道——停收新任务 → 全部 `TcpClient::disconnect()` → 关闭文件句柄/终止写盘 → Resolver 停止 → `loop->quit()` + join;② 普通 lane——清空连接池(逐出 idle),在飞请求取消 → `EventLoopThreadPool::wait()`;③ 置 Closed。幂等;终态。**严禁在任一已登记 loop 线程内调 Close(自锁)**。
+* `Close()`(**三步序,不可颠倒**):① 下载通道——停收新任务 → 对在飞会话逐一请求中止(置 `writerStop_` + 对在途写句柄 `CancelIoEx`)→ 等登记表排空(≤3s)→ `loop->quit()` + join,再对残留登记补叫停后清表(时序细节见 §15.4);② 普通 lane——清空连接池(在飞请求按取消语义终止)→ 各 lane loop 注销登记 → `quit()` + `EventLoopThreadPool::wait()`;③ 置 Closed。幂等;终态。**严禁在任一已登记 loop 线程内调 Close(自锁)**。
+
+* **并发契约**:`Close()` 是进程级终态,也是在飞请求的取消点。各入口已查 `IsReady()` 拒收新请求,但"取到连接"与"评估该连接忙闲"之间仍有窄窗口(该段不能持锁,详见 §6),**业务须在 `Close()` 前停发新请求**——不得依赖 `Close()` 与在飞请求并发安全。
 
 * **与服务器完全解耦**:客户端生命周期独立于 `ZmHttpServer`——服务器未 Open/已 Close 均不影响客户端可用性(出站探活、启动引导等场景可用);代价是客户端自持两个事件循环线程 + 一个小工作池(§4.3)。
 
@@ -163,7 +165,7 @@ public:
         bool   validateCert = true;       // 全局 TLS 校验(**唯一开关**,client 级固化,无逐请求覆盖;应急关闭须日志告警)
         std::string trustCA;              // 追加信任根 PEM(内网自签);实现路径见 §8;空 = 系统信任
         std::string clientCert, clientKey; // mTLS 客户端证书(可选;普通 lane 经 setCertPath,下载通道经 TLSPolicy)
-        std::string userAgent = "ZiMoClient/1.0";
+        std::string userAgent = "ZiMoClient/1.0";  // UA 唯一来源;业务经 headers 传的同名头不生效(见 §16.14)
         std::map<std::string, std::string> commonHeaders;  // 全量附加头(日志脱敏字段豁免)
         size_t maxBodyBytes = 100 * 1024 * 1024;   // 普通请求整包缓冲护栏(100MB 默认)
         bool   outboundAccessLog = true;   // 出站访问日志开关
@@ -252,11 +254,11 @@ SendCoro(m,url,body,opts)
 
 ### 7.2 重试规则(对齐既有"指数退避"讨论与主流语义)
 
-* **可重试错误**:`Timeout`、`NetworkFailure`;HTTP `5xx`(502/503/504 优先);`BadServerAddress` / TLS 类错误 / `4xx` **不重试**。
+* **可重试错误**:`Timeout`、`NetworkFailure`;HTTP `5xx`(502/503/504 优先)与 `429`(限流);`BadServerAddress` / TLS 类错误 / 其余 `4xx` **不重试**。
 
 * **可重试方法**:GET/HEAD/PUT/OPTIONS/TRACE 天然幂等;DELETE 计入(可重放语义);POST/PATCH 仅当 `opts.idempotent=true`(业务显式声明,自行保证重放安全)。
 
-* **退避公式**:`delay = min(base · 2^n, cap)`,加均匀抖动 `±jitter`;默认 base 200ms、cap 3s、最多 3 次;5xx 响应带 `Retry-After` 时**优先尊重**(与 cap 取 min)。
+* **退避公式**:`delay = min(base · 2^n, cap)`,加均匀抖动 `±jitter`;默认 base 200ms、cap 3s、最多 3 次;`5xx`/`429` 响应带 `Retry-After` 时**优先尊重**(整秒或 HTTP-date 两种格式,与 cap 取 min;格式不可解析则退回指数退避)。
 
 * **睡眠执行**:循环重试间的延时不在事件循环忙等——协程内 `co_await` 本客户端 loop 的定时器,或经客户端自持工作池睡(不依赖服务器 `RunOnPool`)。
 
@@ -374,7 +376,7 @@ ZmHttpDownloadChannel(自建 HttpClient-DL:trantor::EventLoopThread,Init 时启�
 
 * `maxBodyBytes` **业务护栏**(防"业务误读超大响应"误判,超限按 `BadResponse` 分类返回)——drogon 是"整包缓冲完才交付",**护栏不提供内存保护**,超限响应仍会先整包缓冲;预检手段 = 请求前 `Content-Length`(可被欺骗),大文件一律走流式通道。
 
-* 同步形态 `SendSync`:仅限业务线程/客户端自持工作池;**所有已登记 loop(客户端各 lane + 服务器各 loop)** 线程调用一律拒绝(实现:loop 登记表 + `isInLoopThread` 检查;drogon 自身断言只保护客户端自身 loop,防不住"服务器 loop 线程被卡死")。**等待超时兜底**(2026-09-02 加固):`Close()`/异常下状态机可能永不回调 → `fut.wait_for(请求总超时(未设取 60s)+10s)`,超时返回 `Timeout` + ERROR 日志,业务线程绝不久挂。
+* 同步形态 `SendSync`:仅限业务线程/客户端自持工作池;**所有已登记 loop(客户端各 lane + 服务器各 loop)** 线程调用一律拒绝(实现:loop 登记表 + `isInLoopThread` 检查;drogon 自身断言只保护客户端自身 loop,防不住"服务器 loop 线程被卡死")。**等待超时兜底**:`Close()`/异常下状态机可能永不回调 → `fut.wait_for(...)` 超时返回 `Timeout` + ERROR 日志,业务线程绝不久挂。上限 = `尝试数 ×(单次超时 + 退避上限)+ 10s`(尝试数 = `1 + 重试预算`,受 `maxTotalAttempts` 截断;`timeoutSec=-1` 不超时请求按 60s/次计)——**上限必须覆盖真实最坏耗时**,否则同步形态会比协程/异步更早报超时,同一请求三种形态结论不一致(默认配置下约 62s;不超时请求默认 4 次尝试下约 262s;要更短就调小 `timeoutSec`/`retryCount`)。
 
 ***
 
@@ -453,16 +455,20 @@ Connection: close
 Accept-Encoding: identity
 ```
 
-**分支表**(收敛为 4 行):
+**分支表**:
 
 | 条件 | 处置 |
 | --- | --- |
 | 无 `.part`(N=0,全新下载) | 普通 GET;响应头解析后经写线程写 meta |
 | `206` 且 Content-Range 首字节 == N | 唯一合法续传路径,续写 |
 | `200`(If-Range 不匹配 / 对端忽略 Range) | **原连接续读**(响应体即全量):写线程按序 `TRUNCATE(0)` 后,后续 body 从 0 落盘;重写 meta;游标归 0。**不重连** |
+| `3xx` 带 `Location` | **跟随**:解析 Location(绝对 / 协议相对 / 根相对 / 相对含 `.`·`..`)→ 换目标重连,续传语义保留(Range/If-Range 照发,由对端以 200/206 收敛);跨目标(scheme/host/port 任一变化)剥除 `Authorization`/`Cookie`/`Proxy-Authorization`,与普通通道同名单。上限 `maxRedirects`;`opts.followRedirect=false`、Location 缺失或超限 → `BadResponse` |
+| `304` | 无响应体(本通道不发条件请求),`BadResponse` 终结 |
 | `206` 首字节 ≠ N,或 `416` | 服务端异常:断开 → 就地截断 → **重连一次**(epoch 守卫,§15.4)发普通 GET;仍异常 → `BadResponse` 终结 |
 
 原第一期 412 分支删除(If-Range 语义下"资源已变"表现为 200 全量;412 属服务器实现异常路径,归入末行处置)。
+
+**响应体编码**:请求侧已声明 `Accept-Encoding: identity`;响应带 `Content-Encoding` 且非 `identity` 时**当场 `BadResponse`**——原样落盘会得到"下载成功但文件是压缩字节"的静默损坏。
 
 ### 15.2 写线程与背压(指令队列)
 
@@ -480,16 +486,17 @@ dlLoop(读/解析/编排)                写线程(唯一盘上执行者)
 
 - **读侧入队**:`MsgBuffer` 按 `downloadChunkBytes` 粒度切节点(一次内存拷贝),`retrieve` 后即返回,loop 无阻塞。
 - **背压闭环**:写线程慢 → 队列积压 → 触顶(64MB)→ 会话 ABORT(保留 `.part`/`.meta` 可续传)。替代第一期"单次写 >200ms 即杀整个下载"——网络盘/机械盘合法抖动不再误杀,内存上界明确。
-- **写线程卡死兜底**:对端网络共享类阻塞 `WriteFile` 可能久挂,ABORT 时由 dlLoop 对句柄 `CancelIoEx` 解除阻塞,写线程走失败路径退出,保证 Done 必达。
-- **停滞守护(读侧)**:`downloadStallAbortMs` 内无收包且队列已空 → ABORT(第一期语义保留)。
+- **写线程卡死兜底**:对端网络共享类阻塞 `WriteFile` 可能久挂,ABORT 时由 dlLoop 对句柄 `CancelIoEx` 解除阻塞,写线程走失败路径退出,保证 Done 必达。**被取消的写不算磁盘故障**:写线程识别 `ERROR_OPERATION_ABORTED` 后按通道真实原因回执(`Fail` 回填的原因或"通道关闭"),不让"写盘失败"顶掉真实原因。**回填原因必须早于 `CancelIoEx`**(且与写线程读它走同一把队列锁):被唤醒的写线程会立刻取该原因,晚一步就只剩兜底文案。
+- **停滞守护**:`downloadStallAbortMs` 内读侧无收包 **且写侧无进展**(队列已空,或写线程已同样久未取走指令)→ ABORT。写侧判据必须能独立成立:写线程挂在网络盘上时队列恒非空,只看"队列空"会让会话永挂。
 - **完成时序**:完成判定(收满/终结 chunk/连接关闭)在 dlLoop,入队 `FINISH` 后由写线程确认**队列排空 + 句柄关闭 + 改名成功**才回调——"残余字节未落盘"类缺陷在结构上不可能复发。
 - **Done 回调线程 = 写线程**(协程侧经 `resumeLoop` 亲和,与普通 lane 同约定)。
-- **文件打开**:`StartDownload` 提交时(调用方线程)完成:stat `.part` 定 N → 读 sidecar → `CreateFileW` + 定位/截断;失败同步返回 false,不占 loop。重连场景的新文件句柄由新连接的会话流程在提交时同样处理。
+- **文件打开**:`StartDownload` 把"stat `.part` 定 N → 读 sidecar → `CreateFileW` + 定位/截断 → 起写线程"整段提交**客户端工作池**(`ZmHttpClient::SubmitBlockingTask`)执行——调用方通常是服务器事件循环线程,磁盘操作不得落在其上;受理结果同步返回,会话级失败经 `done` 回执。重连场景的新文件句柄由新连接的会话流程同样处理。
 - 并发度预期:同时下载数通常个位数,每会话一线程可接受;不做共享写线程池。
 
 ### 15.3 响应解析器 fail-closed
 
 - chunk size 行**必须全为 hex** 且整行消费,否则 `BadResponse` 终结;单个 chunk 声明长度 > `downloadQueueMaxBytes` → `BadResponse`(防内存无界);
+- 数据块之后的两个字节**必须真是 CRLF**(不是只校验"长度存在"),否则 `BadResponse`——否则残留字节会被当作下一个 size 行解析;
 - 头部行数/总长上限(256KB 保留);重复 `Content-Length`/`Transfer-Encoding` 冲突 → `BadResponse`;
 - `Content-Range` 解析失败按"无"处理,但 **206 无有效 Content-Range → `BadResponse`**(206 必须可验证首字节);
 - 状态行版本/格式畸形 → `BadResponse`;`1xx` 临时响应跳过保留。
@@ -497,7 +504,9 @@ dlLoop(读/解析/编排)                写线程(唯一盘上执行者)
 ### 15.4 生命周期与并发
 
 - **连接代数(epoch)守卫**:每次(重)连接 `epoch_++`;OnConnected/OnRecv/OnDisconnect/OnConnectError/OnSslError 捕获注册时的 epoch,与当前不符即忽略——重连窗口内旧连接回调不再击杀会话(评审 BUG-2 的结构解,与 §15.1"200 原连接续读"双保险)。
-- 通道沿用单 `EventLoopThread`;`Shutdown` 顺序:停收新任务 → 全部连接 disconnect + 对在途写句柄 `CancelIoEx` → join 各会话写线程 → quit + join dlLoop。
+- **受理与停止的原子性**:`StartDownload` 的磁盘段在工作池执行,完成后**在同一把 `s_dlMtx` 锁域内**复查 `s_dlRunning` 并投递首跳——复查与投递必须同锁域,出锁后 `Shutdown` 可能已把 loop 连同线程一起销毁;`Shutdown` 收尾时再对残留登记补叫停一轮。两侧合力保证"已受理的会话必然被叫停",不存在"逃过 Shutdown 快照、写线程永远等不到 `writerStop_`"的会话。
+- **回调持弱引用**:会话的连接回调与解析回调一律持 `weak_ptr`(锁不上即丢弃),会话存活由登记表 `s_sessions` 锚定到 `Deliver` 摘除为止——强引用会与 `client_`/`resolver_` 成员构成**引用环**,令会话连同写线程、文件句柄永久泄漏。
+- 通道沿用单 `EventLoopThread`;`Shutdown` 顺序:停收新任务 → 快照在飞会话 + 对在途写句柄 `CancelIoEx` → 等登记表排空(≤3s)→ quit + join dlLoop → 残留登记补叫停后清表。
 - 会话对象由 dlLoop 与写线程双方 shared_ptr 持有,终结路径(正常/错误/通道关闭)都收敛到"写线程 Done 必达一次"。
 
 ## 16. 普通通道修订(修缺陷,不改架构)
@@ -510,6 +519,14 @@ dlLoop(读/解析/编排)                写线程(唯一盘上执行者)
 6. **IPv6**:下载通道 Host 头与普通 lane 统一 `BracketHost`。
 7. **RegisterLoop 接线义务**:`ZmHttpServer::Open()` 自动把三面 loop 注册进客户端登记表(两模块双向写明协议义务);SendSync 的 loop 拒绝面自此全覆盖。
 8. **统计**:新增 `status4xx` 计数;`ok` 语义文档明确为"传输成功"。
+9. **头值白名单**:头名沿用严格白名单(裸空格/控制字符 → 拒绝);**头值只拒 CR/LF/NUL 等控制字符**,空格与制表符合法——原实现把头名判据套在头值上,`Accept: text/html, */*`、`Content-Type: application/json; charset=utf-8` 一类合法值会让整个下载通道失败(普通通道走 drogon 无此限制,同一份头配置两边行为不一致)。
+10. **Init 失败回滚注销 loop**:lane pool 启动超时除删池外,须把已登记的 loop 逐一出表(否则 `IsLoopThread` 解引用悬空指针)。
+11. **multipart 字段名转义**:`name="..."` 与 `filename="..."` 共用同一 quoted-string 转义(剔控制字符、转义 `"` 与 `\`);boundary 碰撞校验改在**转义后**的字节上做。
+12. **下载收尾不做"删目标重试"**:`MoveFileExW` 失败即回执错误并保留 `.part`。原退路先删用户既有文件、二跳再失败即双输。
+13. **下载错误分类保真**:被 `CancelIoEx` 解除的写按通道真实原因回执(见 §15.2)。
+14. **User-Agent 归属**:UA 由 `Options.userAgent` 统一决定,业务经 `headers`/`commonHeaders` 传入的 User-Agent **不生效**(drogon 发送时以 client 级 UA 覆盖同名头;UA 是 client 级状态,同一 client 无法按请求区分)。
+15. **中文路径**:`.part`/`.part.meta` 的读写路径一律 CP_UTF8 转宽后打开(窄串直接进 `fstream` 在中文路径下静默失败,续传会丢掉 If-Range 校验值)。
+16. **阻塞任务出口**:新增 `ZmHttpClient::SubmitBlockingTask(task)`——磁盘 IO 等阻塞任务提交到客户端自持工作池(工作池为进程级终态,已受理任务必然执行);事件循环线程不得直接做磁盘操作。
 
 ## 17. 状态机根因验证计划(实施前必做,半天)
 
@@ -543,13 +560,20 @@ dlLoop(读/解析/编排)                写线程(唯一盘上执行者)
 
 ## 19. 第二期验收清单
 
+> 回归载体:`ZiMoTest\ZmHttpClientTest`(本地桩服务器 + 真实客户端,42 项断言;覆盖范围与未实测项见 `docs/issues/2026-09-13-drogon-httpclient-review-fixes.md` §五)。运行注意:`drogon::Task` 为懒启动(入口用 `drogon::AsyncTask`),主线程 EventLoop 在静态初始化期已由 drogon 建立,须复用而非新建。
+
 - [ ] **续传真实分支(不预置任何 sidecar)**:(a) 中断 → 重下走 206,无重叠/空洞;(b) If-Range 不匹配(服务端资源已变)→ 200 原连接续读 + 就地截断,成品正确;(c) 服务器忽略 Range → 同 (b);
 - [ ] 206 首字节不符 / 416 → 重连一次(epoch 守卫生效,旧连接回调不击杀会话),仍异常 → `BadResponse`;
 - [ ] sidecar 一致性:手工截短 `.part` → 下次续传起点 = 截短后大小;手工删 sidecar → 退化普通下载;
 - [ ] 慢盘/大队列:人为写阻塞 → 队列触顶 ABORT 保留 `.part/.meta` 可续;单次写耗时不触发误杀;
-- [ ] 解析器:非 hex size 行 / 206 无 Content-Range / 头冲突 → `BadResponse`,不落盘;
+- [ ] 解析器:非 hex size 行 / 206 无 Content-Range / 头冲突 / chunk 数据块后非 CRLF / `Content-Encoding: gzip` → `BadResponse`,不落盘;
+- [ ] 下载重定向:301/302 换目标跟随、跨目标剥敏感头、`maxRedirects` 截断、`followRedirect=false` 不跟随、`3xx` 无 Location → `BadResponse`;
+- [ ] 头值含空格可正常下载(`Accept: text/html, */*`、`charset=utf-8`),头名含空格仍拒绝;
+- [ ] 中文 `destPath`:`.part.meta` 可读回、If-Range 正常发出;无 ETag/LM 的资源发 WARN 日志且有响应;
+- [ ] 429:命中重试,`Retry-After` 整秒与 HTTP-date 两种格式均被尊重(与 cap 取 min);
+- [ ] `SendSync` 默认配置下不早退:同请求三形态结论一致(等待上限按尝试数计);
 - [ ] URL:`%20`/中文转义逐字节到服务端(echo 验证);裸空格 → `BadServerAddress`;
-- [ ] Close 竞态:Close 与在飞协程发送/下载并发 → 无崩溃,协程有终态;Close 后新请求快速失败;
+- [ ] Close 竞态:Close 与在飞协程发送/下载并发 → 无崩溃,协程有终态;Close 后新请求快速失败;**Close 期间受理的下载必被叫停**(写线程全部退出、无会话泄漏、Close 不阻塞);
 - [ ] 失败连接:死连接被移除,后续请求不再命中;Timeout 不移除;
 - [ ] Init 失败回滚:lane 启动超时 → `IsReady()==false`,可重新 Init;
 - [ ] multipart:含引号/CRLF 文件名上传,服务端解析正确;
