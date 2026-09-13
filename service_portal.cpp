@@ -169,15 +169,23 @@ void ServicePortal::RegisterFrontendRoutes(ZmHttpFrontendServer* fe)
 }
 
 /**
- * @brief 注册 JSON-RPC 面的业务 method(当前无业务接口)
+ * @brief 注册 JSON-RPC 面的业务 method
  *
- * 协议校验与信封由平台面内建,业务层只需注册 method 处理器;当前未注册任何 method。
+ * 协议校验与信封由平台面内建,业务层只需注册 method 处理器;当前仅注册健康检查 ping。
  *
- * @param jrpc JSON-RPC 面实例(当前未使用)
+ * @param jrpc JSON-RPC 面实例;为空则跳过
  */
 void ServicePortal::RegisterJsonRpcRoutes(ZmHttpJsonRpcServer* jrpc)
 {
-    (void)jrpc;
+    if (!jrpc)
+        return;
+    // 健康检查:ping → result {"pong":true}(与 RESTful /ping 语义一致)
+    jrpc->RegisterMethod("ping", [](const ZMJSON& params, ZMJSON& result, ZMJSON& error) -> bool {
+        (void)params;
+        (void)error;
+        result["pong"] = true;
+        return true;
+    });
 }
 
 /**
