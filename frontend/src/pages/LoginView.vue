@@ -99,7 +99,10 @@ async function submit() {
 
     <div class="auth-card anim-fade-up">
       <div class="auth-brand"><span class="brand-logo">Z</span>ZiMo 门户</div>
-      <h1 class="auth-title">欢迎回来 👋</h1>
+      <h1 class="auth-title">
+        欢迎回来
+        <svg class="title-spark" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/><path d="M5 3v4M3 5h4M19 17v4M17 19h4"/></svg>
+      </h1>
       <p class="auth-sub">登录你的账号,继续你的旅程</p>
 
       <!-- 登录方式:仅账号可用,手机/邮箱预留置灰 -->
@@ -117,10 +120,9 @@ async function submit() {
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg>
             </span>
             <input id="acc" v-model.trim="form.account" class="input" :class="{ err: errors.account }"
-                   placeholder="账号(zimo01)" autocapitalize="none" spellcheck="false" autocomplete="username" />
+                   placeholder="请输入账号" autocapitalize="none" spellcheck="false" autocomplete="username" />
           </div>
           <span v-if="errors.account" class="field-error">{{ errors.account }}</span>
-          <span v-else class="form-hint">字母统一小写,支持 a-z · 0-9 · _ · -</span>
         </div>
 
         <div class="form-item">
@@ -130,11 +132,13 @@ async function submit() {
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="10" width="16" height="10" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
             </span>
             <input id="pwd" v-model="form.password" :type="showPwd ? 'text' : 'password'" class="input"
-                   :class="{ err: errors.password }" placeholder="••••••••" autocomplete="current-password" />
+                   :class="{ err: errors.password }" placeholder="请输入密码" autocomplete="current-password" />
             <span class="input-suffix">
               <button class="icon-btn" type="button" :aria-label="showPwd ? '隐藏密码' : '显示密码'"
                       @click="showPwd = !showPwd">
-                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                <!-- 显隐状态切换:可见=闭眼(点击隐藏) / 隐藏=睁眼(点击显示) -->
+                <svg v-if="showPwd" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="2" y1="2" x2="22" y2="22"/></svg>
+                <svg v-else width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
               </button>
             </span>
           </div>
@@ -161,3 +165,8 @@ async function submit() {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* 标题装饰星:品牌色,随亮暗主题切换 */
+.title-spark{color:var(--color-primary);vertical-align:-3px;margin-left:3px}
+</style>

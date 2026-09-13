@@ -6,6 +6,7 @@
 .portal { min-height: 100vh; padding-top: var(--topbar-h); }
 
 /* ---------- 顶部状态栏:固定悬浮,不随页面滚动 ---------- */
+/* 毛玻璃安全:状态点脉冲为心跳时单次 WAAPI 闪动,无常驻 CSS 动画驱动产帧(高刷屏 CPU) */
 .portal-topbar{
   position:fixed;inset:0 0 auto 0;height:var(--topbar-h);z-index:800;
   display:flex;align-items:center;gap:14px;padding:0 22px;
@@ -23,7 +24,6 @@
   background:var(--color-ok-bg);color:var(--color-ok);
 }
 .hb-chip .hb-dot{width:7px;height:7px;border-radius:50%;background:currentColor}
-.hb-chip.on .hb-dot{animation:pulse-soft 2s infinite}
 .hb-chip.warn{background:var(--color-warn-bg);color:var(--color-warn)}
 .hb-chip.err{background:var(--color-err-bg);color:var(--color-err)}
 
@@ -59,12 +59,12 @@
 .portal-side.collapsed .side-badge{display:none}
 .side-foot{margin-top:auto;padding:12px;font-size:var(--fs-cap);color:var(--color-text-3);white-space:nowrap;overflow:hidden}
 
-/* ---------- 工作区 ---------- */
+/* ---------- 工作区:宽度随浏览器视口自适应 ---------- */
+/* 底部预留门户特效条高度(56px),避免内容被遮挡 */
 .portal-main{
-  margin-left:var(--sidebar-w);padding:24px 32px 40px;
+  margin-left:var(--sidebar-w);padding:24px 32px calc(56px + 24px);
   min-height:calc(100vh - var(--topbar-h));
   transition:margin-left var(--dur-slow) var(--ease);
-  max-width:1560px;
 }
 .portal-main.wide{margin-left:var(--sidebar-w-min)}
 

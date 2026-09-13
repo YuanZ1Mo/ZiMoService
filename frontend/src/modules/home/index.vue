@@ -146,24 +146,6 @@ function fxHint() {
         </div>
       </div>
     </section>
-
-    <!-- 特效区(本期占位;低 CPU 点缀,仅 transform/opacity) -->
-    <section class="sec-block">
-      <div class="sec-head">
-        <h2>特效区</h2>
-        <span class="note-chip">本期占位 · 形态待定</span>
-      </div>
-      <button type="button" class="fx-zone" @click="fxHint">
-        <i class="fx-blob" style="width:180px;height:180px;background:rgba(2,132,199,.35);top:-60px;left:8%"></i>
-        <i class="fx-blob" style="width:150px;height:150px;background:rgba(236,72,153,.3);bottom:-50px;right:10%;animation-delay:-2s"></i>
-        <i class="fx-blob" style="width:110px;height:110px;background:rgba(6,182,212,.32);top:30%;right:32%;animation-delay:-4s"></i>
-        <span style="position:relative;text-align:center">
-          <span class="fx-emoji" aria-hidden="true">✨</span>
-          <b class="fx-title">这里是视觉特效区</b>
-          <span class="fx-sub">低 CPU 特效预留(粒子 / 流光 / 渐变流动),形态待后续设计确定</span>
-        </span>
-      </button>
-    </section>
   </div>
 </template>
 
@@ -204,11 +186,6 @@ function fxHint() {
 .sec-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}
 .sec-head h2{font-size:var(--fs-h1);line-height:var(--lh-h1)}
 .sec-tip{font-size:var(--fs-cap);color:var(--color-text-3)}
-.note-chip{
-  display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:var(--r-pill);
-  background:rgba(236,72,153,.1);color:var(--pink-600);font-size:11px;font-weight:600;
-}
-[data-theme="dark"] .note-chip{color:var(--pink-400)}
 
 /* 模块卡片 */
 .mod-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
@@ -224,20 +201,6 @@ function fxHint() {
 .mod-ico.g2{background:linear-gradient(135deg,#EC4899,#F97316)}
 .mod-name{display:flex;align-items:center;gap:8px;font-weight:700;font-size:15px}
 .mod-url{display:block;font-size:11px;color:var(--color-text-3);margin-top:4px}
-
-/* 特效区占位 */
-.fx-zone{
-  position:relative;overflow:hidden;width:100%;min-height:200px;
-  border-radius:var(--r-lg);border:1.5px dashed var(--color-border);
-  background:var(--grad-brand-soft);
-  display:flex;align-items:center;justify-content:center;
-  cursor:pointer;
-}
-.fx-blob{position:absolute;border-radius:50%;filter:blur(46px);opacity:.55;pointer-events:none;animation:fxFloat 7s ease-in-out infinite}
-@keyframes fxFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
-.fx-emoji{display:block;font-size:30px}
-.fx-title{display:block;margin-top:6px}
-.fx-sub{display:block;font-size:var(--fs-cap);color:var(--color-text-2);margin-top:4px}
 
 @media (max-width:768px){
   .hero{padding:24px}

@@ -20,6 +20,7 @@ const connState = ref('on')        // on | warn | err(连续失败 ≥3 显示�
 const failCount = ref(0)
 const home = ref(null)             // /portal/home 数据(主页模块用)
 const menuOpen = ref(false)        // 用户菜单展开
+const hbChipEl = ref(null)         // 心跳状态胶囊(脉冲闪动目标)
 let heartbeatTimer = null
 
 // 模块排序(§2.3 全序):正数升序在前,负数区 -1 最先依次在后
@@ -72,6 +73,7 @@ async function heartbeat() {
     const data = await authApi.heartbeat()
     connState.value = 'on'
     failCount.value = 0
+    pulseDot()
     if (data.forceChange) {
       session.setForceChange(true)
       router.push('/force-reset')
@@ -109,7 +111,23 @@ function goProfile() {
   toast('个人中心建设中', 'warn')
 }
 
+// 心跳应答时状态点单次闪动(WAAPI):无常驻 CSS 动画,避免高刷屏持续产帧拉高 CPU
+function pulseDot() {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+  hbChipEl.value?.querySelector('.hb-dot')?.animate(
+    [{ opacity: 1, transform: 'scale(1)' }, { opacity: .35, transform: 'scale(.72)' }, { opacity: 1, transform: 'scale(1)' }],
+    { duration: 600, easing: 'ease-in-out' }
+  )
+}
+
+// 点击页面任意处关闭用户菜单(不能靠全屏遮罩:顶栏 backdrop-filter 会使 fixed 遮罩
+// 相对顶栏定位,只覆盖 60px 高的顶栏区域,点不到下方页面)
+function onDocClick() {
+  menuOpen.value = false
+}
+
 onMounted(async () => {
+  document.addEventListener('click', onDocClick)
   try {
     await loadHome()
   } catch (e) {
@@ -121,6 +139,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  document.removeEventListener('click', onDocClick)
   if (heartbeatTimer) clearInterval(heartbeatTimer)
 })
 </script>
@@ -136,7 +155,7 @@ onBeforeUnmount(() => {
 
       <div class="portal-topbar-right">
         <!-- 心跳连接状态胶囊 -->
-        <span class="hb-chip" :class="connState" :title="connState === 'on' ? '已连接' : connState === 'warn' ? '网络不稳定,自动重试中' : '连接已断开,恢复后自动续'">
+        <span ref="hbChipEl" class="hb-chip" :class="connState" :title="connState === 'on' ? '已连接' : connState === 'warn' ? '网络不稳定,自动重试中' : '连接已断开,恢复后自动续'">
           <span class="hb-dot" aria-hidden="true"></span>
           <span>{{ connState === 'on' ? '已连接' : connState === 'warn' ? '重连中…' : '已断开' }}</span>
         </span>
@@ -170,7 +189,6 @@ onBeforeUnmount(() => {
               退出登录
             </button>
           </div>
-          <div v-if="menuOpen" style="position:fixed;inset:0;z-index:60" @click="menuOpen = false"></div>
         </div>
 
         <!-- 独立退出按钮(需求 §7.3:昵称区域右侧) -->
@@ -205,6 +223,11 @@ onBeforeUnmount(() => {
         </keep-alive>
       </router-view>
     </main>
+
+    <!-- 门户特效区(壳级):固定视口底部,所有模块共享,新增模块自动附带 -->
+    <div class="portal-fx" :class="{ wide: sideCollapsed }" aria-hidden="true">
+      <i class="pf-flow"></i>
+    </div>
   </div>
 </template>
 
@@ -217,4 +240,21 @@ onBeforeUnmount(() => {
 .user-chip:hover{background:var(--color-border-soft)}
 .uc-name{max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .side-mask{position:fixed;inset:0;z-index:650;background:var(--color-scrim)}
+
+/* 门户特效区(壳级):固定视口底部,所有模块共享;静态三色渐变(活力蓝→青→粉) */
+.portal-fx{
+  position:fixed;left:var(--sidebar-w);right:0;bottom:0;height:56px;z-index:600;
+  overflow:hidden;
+  background:
+    linear-gradient(90deg,rgba(2,132,199,.18) 0%,rgba(6,182,212,.24) 30%,rgba(236,72,153,.18) 70%,rgba(2,132,199,.18) 100%),
+    var(--color-bg);
+  border-top:1px solid var(--color-border-soft);
+  transition:left var(--dur-slow) var(--ease);
+}
+.portal-fx.wide{left:var(--sidebar-w-min)}
+@media (max-width:768px){
+  .portal-fx{left:0}
+}
 </style>
+
+// build-probe-20260913
