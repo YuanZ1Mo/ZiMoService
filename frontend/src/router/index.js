@@ -7,6 +7,7 @@ import RegisterView from '../pages/RegisterView.vue'
 import ResetView from '../pages/ResetView.vue'
 import ForceResetView from '../pages/ForceResetView.vue'
 import NotFoundView from '../pages/NotFoundView.vue'
+import ShareView from '../pages/ShareView.vue'   // 免登录分享页 /s/:token(服务端页面白名单已含 /s/)
 // 门户壳
 import PortalLayout from '../layouts/PortalLayout.vue'
 
@@ -39,6 +40,7 @@ const router = createRouter({
     { path: '/register', component: RegisterView, meta: { public: true } },
     { path: '/reset', component: ResetView, meta: { public: true } },
     { path: '/404', component: NotFoundView, meta: { public: true } },
+    { path: '/s/:token', component: ShareView, meta: { public: true } },   // 免登录分享页:不进门户壳,登录后回跳本页(§3.12.3)
     { path: '/force-reset', component: ForceResetView, meta: { forceChange: true } },
     {
       path: '/portal',

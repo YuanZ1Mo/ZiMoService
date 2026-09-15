@@ -71,6 +71,11 @@ public:
     /// 有效用户数(注册角色分配:首个注册用户 → developer)
     drogon::Task<int64_t> CountActiveUsers();
 
+    /// 批量取昵称(展示层解析创建者/删除者用)
+    /// @param uids 用户 id 列表(可含 0 与重复;0 = 系统)
+    /// @return {uid: nickname}(不存在的 uid 不出现在结果里)
+    drogon::Task<ZMJSON> GetNicknames(const std::vector<int64_t>& uids);
+
 private:
     ZmDbModule* m_db = nullptr;
 };

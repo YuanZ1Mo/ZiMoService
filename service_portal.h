@@ -29,6 +29,20 @@ class ZmAuthModule;
 class ZmUserAdminModule;
 class ZmPortalModule;
 
+// 文件中心
+class ZmFileDbModule;
+class ZmFileStoreModule;
+class ZmFileAuditModule;
+class ZmFileNodeModule;
+class ZmFileTaskModule;
+class ZmFileUploadModule;
+class ZmFileTokenModule;
+class ZmFilePackModule;
+class ZmFileShareModule;
+class ZmFileHubModule;
+class ZmFileAdminModule;
+class ZmDirLock;
+
 class ServicePortal
 {
 public:
@@ -95,6 +109,20 @@ private:
     std::unique_ptr<ZmAuthModule> m_auth;
     std::unique_ptr<ZmUserAdminModule> m_admin;
     std::unique_ptr<ZmPortalModule> m_portal;
+
+    // 文件中心(数据访问 → 存储 → 条目/任务 → 上传/打包/令牌/分享 → 编排)
+    std::unique_ptr<ZmFileDbModule> m_fileDb;
+    std::unique_ptr<ZmFileStoreModule> m_fileStore;
+    std::unique_ptr<ZmFileAuditModule> m_fileAudit;
+    std::unique_ptr<ZmDirLock> m_dirLock;
+    std::unique_ptr<ZmFileTaskModule> m_fileTask;
+    std::unique_ptr<ZmFileNodeModule> m_fileNode;
+    std::unique_ptr<ZmFileUploadModule> m_fileUpload;
+    std::unique_ptr<ZmFileTokenModule> m_fileToken;
+    std::unique_ptr<ZmFilePackModule> m_filePack;
+    std::unique_ptr<ZmFileShareModule> m_fileShare;
+    std::unique_ptr<ZmFileHubModule> m_fileHub;
+    std::unique_ptr<ZmFileAdminModule> m_fileAdmin;
 };
 
 #endif // SERVICE_PORTAL_H

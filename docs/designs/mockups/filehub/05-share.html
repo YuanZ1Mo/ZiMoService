@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>文件中心 · 免登录分享页 — ZiMo 文件空间设计稿</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="filehub.css">
+<style>
+  .wrap{max-width:1240px;margin:0 auto;padding:var(--sp-6) var(--sp-6) var(--sp-12)}
+  .vp{height:660px;border:1px solid var(--color-border-soft);border-radius:var(--r-lg);overflow:hidden;box-shadow:var(--shadow-sm);position:relative}
+  .vp .share-page{position:absolute;inset:0}
+  .share-info-row{display:flex;gap:var(--sp-5);flex-wrap:wrap;margin-top:var(--sp-4);padding-top:var(--sp-4);border-top:1px dashed var(--color-border)}
+  .share-info-row .kv b{display:block;font-size:var(--fs-cap);color:var(--color-text-3);font-weight:600}
+  .share-info-row .kv span{font-size:var(--fs-body);font-weight:700}
+  .read-only-tbl th{background:var(--color-card)}
+</style>
+</head>
+<body>
+<div class="mock-bar">
+  <span class="pg">文件中心 · 05 免登录分享页</span><span class="path">/s/:token · meta.public · 不进门户壳</span>
+  <span class="spacer"></span>
+  <a href="04-tasks.html">← 任务面板</a>
+  <a href="06-admin.html">下一页:文件中心管理 →</a>
+  <button class="theme-btn" onclick="toggleTheme()">🌗 亮/暗</button>
+</div>
+
+<div class="wrap">
+  <div class="page-head">
+    <div><h1>分享页(公开面)</h1><div class="sub">默认免登录,持链接即可访问;提取码 → 访问凭证 Cookie(zm_share,2h);失效/需登录各有独立态</div></div>
+  </div>
+
+  <!-- ① 提取码 -->
+  <div class="frame">
+    <h3><span class="idx">①</span>需提取码 · 校验态</h3>
+    <p class="fdesc">四格分位输入(自动跳格 / 粘贴整码);错误内联提示并震动;<b>同 IP+token 连续错 5 次冷却 10 分钟</b>(429 冷却提示条)。</p>
+    <div class="vp">
+      <div class="share-page">
+        <div class="share-top">
+          <div class="brand"><span class="brand-logo">Z</span>ZiMo 文件中心</div>
+          <span class="spacer grow"></span>
+          <button class="theme-btn" style="height:30px;border-radius:8px;background:var(--color-primary-soft);color:var(--color-primary);font-size:12px;font-weight:600;padding:0 12px" onclick="toggleTheme()">🌗</button>
+        </div>
+        <div class="share-mid">
+          <div class="card share-card" style="padding:var(--sp-8);text-align:center">
+            <div class="share-owner" style="justify-content:center">
+              <span class="avatar">张</span>
+              <div style="text-align:left">
+                <b>张三</b> 分享了文件
+                <div class="cap faint">来自 ZiMo 文件中心 · 公共空间</div>
+              </div>
+            </div>
+            <div class="row gap-2 center" style="margin-top:var(--sp-5);flex-wrap:wrap">
+              <span class="ficon f-doc" style="width:46px;height:46px;border-radius:13px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" style="width:24px;height:24px"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg></span>
+              <b style="font-size:19px">产品发布方案 v2.docx</b>
+            </div>
+            <div class="share-info-row" style="justify-content:center">
+              <span class="kv center"><b>大小</b><span class="num">386 KB</span></span>
+              <span class="kv center"><b>有效期</b><span class="num">剩 6 天</span></span>
+              <span class="kv center"><b>下载次数</b><span class="num">不限</span></span>
+            </div>
+            <div class="pwd-input" aria-label="提取码输入">
+              <input class="pwd-cell" maxlength="1" value="H" aria-label="第1位"><input class="pwd-cell" maxlength="1" value="7" aria-label="第2位"><input class="pwd-cell err" maxlength="1" value="q" aria-label="第3位"><input class="pwd-cell" maxlength="1" aria-label="第4位">
+            </div>
+            <div class="field-error center" style="justify-content:center;margin-top:12px">提取码不正确,还可尝试 3 次</div>
+            <button class="btn btn-grad btn-lg" style="margin-top:var(--sp-4);min-width:180px">提取文件</button>
+          </div>
+        </div>
+        <div class="share-foot">由 ZiMo 文件中心提供 · 分享内容为创建者授权,与本站账号体系无关</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ② 目录浏览 -->
+  <div class="frame">
+    <h3><span class="idx">②</span>目录分享 · 浏览与下载</h3>
+    <p class="fdesc">目录分享实时反映当前内容(非快照);面包屑下钻仅限分享子树内;单项"下载"与整包"下载全部"(打包走分享目标所在空间的缓存区);此视图只读。</p>
+    <div class="vp">
+      <div class="share-page">
+        <div class="share-top">
+          <div class="brand"><span class="brand-logo">Z</span>ZiMo 文件中心</div>
+          <span class="spacer grow"></span>
+          <span class="badge badge-neutral">免登录访问</span>
+        </div>
+        <div class="share-mid" style="align-items:stretch">
+          <div class="share-card" style="width:760px;display:flex;flex-direction:column;gap:var(--sp-4)">
+            <div class="card" style="padding:var(--sp-5)">
+              <div class="share-owner">
+                <span class="avatar">张</span>
+                <div class="grow">
+                  <div><b>张三</b> 分享了文件夹 · <b>2026Q3-评审材料</b></div>
+                  <div class="cap faint">含 286 项 · 3.5 GB · 剩余有效期 6 天 · 下载 37 次</div>
+                </div>
+                <button class="btn btn-grad"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4v12m0 0-4-4m4 4 4-4"/><path d="M4 17v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1"/></svg>下载全部(zip)</button>
+              </div>
+            </div>
+            <div class="card">
+              <div class="crumbs">
+                <a href="javascript:void(0)" class="c-home"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>2026Q3-评审材料</a>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="m9 6 6 6-6 6"/></svg>
+                <span class="here">设计稿</span>
+              </div>
+              <div class="ftbl-wrap read-only-tbl">
+                <table class="ftbl">
+                  <thead><tr><th style="min-width:200px">名称</th><th style="width:84px">类型</th><th style="width:92px">大小</th><th style="width:130px">修改时间</th><th style="width:96px"></th></tr></thead>
+                  <tbody>
+                    <tr><td><div class="fcell"><span class="ficon f-folder"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6a2 2 0 0 1 2-2h4.6a2 2 0 0 1 1.4.6L13.4 6H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/></svg></span><span class="fname dir">定稿</span></div></td><td><span class="ftype">文件夹</span></td><td><span class="fnum items-num">12 项</span></td><td><span class="fnum">09-15 10:20</span></td><td><span class="row-ops"><button class="btn btn-secondary btn-sm">下载</button></span></td></tr>
+                    <tr><td><div class="fcell"><span class="ficon f-doc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg></span><span class="fname">产品发布方案 v2.docx</span></div></td><td><span class="ftype">文档</span></td><td><span class="fnum">386 KB</span></td><td><span class="fnum">09-13 16:42</span></td><td><span class="row-ops"><button class="btn btn-secondary btn-sm">下载</button></span></td></tr>
+                    <tr><td><div class="fcell"><span class="ficon f-img"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.6" fill="currentColor" stroke="none"/><path d="m5 18 5.2-5.2a1.4 1.4 0 0 1 2 0L19 19"/></svg></span><span class="fname">发布会现场合影.jpg</span></div></td><td><span class="ftype">图片</span></td><td><span class="fnum">8.6 MB</span></td><td><span class="fnum">09-10 14:22</span></td><td><span class="row-ops"><button class="btn btn-secondary btn-sm">下载</button></span></td></tr>
+                    <tr><td><div class="fcell"><span class="ficon f-vid"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9.5 5 2.5-5 2.5Z" fill="currentColor" stroke="none"/></svg></span><span class="fname">宣传片-最终版.mp4</span></div></td><td><span class="ftype">视频</span></td><td><span class="fnum">328 MB</span></td><td><span class="fnum">09-09 11:47</span></td><td><span class="row-ops"><button class="btn btn-secondary btn-sm">下载</button></span></td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="share-foot">由 ZiMo 文件中心提供 · 仅可浏览与下载,无上传/修改权限</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ③ 失效 / 不可用 / 需登录 三态 -->
+  <div class="frame">
+    <h3><span class="idx">③</span>失效 / 内容不可用 / 需登录</h3>
+    <p class="fdesc">左:过期/取消/达次数上限 → "分享已失效";中:目标在回收站 → "分享内容不可用"(恢复后自动可用);右:login_only=1 未登录 → 登录引导卡,登录后回跳本页。</p>
+    <div class="row2" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:var(--sp-5)">
+      <div class="card demo-shell" style="overflow:hidden">
+        <div class="share-page" style="position:relative;min-height:360px">
+          <div class="share-top"><div class="brand"><span class="brand-logo">Z</span>ZiMo 文件中心</div></div>
+          <div class="share-mid"><div class="card share-card" style="padding:var(--sp-8);text-align:center">
+            <div style="width:64px;height:64px;border-radius:20px;background:var(--color-danger-bg);color:var(--color-danger);display:flex;align-items:center;justify-content:center;margin:0 auto var(--sp-3)"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/></svg></div>
+            <b style="font-size:var(--fs-h2)">分享已失效</b>
+            <p class="cap" style="margin-top:8px;color:var(--color-text-2)">链接已过期、被取消或下载次数已达上限</p>
+            <span class="cap faint num">失效于 09-12 00:00</span>
+          </div></div>
+        </div>
+      </div>
+      <div class="card demo-shell" style="overflow:hidden">
+        <div class="share-page" style="position:relative;min-height:360px">
+          <div class="share-top"><div class="brand"><span class="brand-logo">Z</span>ZiMo 文件中心</div></div>
+          <div class="share-mid"><div class="card share-card" style="padding:var(--sp-8);text-align:center">
+            <div style="width:64px;height:64px;border-radius:20px;background:var(--color-warning-bg);color:var(--color-warning);display:flex;align-items:center;justify-content:center;margin:0 auto var(--sp-3)"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M9 10h6"/></svg></div>
+            <b style="font-size:var(--fs-h2)">分享内容暂不可用</b>
+            <p class="cap" style="margin-top:8px;color:var(--color-text-2)">该文件正在回收站中;恢复后本链接将自动恢复可用</p>
+          </div></div>
+        </div>
+      </div>
+      <div class="card demo-shell" style="overflow:hidden">
+        <div class="share-page" style="position:relative;min-height:360px">
+          <div class="share-top"><div class="brand"><span class="brand-logo">Z</span>ZiMo 文件中心</div></div>
+          <div class="share-mid"><div class="card share-card" style="padding:var(--sp-8);text-align:center">
+            <div style="width:64px;height:64px;border-radius:20px;background:var(--color-primary-soft);color:var(--color-primary);display:flex;align-items:center;justify-content:center;margin:0 auto var(--sp-3)"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div>
+            <b style="font-size:var(--fs-h2)">此分享仅登录用户可见</b>
+            <p class="cap" style="margin-top:8px;color:var(--color-text-2)">登录后将回到本页面(不跳门户首页)</p>
+            <button class="btn btn-grad btn-lg" style="margin-top:var(--sp-4);min-width:160px">去登录</button>
+          </div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="frame">
+    <div class="annotate">
+      <b>设计注记(05 分享页)</b><br>
+      ① 页面为 <b>meta.public 独立全屏页</b>,不渲染门户壳;服务端已把 /s/ 加入页面白名单;② 提取码校验通过后服务端签发分享访问凭证(Cookie zm_share,2 小时),后续列表/下载自动携带,避免每次明文传码;③ 下载同样走短时令牌(绑定 share_token+node_id),免会话;目录打包压缩包存放在<b>分享目标所在空间</b>的缓存区;④ 分享绑定 node_id:目标被移动/重命名不影响访问;目标进回收站 → SHARE_UNAVAILABLE;彻底删除 → 已失效;⑤ 分享下载计入 download_count(原子自增),次数上限允许略微超发。
+    </div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+<script>
+function toggleTheme(){const d=document.documentElement;d.dataset.theme=d.dataset.theme==='dark'?'light':'dark';localStorage.setItem('mock-theme',d.dataset.theme)}
+const __tp=new URLSearchParams(location.search).get('theme');
+if(__tp)document.documentElement.dataset.theme=__tp;else if(localStorage.getItem('mock-theme'))document.documentElement.dataset.theme=localStorage.getItem('mock-theme');
+function toast(msg,type='success',title='提示'){
+  const t=document.createElement('div');t.className='toast '+type;
+  t.innerHTML=`<span>${type==='success'?'✓':type==='error'?'✕':type==='warning'?'⚠':'ℹ'}</span><div><div class="t-title">${title}</div><div class="t-msg">${msg}</div></div>`;
+  document.getElementById('toasts').appendChild(t);setTimeout(()=>t.remove(),3200);
+}
+/* 四格提取码:输入自动跳格 */
+document.querySelectorAll('.pwd-cell').forEach((c,i,arr)=>{
+  c.addEventListener('input',()=>{if(c.value&&arr[i+1])arr[i+1].focus()});
+  c.addEventListener('keydown',e=>{if(e.key==='Backspace'&&!c.value&&arr[i-1])arr[i-1].focus()});
+});
+</script>
+</body>
+</html>

@@ -8,136 +8,27 @@
 #include <trantor/net/InetAddress.h>
 #include <drogon/nosql/RedisClient.h>
 #include <drogon/nosql/RedisException.h>
-#include <sqlite3.h>
 
 #include <zm_net_http_server.h>
 #include <zm_util_logger.h>
 
 #include <cstring>
 #include <ctime>
-#include <filesystem>
-
-// ============================================================================
-// 内部连接结构
-// ============================================================================
-struct ZmSqliteConn
-{
-    sqlite3* db = nullptr;
-    std::recursive_mutex mtx;   // 写连接可递归(WithTx 回调内再写)
-};
-
-namespace
-{
-/// 绑定参数(全部按文本绑定,SQLite 自动转换)
-void BindParams(sqlite3_stmt* stmt, const std::vector<std::string>& params)
-{
-    for (size_t i = 0; i < params.size(); ++i)
-        sqlite3_bind_text(stmt, static_cast<int>(i + 1), params[i].c_str(), -1,
-                          SQLITE_TRANSIENT);
-}
-
-/// 结果行 → ZMJSON(列名→值;NULL→null;BLOB→hex 串)
-ZMJSON RowToJson(sqlite3_stmt* stmt)
-{
-    ZMJSON row = ZMJSON::object();
-    int n = sqlite3_column_count(stmt);
-    for (int i = 0; i < n; ++i)
-    {
-        const char* name = sqlite3_column_name(stmt, i);
-        if (!name)
-            continue;
-        std::string key = name;
-        switch (sqlite3_column_type(stmt, i))
-        {
-        case SQLITE_INTEGER:
-            row[key] = sqlite3_column_int64(stmt, i);
-            break;
-        case SQLITE_FLOAT:
-            row[key] = sqlite3_column_double(stmt, i);
-            break;
-        case SQLITE_TEXT:
-            row[key] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, i));
-            break;
-        case SQLITE_BLOB:
-        {
-            const unsigned char* p = static_cast<const unsigned char*>(
-                sqlite3_column_blob(stmt, i));
-            int len = sqlite3_column_bytes(stmt, i);
-            static const char* hex = "0123456789abcdef";
-            std::string s;
-            s.reserve(static_cast<size_t>(len) * 2);
-            for (int j = 0; j < len; ++j)
-            {
-                s += hex[p[j] >> 4];
-                s += hex[p[j] & 0x0F];
-            }
-            row[key] = s;
-            break;
-        }
-        default:
-            row[key] = nullptr;
-            break;
-        }
-    }
-    return row;
-}
-
-/// 执行写语句(不含事务控制)
-bool StepExec(sqlite3* db, const std::string& sql, const std::vector<std::string>& params)
-{
-    sqlite3_stmt* stmt = nullptr;
-    int rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr);
-    if (rc != SQLITE_OK)
-    {
-        DEFAULT_LOG_ERROR("DB prepare 失败 rc={} sql={} err={}", rc, sql,
-                          sqlite3_errmsg(db));
-        if (stmt)
-            sqlite3_finalize(stmt);
-        return false;
-    }
-    BindParams(stmt, params);
-    rc = sqlite3_step(stmt);
-    bool ok = (rc == SQLITE_DONE || rc == SQLITE_ROW);
-    if (!ok)
-        DEFAULT_LOG_ERROR("DB step 失败 rc={} sql={} err={}", rc, sql,
-                          sqlite3_errmsg(db));
-    sqlite3_finalize(stmt);
-    return ok;
-}
-}  // namespace
 
 // ============================================================================
 // 构造 / 析构 / Init
 // ============================================================================
 ZmDbModule::ZmDbModule() = default;
 
-ZmDbModule::~ZmDbModule()
-{
-    CloseConnections();
-}
+ZmDbModule::~ZmDbModule() = default;
 
 bool ZmDbModule::Init(const std::string& dbPath)
 {
-    m_dbPath = dbPath;
-    if (m_dbPath.empty())
+    if (!ZmSqliteDb::Init(dbPath))
     {
-        DEFAULT_LOG_ERROR("ZmDbModule::Init: dbPath 为空");
+        DEFAULT_LOG_ERROR("ZmDbModule::Init: 打开库失败: {}", dbPath);
         return false;
     }
-    auto dir = std::filesystem::path(m_dbPath).parent_path();
-    if (!dir.empty())
-    {
-        std::error_code ec;
-        std::filesystem::create_directories(dir, ec);
-        if (ec)
-        {
-            DEFAULT_LOG_ERROR("ZmDbModule::Init: 创建目录失败: {} ({})", dir.string(),
-                              ec.message());
-            return false;
-        }
-    }
-    if (!CreateConnections())
-        return false;
 
     // 运行配置:WAL + busy_timeout + 外键(写连接设置,persistent)
     ExecSync("PRAGMA journal_mode=WAL;", {});
@@ -147,11 +38,13 @@ bool ZmDbModule::Init(const std::string& dbPath)
     if (!BuildSchema())
     {
         DEFAULT_LOG_ERROR("ZmDbModule::Init: 建表失败");
+        Close();
         return false;
     }
     if (!SeedData())
     {
         DEFAULT_LOG_ERROR("ZmDbModule::Init: 种子数据写入失败");
+        Close();
         return false;
     }
     // Redis 可达性探测(启动期同步一次;不可达 → 降级,不创建客户端)
@@ -164,8 +57,7 @@ bool ZmDbModule::Init(const std::string& dbPath)
     {
         DEFAULT_LOG_INFO("ZmDbModule: Redis 可达(127.0.0.1:6379),客户端按需创建");
     }
-    m_ready.store(true);
-    DEFAULT_LOG_INFO("ZmDbModule::Init 完成: db={} 全新建表+种子", m_dbPath);
+    DEFAULT_LOG_INFO("ZmDbModule::Init 完成: db={} 全新建表+种子", DbPath());
     return true;
 }
 
@@ -191,233 +83,6 @@ void ZmDbModule::StartPeriodicCleanup()
         });
         DEFAULT_LOG_INFO("ZmDbModule: 周期清理任务已注册(每日 03:00)");
     });
-}
-
-int64_t ZmDbModule::Now()
-{
-    return static_cast<int64_t>(std::time(nullptr));
-}
-
-// ============================================================================
-// 连接管理
-// ============================================================================
-bool ZmDbModule::CreateConnections()
-{
-    auto openOne = [this](const char* tag) -> ZmSqliteConn* {
-        auto c = std::make_unique<ZmSqliteConn>();
-        int rc = sqlite3_open_v2(m_dbPath.c_str(), &c->db,
-                                 SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr);
-        if (rc != SQLITE_OK)
-        {
-            DEFAULT_LOG_ERROR("ZmDbModule: sqlite3_open({}) 失败 rc={} err={}", tag,
-                              rc, c->db ? sqlite3_errmsg(c->db) : "null");
-            if (c->db)
-                sqlite3_close(c->db);
-            return nullptr;
-        }
-        sqlite3_busy_timeout(c->db, 5000);
-        return c.release();
-    };
-
-    m_write.reset(openOne("write"));
-    if (!m_write)
-        return false;
-    for (int i = 0; i < 4; ++i)
-    {
-        ZmSqliteConn* c = openOne("read");
-        if (!c)
-            return false;
-        m_reads.emplace_back(c);
-    }
-    return true;
-}
-
-void ZmDbModule::CloseConnections()
-{
-    if (m_write && m_write->db)
-        sqlite3_close(m_write->db);
-    m_write.reset();
-    for (auto& c : m_reads)
-    {
-        if (c && c->db)
-            sqlite3_close(c->db);
-    }
-    m_reads.clear();
-}
-
-ZmSqliteConn* ZmDbModule::AcquireReadConn()
-{
-    size_t idx = m_readCursor.fetch_add(1) % m_reads.size();
-    return m_reads[idx].get();
-}
-
-void ZmDbModule::ReleaseReadConn(ZmSqliteConn* /*conn*/)
-{
-    // 读池连接常驻,无需归还动作
-}
-
-// ============================================================================
-// 同步执行体(工作池线程 / WithTx 回调内调用)
-// ============================================================================
-bool ZmDbModule::ExecSyncLocked(ZmSqliteConn* conn, const std::string& sql,
-                                const std::vector<std::string>& params)
-{
-    if (!conn || !conn->db)
-        return false;
-    return StepExec(conn->db, sql, params);
-}
-
-ZMJSON ZmDbModule::QueryRowSyncLocked(ZmSqliteConn* conn, const std::string& sql,
-                                      const std::vector<std::string>& params)
-{
-    ZMJSON row = ZMJSON::object();
-    if (!conn || !conn->db)
-        return row;
-    sqlite3_stmt* stmt = nullptr;
-    int rc = sqlite3_prepare_v2(conn->db, sql.c_str(), -1, &stmt, nullptr);
-    if (rc != SQLITE_OK)
-    {
-        DEFAULT_LOG_ERROR("DB query prepare 失败 rc={} sql={} err={}", rc, sql,
-                          sqlite3_errmsg(conn->db));
-        if (stmt)
-            sqlite3_finalize(stmt);
-        return row;
-    }
-    BindParams(stmt, params);
-    if (sqlite3_step(stmt) == SQLITE_ROW)
-        row = RowToJson(stmt);
-    sqlite3_finalize(stmt);
-    return row;
-}
-
-ZMJSON ZmDbModule::QueryRowsSyncLocked(ZmSqliteConn* conn, const std::string& sql,
-                                       const std::vector<std::string>& params)
-{
-    ZMJSON rows = ZMJSON::array();
-    if (!conn || !conn->db)
-        return rows;
-    sqlite3_stmt* stmt = nullptr;
-    int rc = sqlite3_prepare_v2(conn->db, sql.c_str(), -1, &stmt, nullptr);
-    if (rc != SQLITE_OK)
-    {
-        DEFAULT_LOG_ERROR("DB list prepare 失败 rc={} sql={} err={}", rc, sql,
-                          sqlite3_errmsg(conn->db));
-        if (stmt)
-            sqlite3_finalize(stmt);
-        return rows;
-    }
-    BindParams(stmt, params);
-    while (sqlite3_step(stmt) == SQLITE_ROW)
-        rows.push_back(RowToJson(stmt));
-    sqlite3_finalize(stmt);
-    return rows;
-}
-
-bool ZmDbModule::ExecSync(const std::string& sql, const std::vector<std::string>& params)
-{
-    ZmSqliteConn* conn = m_write.get();
-    std::lock_guard<std::recursive_mutex> lock(conn->mtx);
-    bool ok = ExecSyncLocked(conn, sql, params);
-    return ok;
-}
-
-ZMJSON ZmDbModule::QueryRowSync(const std::string& sql, const std::vector<std::string>& params)
-{
-    ZmSqliteConn* conn = AcquireReadConn();
-    std::lock_guard<std::recursive_mutex> lock(conn->mtx);
-    ZMJSON row = QueryRowSyncLocked(conn, sql, params);
-    ReleaseReadConn(conn);
-    return row;
-}
-
-ZMJSON ZmDbModule::QueryRowsSync(const std::string& sql, const std::vector<std::string>& params)
-{
-    ZmSqliteConn* conn = AcquireReadConn();
-    std::lock_guard<std::recursive_mutex> lock(conn->mtx);
-    ZMJSON rows = QueryRowsSyncLocked(conn, sql, params);
-    ReleaseReadConn(conn);
-    return rows;
-}
-
-bool ZmDbModule::BeginTxSync()
-{
-    ZmSqliteConn* conn = m_write.get();
-    std::lock_guard<std::recursive_mutex> lock(conn->mtx);
-    return ExecSyncLocked(conn, "BEGIN IMMEDIATE;", {});
-}
-
-bool ZmDbModule::CommitTxSync()
-{
-    ZmSqliteConn* conn = m_write.get();
-    std::lock_guard<std::recursive_mutex> lock(conn->mtx);
-    return ExecSyncLocked(conn, "COMMIT;", {});
-}
-
-bool ZmDbModule::RollbackTxSync()
-{
-    ZmSqliteConn* conn = m_write.get();
-    std::lock_guard<std::recursive_mutex> lock(conn->mtx);
-    return ExecSyncLocked(conn, "ROLLBACK;", {});
-}
-
-// ============================================================================
-// 协程包装(工作池离核;事件循环不阻塞)
-// ============================================================================
-drogon::Task<bool> ZmDbModule::Exec(const std::string& sql,
-                                    const std::vector<std::string>& params)
-{
-    co_return co_await ZmHttpServer::RunOnPool<bool>(
-        [this, sql, params]() -> bool { return ExecSync(sql, params); });
-}
-
-drogon::Task<ZMJSON> ZmDbModule::QueryRows(const std::string& sql,
-                                           const std::vector<std::string>& params)
-{
-    co_return co_await ZmHttpServer::RunOnPool<ZMJSON>(
-        [this, sql, params]() -> ZMJSON { return QueryRowsSync(sql, params); });
-}
-
-drogon::Task<ZMJSON> ZmDbModule::QueryRow(const std::string& sql,
-                                          const std::vector<std::string>& params)
-{
-    co_return co_await ZmHttpServer::RunOnPool<ZMJSON>(
-        [this, sql, params]() -> ZMJSON { return QueryRowSync(sql, params); });
-}
-
-drogon::Task<bool> ZmDbModule::WithTx(const std::function<bool(ZmDbModule&)>& fn)
-{
-    co_return co_await ZmHttpServer::RunOnPool<bool>(
-        [this, fn]() -> bool {
-            ZmSqliteConn* conn = m_write.get();
-            std::lock_guard<std::recursive_mutex> lock(conn->mtx);
-            if (!ExecSyncLocked(conn, "BEGIN IMMEDIATE;", {}))
-                return false;
-            bool ok = false;
-            try
-            {
-                ok = fn(*this);
-            }
-            catch (const std::exception& e)
-            {
-                DEFAULT_LOG_ERROR("ZmDbModule::WithTx 回调异常: {}", e.what());
-                ok = false;
-            }
-            catch (...)
-            {
-                ok = false;
-            }
-            if (ok)
-            {
-                if (ExecSyncLocked(conn, "COMMIT;", {}))
-                {
-                    return true;
-                }
-                ExecSyncLocked(conn, "ROLLBACK;", {});
-                return false;
-            }
-            ExecSyncLocked(conn, "ROLLBACK;", {});
-            return false;
-        });
 }
 
 // ============================================================================
@@ -649,7 +314,7 @@ bool ZmDbModule::SeedData()
 // ============================================================================
 void ZmDbModule::CleanupOnce()
 {
-    if (!m_ready.load())
+    if (!IsReady())
         return;
     int64_t now = Now();
     struct CleanRule

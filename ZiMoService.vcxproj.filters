@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <Filter Include="源文件">
@@ -268,6 +268,12 @@
     <Filter Include="头文件\Public\minizip-ng\include\minizip-ng">
       <UniqueIdentifier>{1d061b09-ac0e-4537-88ca-f8d150ea635c}</UniqueIdentifier>
     </Filter>
+    <Filter Include="头文件\modules\util">
+      <UniqueIdentifier>{04733807-370c-4a21-ae22-d52327a8f50e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="源文件\modules\util">
+      <UniqueIdentifier>{6e31bb68-d10c-4273-aece-fbd6f64b8934}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="service_main.cpp">
@@ -326,6 +332,45 @@
     </ClCompile>
     <ClCompile Include="broadcast_manager.cpp">
       <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\util\dir_lock.cpp">
+      <Filter>源文件\modules\util</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\module_file_upload.cpp">
+      <Filter>源文件\modules</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\module_file_admin.cpp">
+      <Filter>源文件\modules</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\module_file_audit.cpp">
+      <Filter>源文件\modules</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\module_file_db.cpp">
+      <Filter>源文件\modules</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\module_file_hub.cpp">
+      <Filter>源文件\modules</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\module_file_node.cpp">
+      <Filter>源文件\modules</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\module_file_node_ops.cpp">
+      <Filter>源文件\modules</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\module_file_pack.cpp">
+      <Filter>源文件\modules</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\module_file_share.cpp">
+      <Filter>源文件\modules</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\module_file_store.cpp">
+      <Filter>源文件\modules</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\module_file_task.cpp">
+      <Filter>源文件\modules</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\module_file_token.cpp">
+      <Filter>源文件\modules</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -4561,6 +4606,48 @@
     </ClInclude>
     <ClInclude Include="..\ZiMoPublic\minizip-ng\include\minizip-ng\zip.h">
       <Filter>头文件\Public\minizip-ng\include\minizip-ng</Filter>
+    </ClInclude>
+    <ClInclude Include="..\ZiMoPublic\util\zm_util_sqlite.h">
+      <Filter>头文件\Public\util</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\util\dir_lock.h">
+      <Filter>头文件\modules\util</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\module_file_admin.h">
+      <Filter>头文件\modules</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\module_file_audit.h">
+      <Filter>头文件\modules</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\module_file_db.h">
+      <Filter>头文件\modules</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\module_file_defs.h">
+      <Filter>头文件\modules</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\module_file_hub.h">
+      <Filter>头文件\modules</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\module_file_node.h">
+      <Filter>头文件\modules</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\module_file_pack.h">
+      <Filter>头文件\modules</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\module_file_share.h">
+      <Filter>头文件\modules</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\module_file_store.h">
+      <Filter>头文件\modules</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\module_file_task.h">
+      <Filter>头文件\modules</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\module_file_token.h">
+      <Filter>头文件\modules</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\module_file_upload.h">
+      <Filter>头文件\modules</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

@@ -46,6 +46,17 @@ public:
     /// 变更后失效缓存 + 递增策略版本
     drogon::Task<void> InvalidatePermCache(int64_t uid);
 
+    /// 登记权限点(幂等)并挂到指定角色(角色不存在则跳过)
+    ///
+    /// 同步实现:在装配阶段(事件循环启动之前)调用,阻塞当前线程是可接受的;
+    /// 与建库种子同类,不需要协程投递。
+    ///
+    /// @param perm  {"code","name","module","url","type","index","sort","description"}
+    /// @param roleCodes 需要挂载该权限点的角色 code
+    /// @return true 全部写入成功
+    bool RegisterPermCodeSync(const ZMJSON& perm,
+                              const std::vector<std::string>& roleCodes);
+
     // ── 角色/权限数据只读 ──
     drogon::Task<ZMJSON> ListRoles();
     drogon::Task<ZMJSON> ListPermCodes();

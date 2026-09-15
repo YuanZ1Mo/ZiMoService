@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>文件中心 · 主列表页 — ZiMo 文件空间设计稿</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="filehub.css">
+<style>
+  /* 页面私有 */
+  .fh-card{background:var(--color-card);border:1px solid var(--color-border-soft);border-radius:var(--r-lg);box-shadow:var(--shadow-sm)}
+  .menu-wrap .ctx{right:auto;top:0}
+  .grid-note{padding:0 var(--sp-4) var(--sp-4)}
+</style>
+</head>
+<body>
+<div class="mock-bar">
+  <span class="pg">文件中心 · 01 主列表页</span><span class="path">/portal/filehub</span>
+  <span class="spacer"></span>
+  <a href="index.html">← 总览</a>
+  <a href="02-trash.html">下一页:回收站 →</a>
+  <button class="theme-btn" onclick="toggleTheme()">🌗 亮/暗</button>
+</div>
+
+<!-- ===================== 门户顶栏(共用壳) ===================== -->
+<header class="topbar">
+  <button class="icon-btn" onclick="document.getElementById('sidenav').classList.toggle('mini')" aria-label="收起/展开导航">
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+  </button>
+  <div class="brand"><span class="brand-logo">Z</span>ZiMo</div>
+  <div class="grow"></div>
+  <span class="hb-chip"><span class="dot"></span>已连接</span>
+  <button class="icon-btn" onclick="toggleTheme()" aria-label="切换亮暗主题">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>
+  </button>
+  <div class="menu-wrap">
+    <div class="user-box" onclick="toggleMenu(event)">
+      <span class="avatar">知</span><span class="uname">知墨</span>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" class="faint"><path d="m6 9 6 6 6-6"/></svg>
+    </div>
+    <div class="menu" id="userMenu">
+      <div style="padding:10px 12px 8px"><div style="font-weight:700">知墨</div><div class="cap faint num">zimo_dev · developer</div></div>
+      <div class="menu-sep"></div>
+      <button class="menu-item" onclick="toast('文件中心主列表页','info')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>我的文件中心</button>
+      <div class="menu-sep"></div>
+      <button class="menu-item danger" onclick="toast('退出登录(示意)','warning')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>退出登录</button>
+    </div>
+  </div>
+  <button class="icon-btn" onclick="toast('退出登录(示意)','warning')" aria-label="退出登录" title="退出登录">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+  </button>
+</header>
+
+<!-- ===================== 门户侧边导航(模块清单驱动,无序号) ===================== -->
+<aside class="sidenav" id="sidenav">
+  <div class="sidenav-label">功能模块</div>
+  <div class="nav-item" title="用户主页">
+    <span class="nav-ico"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m3 10 9-7 9 7v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M9 22V12h6v10"/></svg></span>
+    <span class="nav-text">用户主页</span>
+  </div>
+  <div class="nav-item active" title="文件中心">
+    <span class="nav-ico"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg></span>
+    <span class="nav-text">文件中心</span>
+  </div>
+  <div class="nav-group-gap"></div>
+  <div class="sidenav-label">管理</div>
+  <div class="nav-item" title="系统管理">
+    <span class="nav-ico"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h0a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55h0a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v0a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1Z"/></svg></span>
+    <span class="nav-text">系统管理</span>
+  </div>
+</aside>
+
+<!-- ===================== 工作区:文件中心模块 ===================== -->
+<main class="workspace">
+  <div class="page-head">
+    <div><h1>文件中心</h1><div class="sub">双空间文件浏览与传输 · 拖拽文件到此处即可上传</div></div>
+    <div class="row gap-2"><span class="badge badge-info">空间 2 · 条目 1,284</span></div>
+  </div>
+
+  <div class="fh-body">
+    <!-- 侧栏:空间树 + 快捷入口 -->
+    <div class="fh-side">
+      <div class="card sp-card active">
+        <div class="sp-name">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14.5 14.5 0 0 1 0 18 14.5 14.5 0 0 1 0-18"/></svg>
+          公共空间
+          <span class="badge badge-neutral" style="margin-left:auto">共享</span>
+        </div>
+        <div class="sp-meta"><span class="num">864 项</span><span>团队共享资源</span></div>
+      </div>
+      <div class="card sp-card card-hover">
+        <div class="sp-name">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg>
+          我的空间
+        </div>
+        <div class="sp-meta"><span class="num">420 项 · 38.2 GB</span><span class="num">不限额</span></div>
+        <div class="quota"><i style="width:34%"></i></div>
+      </div>
+      <div class="card" style="padding:6px">
+        <div class="side-entry">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
+          最近访问
+        </div>
+        <div class="side-entry">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg>
+          我的分享
+          <span class="cnt num">6</span>
+        </div>
+        <div class="side-entry active">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M9 10h6M10 3h4v3h-4z"/></svg>
+          回收站
+          <span class="cnt num">2</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 主区 -->
+    <div class="fh-main">
+      <!-- 工具条(未选中时) -->
+      <div class="fh-card fh-toolbar" id="mainToolbar">
+        <div class="seg" style="width:196px">
+          <button class="seg-item active">公共空间</button>
+          <button class="seg-item" onclick="toast('切换到我的空间,回到该空间根目录','info')">我的空间</button>
+        </div>
+        <div class="input-wrap fh-search grow">
+          <span class="input-prefix"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.4-3.4"/></svg></span>
+          <input class="input" style="height:38px" placeholder="搜索当前目录及子目录…">
+        </div>
+        <div class="row gap-1">
+          <button class="btn btn-grad" onclick="toggleUpload(event)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 16V4m0 0 -5 5m5-5 5 5"/><path d="M4 17v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1"/></svg>
+            上传
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+          <button class="btn btn-secondary" onclick="toast('新建文件夹:当前目录下,名称校验+409 冲突提示','info')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M12 10v6M9 13h6"/></svg>
+            新建
+          </button>
+        </div>
+        <select class="input" style="height:38px;width:104px" onchange="toast('排序:'+this.value,'info')">
+          <option>按名称</option><option>按大小</option><option>按修改时间</option><option>按类型</option>
+        </select>
+        <div class="vseg">
+          <button class="on" title="列表视图" onclick="segView(this)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+          <button title="网格视图" onclick="segView(this)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg></button>
+        </div>
+        <button class="icon-btn" title="刷新" onclick="toast('刷新当前目录','info')"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.6-6.3M21 3v6h-6"/></svg></button>
+      </div>
+
+      <!-- 批量选中条(选中时替换工具条;当前预置 2 项选中便于评审) -->
+      <div class="fh-card batch-bar" id="batchBar" style="display:none">
+        <button class="icon-btn" title="取消选择" onclick="clearSel()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+        <span class="sel-num num" id="selNum">已选 2 项</span>
+        <span class="cap faint">共 3.6 GB</span>
+        <span class="spacer"></span>
+        <button class="btn btn-secondary btn-sm" onclick="toast('多文件 → 创建打包任务,进度见任务面板','info')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v12m0 0-4-4m4 4 4-4"/><path d="M4 17v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1"/></svg>打包下载</button>
+        <button class="btn btn-secondary btn-sm" onclick="toast('打开移动目录树选择器 → 见 03 弹窗页','info')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14m0 0-5-5m5 5-5 5"/></svg>移动</button>
+        <button class="btn btn-secondary btn-sm" onclick="toast('打开复制目录树选择器(可跨空间) → 见 03 弹窗页','info')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>复制</button>
+        <button class="btn btn-danger-soft btn-sm" onclick="toast('删除二次确认 → 见 03 弹窗页','warning')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>删除</button>
+      </div>
+
+      <!-- 列表卡片 -->
+      <div class="fh-card">
+        <div class="crumbs">
+          <a href="javascript:void(0)" class="c-home" onclick="toast('回到公共空间根目录','info')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>公共空间</a>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg>
+          <a href="javascript:void(0)">发布件</a>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg>
+          <span class="here">2026Q3</span>
+          <span class="spacer grow"></span>
+          <span class="cap faint num">共 9 项 · 第 1/1 页</span>
+        </div>
+        <div class="ftbl-wrap">
+          <table class="ftbl" id="fileTable">
+            <thead><tr>
+              <th class="col-cb"><input type="checkbox" class="fcheck" id="cbAll" onchange="toggleAll(this)" aria-label="全选"></th>
+              <th class="sortable sorted" style="min-width:220px" onclick="toast('名称排序:目录恒在前,组内 Unicode 码点序','info')">名称<span class="sort-ico">▲</span></th>
+              <th style="width:86px">类型</th>
+              <th class="sortable" style="width:96px">大小</th>
+              <th class="sortable" style="width:150px">修改时间</th>
+              <th style="width:92px">创建者</th>
+              <th style="width:60px"></th>
+            </tr></thead>
+            <tbody>
+              <tr class="selected" oncontextmenu="ctxMenu(event)" data-name="2026Q3-评审材料">
+                <td><input type="checkbox" class="fcheck" checked onchange="rowSel(this)"></td>
+                <td><div class="fcell"><span class="ficon f-folder"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6a2 2 0 0 1 2-2h4.6a2 2 0 0 1 1.4.6L13.4 6H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/></svg></span>
+                  <span class="fname dir">2026Q3-评审材料</span></div></td>
+                <td><span class="ftype">文件夹</span></td>
+                <td><span class="fnum items-num">8 项</span></td>
+                <td><span class="fnum">09-15 10:20</span></td>
+                <td><span class="cap">张三</span></td>
+                <td><span class="row-ops"><button class="dots-btn" onclick="toast('打开行操作菜单','info')"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg></button></span></td>
+              </tr>
+              <tr oncontextmenu="ctxMenu(event)" data-name="测试报告归档" ondragover="rowDragOver(event,this)" ondragleave="this.classList.remove('drop-target')" ondrop="rowDrop(event,this)">
+                <td><input type="checkbox" class="fcheck" onchange="rowSel(this)"></td>
+                <td><div class="fcell"><span class="ficon f-folder"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6a2 2 0 0 1 2-2h4.6a2 2 0 0 1 1.4.6L13.4 6H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/></svg></span>
+                  <span class="fname dir">测试报告归档</span></div></td>
+                <td><span class="ftype">文件夹</span></td>
+                <td><span class="fnum items-num">12 项</span></td>
+                <td><span class="fnum">09-14 08:00</span></td>
+                <td><span class="cap">李四</span></td>
+                <td><span class="row-ops"><button class="dots-btn" onclick="toast('打开行操作菜单','info')"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg></button></span></td>
+              </tr>
+              <tr class="selected" oncontextmenu="ctxMenu(event)" data-name="产品发布方案 v2.docx">
+                <td><input type="checkbox" class="fcheck" checked onchange="rowSel(this)"></td>
+                <td><div class="fcell"><span class="ficon f-doc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg></span><span class="fname">产品发布方案 v2.docx</span></div></td>
+                <td><span class="ftype">文档</span></td>
+                <td><span class="fnum">386 KB</span></td>
+                <td><span class="fnum">09-13 16:42</span></td>
+                <td><span class="cap">知墨</span></td>
+                <td><span class="row-ops"><button class="dots-btn" onclick="toast('打开行操作菜单','info')"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg></button></span></td>
+              </tr>
+              <tr oncontextmenu="ctxMenu(event)" data-name="发布说明 v2.1.pdf">
+                <td><input type="checkbox" class="fcheck" onchange="rowSel(this)"></td>
+                <td><div class="fcell"><span class="ficon f-doc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg></span><span class="fname">发布说明 v2.1.pdf</span></div></td>
+                <td><span class="ftype">文档</span></td>
+                <td><span class="fnum">2.4 MB</span></td>
+                <td><span class="fnum">09-12 09:05</span></td>
+                <td><span class="cap">张三</span></td>
+                <td><span class="row-ops"><button class="dots-btn" onclick="toast('打开行操作菜单','info')"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg></button></span></td>
+              </tr>
+              <tr oncontextmenu="ctxMenu(event)" data-name="2026Q3 复盘材料.zip">
+                <td><input type="checkbox" class="fcheck" onchange="rowSel(this)"></td>
+                <td><div class="fcell"><span class="ficon f-zip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5"/><path d="M12 11v2m0 2v1" stroke-dasharray="2 2.6"/></svg><span class="ext">ZIP</span></span><span class="fname">2026Q3 复盘材料.zip</span></div></td>
+                <td><span class="ftype">压缩包</span></td>
+                <td><span class="fnum">1.2 GB</span></td>
+                <td><span class="fnum">09-11 20:31</span></td>
+                <td><span class="cap">李四</span></td>
+                <td><span class="row-ops"><button class="dots-btn" onclick="toast('打开行操作菜单','info')"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg></button></span></td>
+              </tr>
+              <tr oncontextmenu="ctxMenu(event)" data-name="发布会现场合影.jpg">
+                <td><input type="checkbox" class="fcheck" onchange="rowSel(this)"></td>
+                <td><div class="fcell"><span class="ficon f-img"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.6" fill="currentColor" stroke="none"/><path d="m5 18 5.2-5.2a1.4 1.4 0 0 1 2 0L19 19"/></svg></span><span class="fname">发布会现场合影.jpg</span></div></td>
+                <td><span class="ftype">图片</span></td>
+                <td><span class="fnum">8.6 MB</span></td>
+                <td><span class="fnum">09-10 14:22</span></td>
+                <td><span class="cap">王五</span></td>
+                <td><span class="row-ops"><button class="dots-btn" onclick="toast('打开行操作菜单','info')"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg></button></span></td>
+              </tr>
+              <tr oncontextmenu="ctxMenu(event)" data-name="宣传片-最终版.mp4">
+                <td><input type="checkbox" class="fcheck" onchange="rowSel(this)"></td>
+                <td><div class="fcell"><span class="ficon f-vid"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9.5 5 2.5-5 2.5Z" fill="currentColor" stroke="none"/></svg></span><span class="fname">宣传片-最终版.mp4</span></div></td>
+                <td><span class="ftype">视频</span></td>
+                <td><span class="fnum">328 MB</span></td>
+                <td><span class="fnum">09-09 11:47</span></td>
+                <td><span class="cap">知墨</span></td>
+                <td><span class="row-ops"><button class="dots-btn" onclick="toast('打开行操作菜单','info')"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg></button></span></td>
+              </tr>
+              <tr oncontextmenu="ctxMenu(event)" data-name="BGM-定稿.flac">
+                <td><input type="checkbox" class="fcheck" onchange="rowSel(this)"></td>
+                <td><div class="fcell"><span class="ficon f-aud"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M9 18V6l8-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="14.5" cy="16" r="2.5"/></svg></span><span class="fname">BGM-定稿.flac</span></div></td>
+                <td><span class="ftype">音频</span></td>
+                <td><span class="fnum">42 MB</span></td>
+                <td><span class="fnum">09-08 18:03</span></td>
+                <td><span class="cap">赵六</span></td>
+                <td><span class="row-ops"><button class="dots-btn" onclick="toast('打开行操作菜单','info')"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg></button></span></td>
+              </tr>
+              <tr oncontextmenu="ctxMenu(event)" data-name=".milestone.md">
+                <td><input type="checkbox" class="fcheck" onchange="rowSel(this)"></td>
+                <td><div class="fcell"><span class="ficon f-oth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m8 9-3 3 3 3M16 9l3 3-3 3"/></svg></span><span class="fname">.milestone.md</span></div></td>
+                <td><span class="ftype">其他</span></td>
+                <td><span class="fnum">12 KB</span></td>
+                <td><span class="fnum">09-05 10:11</span></td>
+                <td><span class="cap">系统</span></td>
+                <td><span class="row-ops"><button class="dots-btn" onclick="toast('打开行操作菜单','info')"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg></button></span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="row between" style="padding:10px var(--sp-4)">
+          <span class="cap faint">滚动到底自动加载下一页(每页 200 条)· 目录恒排在文件之前</span>
+          <span class="cap faint num">已加载 9 / 9</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 状态一览(分镜) ============ -->
+  <!-- A 空目录 -->
+  <div class="frame">
+    <h3><span class="idx">A</span>空目录 · 首次引导</h3>
+    <p class="fdesc">新个人空间或空目录的默认态:居中插画式空态 + 主行动"上传文件",并列次行动"新建文件夹"。</p>
+    <div class="fh-card demo-shell">
+      <div class="empty" style="padding:52px var(--sp-6)">
+        <div class="art"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M12 11v6M9 14h6"/></svg></div>
+        <b style="font-size:var(--fs-h2);color:var(--color-text)">此目录为空</b>
+        <span class="cap">把文件拖到这里,或从下方开始</span>
+        <div class="row gap-2" style="margin-top:6px">
+          <button class="btn btn-grad">上传文件</button>
+          <button class="btn btn-secondary">新建文件夹</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- B 网格视图 -->
+  <div class="frame">
+    <h3><span class="idx">B</span>网格视图(按类型图标,本期不做缩略图)</h3>
+    <p class="fdesc">工具条视图切换后:卡片式网格,文件夹首行;选中态用主色描边;图标沿用类型色板。</p>
+    <div class="fh-card demo-shell">
+      <div class="fgrid">
+        <div class="gcell selected"><span class="ficon f-folder" style="width:52px;height:52px;border-radius:15px"><svg viewBox="0 0 24 24" fill="currentColor" style="width:28px;height:28px"><path d="M4 6a2 2 0 0 1 2-2h4.6a2 2 0 0 1 1.4.6L13.4 6H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/></svg></span><span class="gname">2026Q3-评审材料</span><span class="gsub">8 项</span></div>
+        <div class="gcell"><span class="ficon f-folder" style="width:52px;height:52px;border-radius:15px"><svg viewBox="0 0 24 24" fill="currentColor" style="width:28px;height:28px"><path d="M4 6a2 2 0 0 1 2-2h4.6a2 2 0 0 1 1.4.6L13.4 6H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/></svg></span><span class="gname">测试报告归档</span><span class="gsub">12 项</span></div>
+        <div class="gcell"><span class="ficon f-doc" style="width:52px;height:52px;border-radius:15px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" style="width:28px;height:28px"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg></span><span class="gname">产品发布方案 v2.docx</span><span class="gsub">386 KB</span></div>
+        <div class="gcell"><span class="ficon f-zip" style="width:52px;height:52px;border-radius:15px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" style="width:28px;height:28px"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5M12 11v2m0 2v1" stroke-dasharray="2 2.6"/></svg></span><span class="gname">2026Q3 复盘材料.zip</span><span class="gsub">1.2 GB</span></div>
+        <div class="gcell"><span class="ficon f-img" style="width:52px;height:52px;border-radius:15px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" style="width:28px;height:28px"><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.6" fill="currentColor" stroke="none"/><path d="m5 18 5.2-5.2a1.4 1.4 0 0 1 2 0L19 19"/></svg></span><span class="gname">发布会现场合影.jpg</span><span class="gsub">8.6 MB</span></div>
+        <div class="gcell"><span class="ficon f-vid" style="width:52px;height:52px;border-radius:15px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" style="width:28px;height:28px"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9.5 5 2.5-5 2.5Z" fill="currentColor" stroke="none"/></svg></span><span class="gname">宣传片-最终版.mp4</span><span class="gsub">328 MB</span></div>
+        <div class="gcell"><span class="ficon f-aud" style="width:52px;height:52px;border-radius:15px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" style="width:28px;height:28px"><path d="M9 18V6l8-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="14.5" cy="16" r="2.5"/></svg></span><span class="gname">BGM-定稿.flac</span><span class="gsub">42 MB</span></div>
+        <div class="gcell"><span class="ficon f-oth" style="width:52px;height:52px;border-radius:15px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" style="width:28px;height:28px"><path d="m8 9-3 3 3 3M16 9l3 3-3 3"/></svg></span><span class="gname">.milestone.md</span><span class="gsub">12 KB</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- C 搜索结果 -->
+  <div class="frame">
+    <h3><span class="idx">C</span>搜索结果(当前目录及子目录,命中高亮)</h3>
+    <p class="fdesc">关键词"发布":结果携带完整相对路径(逐级可点),命中片段琥珀色高亮;超 500 条时顶部出现"结果过多,请缩小范围"警示条。</p>
+    <div class="fh-card demo-shell">
+      <div class="row gap-2" style="padding:12px var(--sp-4);border-bottom:1px solid var(--color-border-soft);flex-wrap:wrap">
+        <span class="badge badge-warning">结果过多,已截断至 500 条,请缩小范围</span>
+        <span class="spacer grow"></span>
+        <span class="cap faint">搜索范围:发布件 及全部子目录</span>
+        <select class="input" style="height:30px;width:92px;font-size:var(--fs-cap)"><option>按相关层级</option><option>按名称</option><option>按大小</option><option>按时间</option></select>
+      </div>
+      <div class="ftbl-wrap">
+        <table class="ftbl">
+          <thead><tr><th style="min-width:230px">名称</th><th style="width:80px">类型</th><th style="width:90px">大小</th><th style="min-width:200px">位置</th><th style="width:130px">修改时间</th></tr></thead>
+          <tbody>
+            <tr><td><div class="fcell"><span class="ficon f-doc" style="width:30px;height:30px;border-radius:9px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:15px;height:15px"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg></span><span class="fname"><mark>发布</mark>说明 v2.1.pdf</span></div></td>
+              <td><span class="ftype">文档</span></td><td><span class="fnum">2.4 MB</span></td>
+              <td><span class="cap" style="color:var(--color-text-2)">发布件 / 2026Q3</span></td><td><span class="fnum">09-12 09:05</span></td></tr>
+            <tr><td><div class="fcell"><span class="ficon f-doc" style="width:30px;height:30px;border-radius:9px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:15px;height:15px"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg></span><span class="fname">产品<mark>发布</mark>方案 v2.docx</span></div></td>
+              <td><span class="ftype">文档</span></td><td><span class="fnum">386 KB</span></td>
+              <td><span class="cap" style="color:var(--color-text-2)">发布件 / 2026Q3</span></td><td><span class="fnum">09-13 16:42</span></td></tr>
+            <tr><td><div class="fcell"><span class="ficon f-folder" style="width:30px;height:30px;border-radius:9px"><svg viewBox="0 0 24 24" fill="currentColor" style="width:15px;height:15px"><path d="M4 6a2 2 0 0 1 2-2h4.6a2 2 0 0 1 1.4.6L13.4 6H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/></svg></span><span class="fname"><mark>发布</mark>件-素材池</span></div></td>
+              <td><span class="ftype">文件夹</span></td><td><span class="fnum items-num">23 项</span></td>
+              <td><span class="cap" style="color:var(--color-text-2)">(空间根)</span></td><td><span class="fnum">09-15 10:20</span></td></tr>
+            <tr><td><div class="fcell"><span class="ficon f-vid" style="width:30px;height:30px;border-radius:9px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:15px;height:15px"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9.5 5 2.5-5 2.5Z" fill="currentColor" stroke="none"/></svg></span><span class="fname"><mark>发布</mark>会开场视频.mp4</span></div></td>
+              <td><span class="ftype">视频</span></td><td><span class="fnum">96 MB</span></td>
+              <td><span class="cap" style="color:var(--color-text-2)">发布件 / 素材池 / 视频</span></td><td><span class="fnum">09-06 15:38</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- D 拖拽 -->
+  <div class="frame">
+    <h3><span class="idx">D</span>拖拽反馈(上传悬停 / 拖到文件夹行移动)</h3>
+    <p class="fdesc">系统文件拖入列表 → 主色虚线遮罩 + 悬浮图标(仅 transform/opacity 驱动);列表内拖动条目悬停到文件夹行 → 行高亮描边,松手即移动。</p>
+    <div class="row gap-4" style="align-items:stretch;flex-wrap:wrap">
+      <div class="fh-card demo-shell dropzone-hl" style="flex:1;min-width:320px">
+        <div class="drop-hint">
+          <span class="big-ico"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 16V4m0 0-5 5m5-5 5 5"/><path d="M4 17v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1"/></svg></span>
+          <b>松手上传到 2026Q3</b>
+          <span class="cap" style="color:var(--color-text-2)">支持多文件与整个文件夹(保留层级)</span>
+        </div>
+        <div style="height:230px;background:repeating-linear-gradient(45deg,transparent 0 14px,rgba(2,132,199,.04) 14px 28px)"></div>
+      </div>
+      <div class="fh-card demo-shell" style="flex:1;min-width:320px">
+        <div class="ftbl-wrap">
+          <table class="ftbl">
+            <thead><tr><th style="min-width:170px">名称</th><th style="width:80px">类型</th><th style="width:90px">大小</th></tr></thead>
+            <tbody>
+              <tr class="drop-target"><td><div class="fcell"><span class="ficon f-folder" style="width:30px;height:30px;border-radius:9px"><svg viewBox="0 0 24 24" fill="currentColor" style="width:15px;height:15px"><path d="M4 6a2 2 0 0 1 2-2h4.6a2 2 0 0 1 1.4.6L13.4 6H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/></svg></span><span class="fname dir">测试报告归档</span></div></td><td><span class="ftype">文件夹</span></td><td><span class="fnum items-num">12 项</span></td></tr>
+              <tr style="opacity:.55"><td><div class="fcell"><span class="ficon f-doc" style="width:30px;height:30px;border-radius:9px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:15px;height:15px"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg></span><span class="fname">发布会纪要.docx</span></div></td><td><span class="ftype">文档</span></td><td><span class="fnum">52 KB</span></td></tr>
+              <tr style="opacity:.55"><td><div class="fcell"><span class="ficon f-img" style="width:30px;height:30px;border-radius:9px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:15px;height:15px"><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.6" fill="currentColor" stroke="none"/><path d="m5 18 5.2-5.2a1.4 1.4 0 0 1 2 0L19 19"/></svg></span><span class="fname">签到墙照片.jpg</span></div></td><td><span class="ftype">图片</span></td><td><span class="fnum">4.1 MB</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="grid-note cap faint">正在拖动 2 项 → 悬停"测试报告归档"行:主色描边 + 淡化其余行</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- E 我的分享 -->
+  <div class="frame">
+    <h3><span class="idx">E</span>我的分享(侧栏入口对应视图)</h3>
+    <p class="fdesc">提取码列只显示"已设置/未设置"(明文仅创建后返回一次,支持重置);操作:复制链接、二维码、修改、取消;状态徽章:有效/已取消/已失效。</p>
+    <div class="fh-card demo-shell">
+      <div class="ftbl-wrap">
+        <table class="ftbl share-tbl">
+          <thead><tr><th style="min-width:170px">名称</th><th style="width:74px">类型</th><th style="width:190px">链接</th><th style="width:88px">提取码</th><th style="width:110px">有效期</th><th style="width:70px">浏览</th><th style="width:70px">下载</th><th style="width:84px">状态</th><th style="width:170px">操作</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><span class="fname" style="font-weight:600">产品发布方案 v2.docx</span></td><td><span class="ftype">文档</span></td>
+              <td><span class="share-url-cell">zimo.local/s/9f2c…a41d</span></td>
+              <td><span class="badge badge-neutral">已设置</span></td>
+              <td><span class="fnum">7 天后到期</span></td><td><span class="fnum">28</span></td><td><span class="fnum">5</span></td>
+              <td><span class="badge badge-success"><span class="dot"></span>有效</span></td>
+              <td><span class="row gap-1"><button class="btn btn-ghost btn-sm">复制</button><button class="btn btn-ghost btn-sm">二维码</button><button class="btn btn-ghost btn-sm">修改</button><button class="btn btn-danger-soft btn-sm">取消</button></span></td>
+            </tr>
+            <tr>
+              <td><span class="fname" style="font-weight:600">2026Q3-评审材料</span></td><td><span class="ftype">文件夹</span></td>
+              <td><span class="share-url-cell">zimo.local/s/k73m…c08e</span></td>
+              <td><span class="badge badge-neutral">未设置</span></td>
+              <td><span class="fnum">永久</span></td><td><span class="fnum">142</span></td><td><span class="fnum">37</span></td>
+              <td><span class="badge badge-success"><span class="dot"></span>有效</span></td>
+              <td><span class="row gap-1"><button class="btn btn-ghost btn-sm">复制</button><button class="btn btn-ghost btn-sm">二维码</button><button class="btn btn-ghost btn-sm">修改</button><button class="btn btn-danger-soft btn-sm">取消</button></span></td>
+            </tr>
+            <tr style="opacity:.62">
+              <td><span class="fname" style="font-weight:600">宣传片-最终版.mp4</span></td><td><span class="ftype">视频</span></td>
+              <td><span class="share-url-cell">zimo.local/s/q1w8…e72b</span></td>
+              <td><span class="badge badge-neutral">已设置</span></td>
+              <td><span class="fnum">已过期</span></td><td><span class="fnum">301</span></td><td><span class="fnum">50/50</span></td>
+              <td><span class="badge badge-danger"><span class="dot"></span>已失效</span></td>
+              <td><span class="row gap-1"><button class="btn btn-danger-soft btn-sm">取消分享</button></span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- 设计注记 -->
+  <div class="frame">
+    <div class="annotate">
+      <b>设计注记(01 主列表页)</b><br>
+      ① 列表超 300 行启用<b>虚拟滚动</b>(定高行 56px + 窗口裁剪),服务端分页 200/页、无限滚动追加;② 选中交互:单击选中、Ctrl 加选、Shift 连选、Ctrl+A 全选、Esc 取消,选中后工具条整体切换为批量条;③ 双击目录进入、双击文件直接下载(换下载令牌 → location.href,不走任务面板);④ 右键/行尾 ⋯ 同一上下文菜单;⑤ 拖拽高亮仅 transform/opacity,不动布局属性;⑥ 轮询契约:仅任务面板打 GET /filehub/tasks/active(1.5s),无进行中任务即停,页面切走(onDeactivated)停、回前台立即刷一次;⑦ "系统"创建者 = 一致性同步补建条目(owner_uid=0)。
+    </div>
+  </div>
+</main>
+
+<!-- ===================== 任务面板(右下角悬浮) ===================== -->
+<button class="task-fab" onclick="toggleTask()" id="taskFab">
+  <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v12m0 0-4-4m4 4 4-4"/><path d="M4 17v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1"/></svg>
+  任务 <span class="badge num" id="taskBadge">2</span>
+</button>
+<div class="task-panel" id="taskPanel" role="dialog" aria-label="传输任务面板">
+  <div class="task-head">
+    <b>传输任务</b>
+    <span class="badge badge-info num">进行中 2</span>
+    <div class="task-tabs">
+      <button class="on">进行中</button>
+      <button onclick="toast('历史页签:已完成/失败/取消/中断 + 重试/清理','info')">历史</button>
+    </div>
+    <button class="icon-btn" onclick="toggleTask()" aria-label="收起" style="width:30px;height:30px">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+  </div>
+  <div class="task-list">
+    <div class="titem">
+      <div class="t-top"><span class="st-chip run">打包中</span><span class="t-name">2026Q3-评审材料 → 复盘材料.zip</span>
+        <span class="t-ops"><button class="btn btn-ghost btn-sm">取消</button></span></div>
+      <div class="tprog"><i style="width:45%"></i></div>
+      <div class="t-sub"><span class="num">128 / 286 项 · 1.6 / 3.5 GB · 全局打包 2/2</span></div>
+    </div>
+    <div class="titem">
+      <div class="t-top"><span class="st-chip run">上传中</span><span class="t-name">宣传片-4K-母版.mp4</span>
+        <span class="t-ops"><button class="btn btn-ghost btn-sm">取消</button></span></div>
+      <div class="tprog"><i style="width:72%"></i></div>
+      <div class="t-sub"><span class="num">分片 26 / 36 · 208 MB / 288 MB · 62 MB/s</span></div>
+    </div>
+    <div class="titem">
+      <div class="t-top"><span class="st-chip wait">排队中</span><span class="t-name">发布说明-附件包.zip</span>
+        <span class="t-ops"><button class="btn btn-ghost btn-sm">取消</button></span></div>
+      <div class="t-sub">单用户并发上限 3,当前 2 个进行中 · 等待第 1 位</div>
+    </div>
+  </div>
+  <div class="t-foot">
+    <span class="hint">轮询 /filehub/tasks/active · 1.5s · 无任务自动停止</span>
+    <button class="btn btn-ghost btn-sm" onclick="toast('清除已完成历史','info')">清除历史</button>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<!-- 右键菜单 -->
+<div class="menu" id="ctx" style="position:fixed;z-index:65">
+  <button class="menu-item" onclick="hideCtx();toast('单文件:换令牌直链下载','info')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4v12m0 0 4-4m-4 4-4-4"/><path d="M4 17v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1"/></svg>下载</button>
+  <button class="menu-item" onclick="hideCtx();toast('多文件/目录 → 打包任务','info')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5"/></svg>打包下载</button>
+  <div class="menu-sep"></div>
+  <button class="menu-item" onclick="hideCtx();toast('重命名:单条;改扩展名时二次确认','info')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>重命名</button>
+  <button class="menu-item" onclick="hideCtx();toast('移动 → 目录树选择器(03)','info')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14m0 0-5-5m5 5-5 5"/></svg>移动</button>
+  <button class="menu-item" onclick="hideCtx();toast('复制 → 目录树选择器(03)','info')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>复制</button>
+  <button class="menu-item" onclick="hideCtx();toast('分享设置弹窗(03)','info')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg>分享</button>
+  <div class="menu-sep"></div>
+  <button class="menu-item danger" onclick="hideCtx();toast('删除确认弹窗(03):目录将连同 N 个子项一并删除','warning')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>删除</button>
+  <div class="menu-sep"></div>
+  <button class="menu-item" onclick="hideCtx();toast('详情:类型/大小/哈希/创建者/时间','info')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>详情</button>
+</div>
+
+<script>
+function toggleTheme(){const d=document.documentElement;d.dataset.theme=d.dataset.theme==='dark'?'light':'dark';localStorage.setItem('mock-theme',d.dataset.theme)}
+const __tp=new URLSearchParams(location.search).get('theme');
+if(__tp)document.documentElement.dataset.theme=__tp;else if(localStorage.getItem('mock-theme'))document.documentElement.dataset.theme=localStorage.getItem('mock-theme');
+function toast(msg,type='success',title='提示'){
+  const t=document.createElement('div');t.className='toast '+type;
+  t.innerHTML=`<span>${type==='success'?'✓':type==='error'?'✕':type==='warning'?'⚠':'ℹ'}</span><div><div class="t-title">${title}</div><div class="t-msg">${msg}</div></div>`;
+  document.getElementById('toasts').appendChild(t);setTimeout(()=>t.remove(),3200);
+}
+function toggleMenu(e){e.stopPropagation();document.getElementById('userMenu').classList.toggle('open')}
+document.addEventListener('click',()=>{document.getElementById('userMenu').classList.remove('open');hideCtx()});
+/* 选中 → 批量条切换 */
+function refreshBatch(){
+  const n=document.querySelectorAll('#fileTable .fcheck:checked').length;
+  document.getElementById('batchBar').style.display=n?'flex':'none';
+  document.getElementById('mainToolbar').style.display=n?'none':'flex';
+  document.getElementById('selNum').textContent=`已选 ${n} 项`;
+  document.getElementById('cbAll').checked=n===document.querySelectorAll('#fileTable tbody tr').length;
+}
+function rowSel(cb){cb.closest('tr').classList.toggle('selected',cb.checked);refreshBatch()}
+function toggleAll(cb){document.querySelectorAll('#fileTable tbody .fcheck').forEach(c=>{c.checked=cb.checked;c.closest('tr').classList.toggle('selected',cb.checked)});refreshBatch()}
+function clearSel(){toggleAll({checked:false})}
+refreshBatch();
+/* 视图切换 seg(分镜展示,仅切态) */
+function segView(btn){btn.parentElement.querySelectorAll('button').forEach(b=>b.classList.remove('on'));btn.classList.add('on');
+  toast(btn.title==='网格视图'?'网格视图见分镜 B':'列表视图','info')}
+/* 上传下拉 */
+function toggleUpload(e){e.stopPropagation();
+  let m=document.getElementById('upMenu');
+  if(!m){m=document.createElement('div');m.id='upMenu';m.className='menu open';
+    m.style.cssText='position:fixed;z-index:65;min-width:180px';
+    m.innerHTML=`<button class="menu-item" onclick="toast('选择文件:≤8MB 单请求,>8MB 分片(8MB/片,断点续传+秒传)','info')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5"/></svg>上传文件</button>
+    <button class="menu-item" onclick="toast('文件夹上传:dirs/ensure_batch 建目录树 + 派生上传任务,面板按批次归组','info')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>上传文件夹</button>`;
+    document.body.appendChild(m);}
+  const r=e.currentTarget.getBoundingClientRect();
+  m.style.left=r.left+'px';m.style.top=(r.bottom+6)+'px';m.classList.add('open');
+  setTimeout(()=>document.addEventListener('click',()=>m.classList.remove('open'),{once:true}),0);
+}
+/* 右键菜单 */
+function ctxMenu(e){e.preventDefault();e.stopPropagation();
+  const m=document.getElementById('ctx');m.classList.add('open');
+  const w=210,h=330,x=Math.min(e.clientX,innerWidth-w-8),y=Math.min(e.clientY,innerHeight-h-8);
+  m.style.left=x+'px';m.style.top=y+'px';}
+function hideCtx(){document.getElementById('ctx').classList.remove('open')}
+/* 行拖放演示 */
+function rowDragOver(e,tr){e.preventDefault();tr.classList.add('drop-target')}
+function rowDrop(e,tr){e.preventDefault();tr.classList.remove('drop-target');toast(`已移动到「${tr.dataset.name||'该文件夹'}」(冲突时按整批裁决)`,'success')}
+/* 任务面板 */
+function toggleTask(){document.getElementById('taskPanel').classList.toggle('open')}
+if(location.hash==='#toolbar')clearSel();
+</script>
+</body>
+</html>

@@ -69,7 +69,7 @@ drogon::Task<std::string> ZmSessionModule::Issue(int64_t uid, const std::string&
     int64_t sliding = now + SlidingExpireSec();
     int64_t absolute = now + AbsoluteExpireSec();
 
-    bool ok = co_await m_db->WithTx([&](ZmDbModule& db) -> bool {
+    bool ok = co_await m_db->WithTx([&](ZmSqliteDb& db) -> bool {
         // 插入新会话
         if (!db.ExecSync(
                 "INSERT INTO sessions(token_hash, uid, create_ip, ua, create_time, "

@@ -129,7 +129,7 @@ drogon::Task<ZMJSON> ZmUserModule::CreateUser(const std::string& account,
 {
     ZMJSON result = ZMJSON::object();
     int64_t now = ZmDbModule::Now();
-    bool ok = co_await m_db->WithTx([&](ZmDbModule& db) -> bool {
+    bool ok = co_await m_db->WithTx([&](ZmSqliteDb& db) -> bool {
         // uid 分配:10000001 起递增;单写队列串行保证 MAX+1 无并发竞态
         auto row = db.QueryRowSync("SELECT MAX(uid) AS m FROM users;", {});
         int64_t base = zm_json_get_int(row, "m", 10000000);
@@ -316,7 +316,7 @@ drogon::Task<bool> ZmUserModule::UpdateUserRow(int64_t uid,
         co_return false;
 
     // 主表与资料表分写
-    bool ok = co_await m_db->WithTx([&](ZmDbModule& db) -> bool {
+    bool ok = co_await m_db->WithTx([&](ZmSqliteDb& db) -> bool {
         // 可空唯一列(email/phone):空串落 NULL,否则多个"无邮箱"用户互相撞 UNIQUE
         static const std::unordered_set<std::string> kNullableUnique = {"email", "phone"};
         for (const std::string& key : cols)
@@ -416,4 +416,34 @@ drogon::Task<int64_t> ZmUserModule::CountActiveUsers()
     auto row = co_await m_db->QueryRow(
         "SELECT COUNT(*) AS c FROM users WHERE deleted=0;", {});
     co_return zm_json_get_int(row, "c", 0);
+}
+
+drogon::Task<ZMJSON> ZmUserModule::GetNicknames(const std::vector<int64_t>& uids)
+{
+    ZMJSON out = ZMJSON::object();
+    std::vector<int64_t> uniq;
+    for (int64_t uid : uids)
+    {
+        if (uid <= 0)
+            continue;
+        if (std::find(uniq.begin(), uniq.end(), uid) == uniq.end())
+            uniq.push_back(uid);
+    }
+    if (uniq.empty())
+        co_return out;
+    // 一次查齐(列表页最多几百个 uid,单条 IN 查询即可)
+    std::string in;
+    std::vector<std::string> params;
+    for (size_t i = 0; i < uniq.size(); ++i)
+    {
+        if (i > 0)
+            in += ",";
+        in += "?";
+        params.push_back(std::to_string(uniq[i]));
+    }
+    auto rows = co_await m_db->QueryRows(
+        "SELECT uid, nickname FROM users WHERE uid IN (" + in + ")", params);
+    for (const auto& r : rows)
+        out[std::to_string(zm_json_get_int(r, "uid", 0))] = zm_json_get_str(r, "nickname");
+    co_return out;
 }

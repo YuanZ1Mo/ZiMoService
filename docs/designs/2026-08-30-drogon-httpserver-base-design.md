@@ -1026,3 +1026,21 @@ RL7 并发压测下统计:命中数与 isAllowed 数一致(SafeRateLimiter 无�
 各步编译验收:ZiMoService 全量构建(`/p:OutDir=A:/ZiMo/temp_build_out/`);
 文档与代码分仓库提交(ZiMoPublic 代码 / ZiMoService docs)。
 
+***
+
+## 附:本地补丁记录
+
+### `drogon/include/drogon/HttpResponse.h` —— `ResponseStream::sendRaw / closeRaw`(2026-09-17)
+
+上游 `ResponseStream::send()` 把数据包成 chunked 分帧,只能用于分块传输;而"自带 Content-Length 的流式下载"需要零分帧推送。故在该类补两个**新增**方法(不改类布局、不需重编 `drogon.lib`):
+
+- `sendRaw(const char*, size_t)` / `sendRaw(const std::string&)`:直接写原始字节;
+- `closeRaw()`:关闭流但不写 `0
+
+` 终止帧。
+
+使用方:文件中心的下载直链(`ZmFileTokenModule` + `ZmFileHubModule`)经 `ZmHttpSendFileOptions::raw = true` 启用;`ZmHttpSendFileOptions::onFinish` 与之配套,用于传输结束时归还并发名额。升级 drogon 时把这两个方法重新贴回新头文件即可。
+
+### 发送缓冲水位(2026-09-18,平台层,无第三方改动)
+
+`ZmHttpSendFileOptions::watermarkBytes`(默认 8MB;0 = 关闭)已实现:trantor 不暴露输出缓冲长度,故以"连接 `bytesSent()` 相对本响应起点的增量"近似排水量,已提交字节领先该增量超过水位时延后下一块(1ms 起、翻倍至 250ms 封顶,排水恢复即归零)。实测 2GB 文件 + 3MB/s 慢客户端:无水位时服务端内存涨到 3.5GB,有水位时稳定在 34.8MB。

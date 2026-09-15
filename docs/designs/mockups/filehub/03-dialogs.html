@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>文件中心 · 弹窗合集 — ZiMo 文件空间设计稿</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="filehub.css">
+<style>
+  .wrap{max-width:1240px;margin:0 auto;padding:var(--sp-6) var(--sp-6) var(--sp-12)}
+  .dlg-stage{display:flex;justify-content:center;padding:var(--sp-2) 0}
+  .modal.static{position:static;transform:none;width:100%;max-width:560px;box-shadow:var(--shadow-lg)}
+  .modal-mask.static{position:static;background:none;padding:0;opacity:1;pointer-events:auto}
+  .row2{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:var(--sp-6);align-items:start}
+</style>
+</head>
+<body>
+<div class="mock-bar">
+  <span class="pg">文件中心 · 03 弹窗合集</span><span class="path">移动/复制 · 分享 · 冲突 · 删除确认</span>
+  <span class="spacer"></span>
+  <a href="02-trash.html">← 回收站</a>
+  <a href="04-tasks.html">下一页:任务面板 →</a>
+  <button class="theme-btn" onclick="toggleTheme()">🌗 亮/暗</button>
+</div>
+
+<div class="wrap">
+  <div class="page-head">
+    <div><h1>弹窗与浮层</h1><div class="sub">均为模态弹窗(Esc 可关、遮罩点击关闭);此处以静态分镜呈现便于整体评审</div></div>
+  </div>
+
+  <!-- ① 移动 / 复制目录树选择器 -->
+  <div class="frame">
+    <h3><span class="idx">①</span>移动 / 复制 · 目录树选择器(可跨空间)</h3>
+    <p class="fdesc">同一弹窗复用:标题随动作切换;顶部空间切换决定树的根;环路校验(目标不能是自身/子孙)与同批重名冲突在服务端预检,前端即时禁用非法目标。</p>
+    <div class="dlg-stage">
+      <div class="modal-mask static"><div class="modal static" style="max-width:640px">
+        <div class="modal-head">
+          <h3 style="display:flex;align-items:center;gap:9px">
+            <span style="width:34px;height:34px;border-radius:11px;background:var(--color-primary-soft);color:var(--color-primary);display:inline-flex;align-items:center;justify-content:center">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14m0 0-5-5m5 5-5 5"/></svg></span>
+            移动 2 项到…
+          </h3>
+          <button class="icon-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+        </div>
+        <div class="modal-body">
+          <div class="row gap-2" style="margin-bottom:var(--sp-3)">
+            <div class="seg" style="width:220px">
+              <button class="seg-item active"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/></svg>公共空间</button>
+              <button class="seg-item">我的空间</button>
+            </div>
+            <div class="input-wrap grow">
+              <span class="input-prefix"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.4-3.4"/></svg></span>
+              <input class="input" style="height:36px" placeholder="在目标空间中搜索目录…">
+            </div>
+          </div>
+          <div class="tree-box">
+            <div class="tree-item"><svg class="tw" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg><span class="ficon f-folder"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6a2 2 0 0 1 2-2h4.6a2 2 0 0 1 1.4.6L13.4 6H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/></svg></span>公共空间(根)</div>
+            <div class="tree-kids">
+              <div class="tree-item exp"><svg class="tw" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg><span class="ficon f-folder"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6a2 2 0 0 1 2-2h4.6a2 2 0 0 1 1.4.6L13.4 6H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/></svg></span>发布件</div>
+              <div class="tree-kids">
+                <div class="tree-item"><svg class="tw" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg><span class="ficon f-folder"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6a2 2 0 0 1 2-2h4.6a2 2 0 0 1 1.4.6L13.4 6H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/></svg></span>2026Q3</div>
+                <div class="tree-item sel"><svg class="tw" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg><span class="ficon f-folder"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6a2 2 0 0 1 2-2h4.6a2 2 0 0 1 1.4.6L13.4 6H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/></svg></span>素材池<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" style="margin-left:auto;color:var(--color-primary)"><path d="m5 13 4 4L19 7"/></svg></div>
+                <div class="tree-item" style="opacity:.45;cursor:not-allowed" title="待移动目录自身,不可选"><svg class="tw" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg><span class="ficon f-folder"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6a2 2 0 0 1 2-2h4.6a2 2 0 0 1 1.4.6L13.4 6H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/></svg></span>2026Q3-评审材料(自身)<span class="badge badge-neutral" style="margin-left:auto">禁选</span></div>
+              </div>
+              <div class="tree-item"><svg class="tw" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg><span class="ficon f-folder"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6a2 2 0 0 1 2-2h4.6a2 2 0 0 1 1.4.6L13.4 6H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/></svg></span>说明文档</div>
+            </div>
+          </div>
+          <div class="dest-bar" style="margin-top:var(--sp-3)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>
+            目标:公共空间 › 发布件 › <b>素材池</b>
+          </div>
+          <div class="conflict-row" style="margin-top:var(--sp-3)">
+            <label><input type="radio" name="cf1" checked>有同名时询问(默认)</label>
+            <label><input type="radio" name="cf1">跳过</label>
+            <label><input type="radio" name="cf1">自动重命名</label>
+            <label><input type="radio" name="cf1">覆盖</label>
+          </div>
+          <p class="cap faint" style="margin-top:8px">冲突按<b>整批</b>裁决(先看完整清单再决定);执行按条推进,单条物理失败不影响其余。</p>
+        </div>
+        <div class="modal-foot">
+          <button class="btn btn-ghost">取消</button>
+          <button class="btn btn-primary">移动到这里</button>
+        </div>
+      </div></div>
+    </div>
+  </div>
+
+  <!-- ② 分享设置 -->
+  <div class="frame">
+    <h3><span class="idx">②</span>分享设置 → 创建成功(链接 + 二维码)</h3>
+    <p class="fdesc">提取码开启即生成 4 位随机码(去掉 0O1lI),明文仅本次展示、可复制;有效期/次数上限/仅登录可见;成功态提供复制链接与本地生成的二维码(不经过第三方服务)。</p>
+    <div class="row2">
+      <!-- 设置态 -->
+      <div class="dlg-stage">
+        <div class="modal-mask static"><div class="modal static">
+          <div class="modal-head">
+            <h3 style="display:flex;align-items:center;gap:9px">
+              <span style="width:34px;height:34px;border-radius:11px;background:rgba(236,72,153,.12);color:var(--pink-600);display:inline-flex;align-items:center;justify-content:center">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg></span>
+            分享「产品发布方案 v2.docx」
+          </h3>
+            <button class="icon-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+          </div>
+          <div class="modal-body">
+            <div class="field"><span class="field-label">提取码 <span class="opt">开启后访问需输入 4 位码</span></span>
+              <div class="row between" style="background:var(--color-bg);border:1px solid var(--color-border-soft);border-radius:var(--r-md);padding:10px 14px">
+                <span class="cap" style="color:var(--color-text-2)">需要提取码才能访问</span>
+                <button class="switch on" aria-label="提取码开关"></button>
+              </div>
+              <div class="pwd-out">
+                <span class="pwd-code">H7kQ</span>
+                <span class="cap faint">本次创建后不再明文展示,可随时重置</span>
+                <button class="btn btn-secondary btn-sm" style="margin-left:auto">复制</button>
+                <button class="btn btn-ghost btn-sm">换一个</button>
+              </div>
+            </div>
+            <div class="row gap-3 wrap">
+              <div class="field grow" style="min-width:180px;margin-bottom:0"><span class="field-label">有效期</span>
+                <select class="input"><option>7 天</option><option>1 天</option><option>30 天</option><option>永久</option><option>自定义日期</option></select></div>
+              <div class="field grow" style="min-width:180px;margin-bottom:0"><span class="field-label">下载次数上限 <span class="opt">0 = 不限</span></span>
+                <input class="input" type="number" value="0" min="0"></div>
+            </div>
+            <div class="row between" style="background:var(--color-bg);border:1px solid var(--color-border-soft);border-radius:var(--r-md);padding:10px 14px;margin-top:var(--sp-4)">
+              <div><b style="font-size:var(--fs-body)">仅登录可见</b><div class="cap faint">开启后未登录访客将先跳转登录,登录后回到本分享页</div></div>
+              <button class="switch" aria-label="仅登录可见开关"></button>
+            </div>
+            <p class="cap faint" style="margin-top:10px">公共空间分享不提供"仅登录可见"开关;分享绑定条目而非路径,目标被移动/重命名不影响访问。</p>
+          </div>
+          <div class="modal-foot">
+            <button class="btn btn-ghost">取消</button>
+            <button class="btn btn-grad">创建分享</button>
+          </div>
+        </div></div>
+      </div>
+      <!-- 成功态 -->
+      <div class="dlg-stage">
+        <div class="modal-mask static"><div class="modal static">
+          <div class="modal-head">
+            <h3 style="display:flex;align-items:center;gap:9px"><span style="width:34px;height:34px;border-radius:11px;background:var(--color-success-bg);color:var(--color-success);display:inline-flex;align-items:center;justify-content:center"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="m5 13 4 4L19 7"/></svg></span>分享已创建</h3>
+            <button class="icon-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+          </div>
+          <div class="modal-body">
+            <div class="share-result">
+              <div class="grow" style="min-width:0;display:flex;flex-direction:column;gap:10px">
+                <div class="share-url" id="shareUrl">https://zimo.example.com/s/9F2cK73mQa41dXzR8vTb6yUj0eW5nH7p</div>
+                <div class="row gap-2 wrap">
+                  <button class="btn btn-primary btn-sm" onclick="copyUrl(this)">复制链接</button>
+                  <button class="btn btn-secondary btn-sm">复制提取码 H7kQ</button>
+                  <button class="btn btn-ghost btn-sm">下载二维码</button>
+                </div>
+                <div class="cap faint">有效期 7 天 · 下载不限次 · 需提取码</div>
+              </div>
+              <div class="qr-box"><canvas id="qr" width="29" height="29"></canvas></div>
+            </div>
+          </div>
+          <div class="modal-foot"><button class="btn btn-ghost">完成</button><button class="btn btn-secondary">去「我的分享」查看</button></div>
+        </div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ③ 上传冲突 -->
+  <div class="frame">
+    <h3><span class="idx">③</span>上传 / 复制同名冲突(ask 策略)</h3>
+    <p class="fdesc">conflict=ask 时服务端返回 409 + 冲突清单;用户选择 skip / rename / overwrite 后整批重试。覆盖仅对文件生效(目标为目录时按重命名处理)。</p>
+    <div class="dlg-stage">
+      <div class="modal-mask static"><div class="modal static" style="max-width:520px">
+        <div class="modal-head">
+          <h3 style="display:flex;align-items:center;gap:9px">
+            <span style="width:34px;height:34px;border-radius:11px;background:var(--color-warning-bg);color:var(--color-warning);display:inline-flex;align-items:center;justify-content:center"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></span>
+            3 个同名冲突</h3>
+          <button class="icon-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+        </div>
+        <div class="modal-body">
+          <p class="cap" style="margin-bottom:10px">目标目录「发布件 / 2026Q3」下已存在以下同名条目:</p>
+          <div class="conflict-list">
+            <div class="ci"><span class="ficon f-doc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg></span><span class="cname">产品发布方案 v2.docx</span><span class="cwhy">同名文件 · 386 KB</span></div>
+            <div class="ci"><span class="ficon f-img"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.6" fill="currentColor" stroke="none"/><path d="m5 18 5.2-5.2a1.4 1.4 0 0 1 2 0L19 19"/></svg></span><span class="cname">发布会现场合影.jpg</span><span class="cwhy">同名文件 · 8.2 MB</span></div>
+            <div class="ci"><span class="ficon f-folder"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6a2 2 0 0 1 2-2h4.6a2 2 0 0 1 1.4.6L13.4 6H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/></svg></span><span class="cname">素材池</span><span class="cwhy">同名文件夹(将自动重命名)</span></div>
+          </div>
+          <div class="conflict-row" style="margin-top:var(--sp-4)">
+            <label><input type="radio" name="cf2" checked>跳过</label>
+            <label><input type="radio" name="cf2">自动重命名</label>
+            <label><input type="radio" name="cf2">覆盖文件</label>
+          </div>
+          <p class="cap faint" style="margin-top:8px">覆盖为原子替换:新内容校验通过后一次性入位,读方不会读到半成品;文件夹冲突不支持覆盖。</p>
+        </div>
+        <div class="modal-foot"><button class="btn btn-ghost">取消上传</button><button class="btn btn-primary">按所选策略继续</button></div>
+      </div></div>
+    </div>
+  </div>
+
+  <!-- ④ 删除确认 -->
+  <div class="frame">
+    <h3><span class="idx">④</span>删除确认(软删除进回收站)</h3>
+    <p class="fdesc">二次确认列出待删条目;目录明确提示"将连同 N 个子项一并删除";删除可从回收站恢复,因此主按钮为普通主色而非危险红。</p>
+    <div class="dlg-stage">
+      <div class="modal-mask static"><div class="modal static" style="max-width:480px">
+        <div class="modal-head">
+          <h3>删除 3 项?</h3>
+          <button class="icon-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+        </div>
+        <div class="modal-body">
+          <div class="conflict-list" style="max-height:170px">
+            <div class="ci"><span class="ficon f-folder"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6a2 2 0 0 1 2-2h4.6a2 2 0 0 1 1.4.6L13.4 6H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/></svg></span><span class="cname">2026Q3-评审材料</span><span class="cwhy">文件夹 · 将连同 8 个子项删除</span></div>
+            <div class="ci"><span class="ficon f-vid"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9.5 5 2.5-5 2.5Z" fill="currentColor" stroke="none"/></svg></span><span class="cname">宣传片-草稿.mp4</span><span class="cwhy num">96 MB</span></div>
+            <div class="ci"><span class="ficon f-oth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m8 9-3 3 3 3M16 9l3 3-3 3"/></svg></span><span class="cname">.tmp-cache</span><span class="cwhy num">2 KB</span></div>
+          </div>
+          <p class="cap" style="margin-top:12px;display:flex;gap:6px;align-items:flex-start">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-success)" stroke-width="2" stroke-linecap="round" style="flex:none;margin-top:3px"><path d="M3 6h18v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M9 10h6"/></svg>
+            删除后进入回收站保留 30 天,可随时恢复;期间仍占用空间配额。</p>
+        </div>
+        <div class="modal-foot"><button class="btn btn-ghost">取消</button><button class="btn btn-primary">移入回收站</button></div>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="frame">
+    <div class="annotate">
+      <b>设计注记(03 弹窗合集)</b><br>
+      ① 移动/复制树选择器:目标非法态(自身/子孙/同批重名)置灰禁选;跨空间复制超阈值(>500 条或 >1GB)自动转后台任务,弹窗内明示;② 分享:提取码明文仅创建后返回一次,列表只显示"已设置";二维码由前端本地生成(qrcode 库或自研),上传链接到第三方服务被禁止;③ 上传冲突覆盖仅对文件生效;0 字节文件允许上传;④ 全部弹窗 Esc 可关、遮罩点击关闭、焦点圈闭(tax tokens.css 模态样式)。
+    </div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+<script>
+function toggleTheme(){const d=document.documentElement;d.dataset.theme=d.dataset.theme==='dark'?'light':'dark';localStorage.setItem('mock-theme',d.dataset.theme)}
+if(localStorage.getItem('mock-theme'))document.documentElement.dataset.theme=localStorage.getItem('mock-theme');
+function toast(msg,type='success',title='提示'){
+  const t=document.createElement('div');t.className='toast '+type;
+  t.innerHTML=`<span>${type==='success'?'✓':type==='error'?'✕':type==='warning'?'⚠':'ℹ'}</span><div><div class="t-title">${title}</div><div class="t-msg">${msg}</div></div>`;
+  document.getElementById('toasts').appendChild(t);setTimeout(()=>t.remove(),3200);
+}
+function copyUrl(btn){navigator.clipboard&&navigator.clipboard.writeText(document.getElementById('shareUrl').textContent);
+  btn.textContent='已复制 ✓';setTimeout(()=>btn.textContent='复制链接',1500)}
+/* 伪二维码(预览用):确定性伪随机模块 + 三个定位角 */
+(function(){
+  const c=document.getElementById('qr'),g=c.getContext('2d'),N=29;
+  let s=2166136261;const rnd=()=>{s^=s<<13;s^=s>>>17;s^=s<<5;return((s>>>0)/4294967295)};
+  g.fillStyle='#fff';g.fillRect(0,0,N,N);g.fillStyle='#0F172A';
+  const finder=(x,y)=>{g.fillRect(x,y,7,7);g.fillStyle='#fff';g.fillRect(x+1,y+1,5,5);g.fillStyle='#0F172A';g.fillRect(x+2,y+2,3,3)};
+  for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+    if((x<8&&y<8)||(x>N-9&&y<8)||(x<8&&y>N-9))continue;
+    if(rnd()<.46)g.fillRect(x,y,1,1);}
+  finder(0,0);finder(N-7,0);finder(0,N-7);
+})();
+</script>
+</body>
+</html>

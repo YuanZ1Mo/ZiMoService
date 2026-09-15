@@ -96,9 +96,9 @@ bool ZmAuthGateModule::IsStaticPath(const std::string& path)
  */
 bool ZmAuthGateModule::IsWhitelistPagePath(const std::string& path)
 {
-    // 免会话白名单页面
+    // 免会话白名单页面;/s/ 为分享页(链接本身即凭证,登录要求由接口细判)
     return path == "/login" || path == "/register" || path == "/reset" ||
-           path == "/404";
+           path == "/404" || path.rfind("/s/", 0) == 0;
 }
 
 /**
@@ -150,6 +150,11 @@ std::string ZmAuthGateModule::ApiPermForPath(const std::string& path)
         return "userManage";
     if (path.rfind("/zimo/api/admin", 0) == 0)
         return "systemManager";
+    // 文件中心:管理端要求 filehubAdmin,其余要求门户点 filehub
+    if (path.rfind("/zimo/api/filehub/admin", 0) == 0)
+        return "filehubAdmin";
+    if (path.rfind("/zimo/api/filehub", 0) == 0)
+        return "filehub";
     return "";
 }
 
@@ -474,6 +479,14 @@ if (ZmHttpServer::IsSharedPath(path) || path == "/zimo/api" ||
 // 免鉴权业务接口:注册/登录(自身带限流 + 阶梯锁定)
 if (path.rfind("/zimo/api/auth/register", 0) == 0 ||
     path.rfind("/zimo/api/auth/login", 0) == 0)
+{
+    cc();
+    return;
+}
+// 文件中心免鉴权面:分享公开面(链接即凭证,login_only 由 handler 细判)
+// 与下载令牌直链(令牌本身即凭证,不携带 Cookie 也能用)
+if (path.rfind("/zimo/api/filehub/share/", 0) == 0 ||
+    path.rfind("/zimo/api/filehub/dl/", 0) == 0)
 {
     cc();
     return;

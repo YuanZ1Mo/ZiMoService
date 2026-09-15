@@ -335,3 +335,43 @@ drogon::Task<ZMJSON> ZmPermissionModule::ListPermCodes()
         {});
     co_return rows;
 }
+
+// ============================================================================
+// 权限点登记(幂等;装配阶段同步执行)
+// ============================================================================
+bool ZmPermissionModule::RegisterPermCodeSync(const ZMJSON& perm,
+                                             const std::vector<std::string>& roleCodes)
+{
+    std::string code = zm_json_get_str(perm, "code");
+    if (code.empty())
+        return false;
+    if (!m_db->ExecSync(
+            "INSERT OR IGNORE INTO permissions(code,name,module,url,type,\"index\",sort,enabled,description) "
+            "VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+            {code, zm_json_get_str(perm, "name"), zm_json_get_str(perm, "module"),
+             zm_json_get_str(perm, "url"), std::to_string(zm_json_get_int(perm, "type", 0)),
+             std::to_string(zm_json_get_int(perm, "index", 0)),
+             std::to_string(zm_json_get_int(perm, "sort", 0)),
+             std::to_string(zm_json_get_int(perm, "enabled", 1)),
+             zm_json_get_str(perm, "description")}))
+        return false;
+    for (const auto& role : roleCodes)
+    {
+        ZMJSON row = m_db->QueryRowSync("SELECT permission_codes FROM roles WHERE code = ?1",
+                                        {role});
+        if (row.empty())
+            continue;
+        std::string codes = zm_json_get_str(row, "permission_codes");
+        if (codes.empty())
+            codes = "[]";
+        if (codes.find("\"" + code + "\"") != std::string::npos)
+            continue;
+        codes.insert(codes.size() - 1,
+                     codes == "[]" ? ("\"" + code + "\"") : (",\"" + code + "\""));
+        if (!m_db->ExecSync("UPDATE roles SET permission_codes = ?1, updated_at = ?2 "
+                            "WHERE code = ?3",
+                            {codes, std::to_string(ZmSqliteDb::Now()), role}))
+            return false;
+    }
+    return true;
+}

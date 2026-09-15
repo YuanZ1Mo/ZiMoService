@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ZiMo 文件空间 · 前端设计预览总览</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  .wrap{max-width:1180px;margin:0 auto;padding:var(--sp-8) var(--sp-6) var(--sp-12)}
+  .cover{border-radius:24px;padding:var(--sp-10);color:#fff;background:var(--grad-hero);background-size:200% 200%;animation:gradFlow 14s ease infinite;box-shadow:var(--shadow-pop);position:relative;overflow:hidden}
+  .cover::after{content:"";position:absolute;width:420px;height:420px;border-radius:50%;background:rgba(255,255,255,.12);top:-160px;right:-100px}
+  .cover h1{font-size:34px;line-height:44px;font-weight:800;letter-spacing:.5px}
+  .cover p{opacity:.94;margin-top:10px;max-width:680px}
+  .page-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:var(--sp-4)}
+  .page-card{padding:var(--sp-5);cursor:pointer;position:relative;overflow:hidden}
+  .page-card .thumb{height:120px;border-radius:var(--r-md);margin-bottom:var(--sp-4);position:relative;overflow:hidden;border:1px solid var(--color-border-soft)}
+  .page-card h3{font-size:var(--fs-h2);line-height:var(--lh-h2)}
+  .page-card .path{font-family:Consolas,monospace;font-size:12px;color:var(--color-primary)}
+  .page-card .arr{position:absolute;right:16px;top:50%;transform:translateY(-50%);opacity:0;transition:all var(--dur) var(--ease);color:var(--color-primary)}
+  .page-card:hover .arr{opacity:1;transform:translateY(-50%) translateX(4px)}
+  .thumb-t1{background:var(--grad-brand-soft);display:flex;align-items:center;justify-content:center}
+  .thumb-t1 i{width:52%;height:78%;background:var(--color-card);border-radius:10px;box-shadow:var(--shadow-md);display:flex;flex-direction:column;gap:6px;padding:10px}
+  .thumb-t1 i b{height:8px;width:60%;border-radius:4px;background:var(--grad-brand);display:block}
+  .thumb-t1 i s{height:6px;border-radius:3px;background:var(--color-border);display:block;flex:none}
+  .thumb-t2{background:linear-gradient(160deg,#0284C7 0%,#06B6D4 60%,#EC4899 130%);display:flex;align-items:center;justify-content:center}
+  .thumb-t2 i{width:44%;height:64%;background:rgba(255,255,255,.94);border-radius:12px;box-shadow:var(--shadow-md);display:flex;align-items:center;justify-content:center;font-size:26px}
+  .thumb-t3{background:var(--color-card);display:flex;flex-direction:column;gap:5px;padding:10px}
+  .thumb-t3 b{height:8px;border-radius:4px;background:var(--color-border);display:block}
+  .thumb-t3 u{flex:1;border-radius:6px;background:var(--color-primary-soft);border:1px solid var(--color-border-soft)}
+  .sec{margin-top:var(--sp-10)}
+  .sec>h2{font-size:22px;margin-bottom:6px}
+  .sec>.sub{color:var(--color-text-2);margin-bottom:var(--sp-5);font-size:var(--fs-body)}
+  .swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:var(--sp-3)}
+  .swatch{border-radius:var(--r-md);overflow:hidden;border:1px solid var(--color-border-soft);background:var(--color-card)}
+  .swatch .c{height:64px}
+  .swatch .m{padding:9px 12px}
+  .swatch .m b{font-size:12px;display:block}
+  .swatch .m span{font-size:11px;color:var(--color-text-3);font-family:Consolas,monospace}
+  .rule-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:var(--sp-4)}
+  .rule{padding:var(--sp-4) var(--sp-5)}
+  .rule b{display:flex;align-items:center;gap:8px;font-size:var(--fs-body)}
+  .rule p{font-size:var(--fs-cap);color:var(--color-text-2);margin-top:6px;line-height:20px}
+  .rule .no{width:22px;height:22px;border-radius:8px;background:var(--grad-brand);color:#fff;font-size:12px;display:inline-flex;align-items:center;justify-content:center;font-family:var(--font-num);flex:none}
+</style>
+</head>
+<body>
+<div class="mock-bar">
+  <span class="pg">ZiMo 文件空间 · 前端设计预览</span><span class="path">Design Mockups · v1 · 2026-09-16</span>
+  <span class="spacer"></span>
+  <button class="theme-btn" onclick="toggleTheme()">🌗 亮/暗主题</button>
+</div>
+
+<div class="wrap">
+  <!-- 封面 -->
+  <div class="cover anim-fade-up">
+    <h1>ZiMo 文件空间 · 前端设计方案</h1>
+    <p>沿用用户系统视觉基准(活力蓝 × 清新青 × 元气粉、圆角卡片、软阴影)。
+       双空间浏览、拖拽上传、批量操作、回收站、分享与传输任务面板;列表虚拟滚动、动画仅 transform/opacity、轮询按需启停,亮暗双主题全量令牌化。</p>
+    <div class="row gap-3 mt-6" style="position:relative;z-index:1;flex-wrap:wrap">
+      <span class="badge" style="background:rgba(255,255,255,.22);color:#fff">Vue 3 + Vite SPA · 零 UI 依赖</span>
+      <span class="badge" style="background:rgba(255,255,255,.22);color:#fff">/portal/filehub + /s/:token</span>
+      <span class="badge" style="background:rgba(255,255,255,.22);color:#fff">虚拟滚动 > 300 行</span>
+      <span class="badge" style="background:rgba(255,255,255,.22);color:#fff">tasks/active 单接口轮询</span>
+    </div>
+  </div>
+
+  <!-- 页面导航 -->
+  <div class="sec">
+    <h2>① 页面预览(点击进入)</h2>
+    <p class="sub">6 份交互式静态稿,覆盖文件空间全部前端面;每页附交互说明与状态一览,右上角可切换亮/暗主题</p>
+    <div class="page-cards anim-stagger">
+      <div class="card card-hover page-card" onclick="location.href='01-filehub-main.html'">
+        <div class="thumb thumb-t1"><i><b></b><s style="width:90%"></s><s style="width:75%"></s><s style="width:88%;background:var(--grad-brand)"></s></i></div>
+        <h3>主列表页</h3><span class="path">/portal/filehub</span>
+        <p class="cap muted mt-2">空间切换 · 侧栏(空间树/我的分享/回收站) · 面包屑 · 批量条 · 右键菜单 · 任务 FAB · 空态/网格/搜索/拖拽分镜</p>
+        <span class="arr">→</span>
+      </div>
+      <div class="card card-hover page-card" onclick="location.href='02-trash.html'">
+        <div class="thumb thumb-t3"><b style="width:35%;background:var(--color-warning)"></b><u></u><u style="flex:.7"></u></div>
+        <h3>回收站</h3><span class="path">/portal/filehub · 侧栏视图</span>
+        <p class="cap muted mt-2">占用徽标 · 30 天保留说明 · 原路径/删除者/剩余天数 · 恢复/彻底删除 · 清空二次确认</p>
+        <span class="arr">→</span>
+      </div>
+      <div class="card card-hover page-card" onclick="location.href='03-dialogs.html'">
+        <div class="thumb thumb-t1"><i style="align-items:center"><b style="width:40%"></b><s style="width:80%"></s><s style="width:64%"></s></i></div>
+        <h3>弹窗合集</h3><span class="path">移动/复制 · 分享 · 冲突</span>
+        <p class="cap muted mt-2">目录树选择器(跨空间/环路禁选) · 分享设置与成功态(二维码) · 上传冲突裁决 · 删除确认</p>
+        <span class="arr">→</span>
+      </div>
+      <div class="card card-hover page-card" onclick="location.href='04-tasks.html'">
+        <div class="thumb thumb-t2"><i>⇣</i></div>
+        <h3>传输任务面板</h3><span class="path">右下角悬浮</span>
+        <p class="cap muted mt-2">FAB 三态 · 进行中(进度/取消/秒传/批次归组) · 历史(重试/下载/清理) · 轮询契约注记</p>
+        <span class="arr">→</span>
+      </div>
+      <div class="card card-hover page-card" onclick="location.href='05-share.html'">
+        <div class="thumb thumb-t1"><i style="align-items:center;justify-content:center"><b style="width:70%"></b><s style="width:52%"></s></i></div>
+        <h3>免登录分享页</h3><span class="path">/s/:token · meta.public</span>
+        <p class="cap muted mt-2">提取码四格输入 · 目录只读浏览 + 打包下载 · 失效/不可用/需登录三态 · 独立全屏无门户壳</p>
+        <span class="arr">→</span>
+      </div>
+      <div class="card card-hover page-card" onclick="location.href='06-admin.html'">
+        <div class="thumb thumb-t3"><b style="width:45%"></b><u style="flex:.5"></u><u></u></div>
+        <h3>文件中心管理</h3><span class="path">/portal/system-manager/filehub-admin</span>
+        <p class="cap muted mt-2">概览七卡 · 一致性同步(实时进度/取消/dry_run) · 缓存与全量回收站 · 全量任务 · 审计日志</p>
+        <span class="arr">→</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 文件类型色板 -->
+  <div class="sec">
+    <h2>② 文件类型色板(前端维护,服务端只回 ext)</h2>
+    <p class="sub">类型图标沿用软色底 + 主题化前景;归类:文件夹 / 文档 / 图片 / 视频 / 音频 / 压缩包 / 其他</p>
+    <div class="swatches">
+      <div class="swatch"><div class="c f-folder" style="display:flex;align-items:center;justify-content:center"><svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M4 6a2 2 0 0 1 2-2h4.6a2 2 0 0 1 1.4.6L13.4 6H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/></svg></div><div class="m"><b>文件夹</b><span>品牌蓝渐变底</span></div></div>
+      <div class="swatch"><div class="c f-doc" style="display:flex;align-items:center;justify-content:center"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg></div><div class="m"><b>文档</b><span>doc/pdf/xls/ppt/md</span></div></div>
+      <div class="swatch"><div class="c f-img" style="display:flex;align-items:center;justify-content:center"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.6" fill="currentColor" stroke="none"/><path d="m5 18 5.2-5.2a1.4 1.4 0 0 1 2 0L19 19"/></svg></div><div class="m"><b>图片</b><span>jpg/png/gif/webp</span></div></div>
+      <div class="swatch"><div class="c f-vid" style="display:flex;align-items:center;justify-content:center"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9.5 5 2.5-5 2.5Z" fill="currentColor" stroke="none"/></svg></div><div class="m"><b>视频</b><span>mp4/mov/mkv</span></div></div>
+      <div class="swatch"><div class="c f-aud" style="display:flex;align-items:center;justify-content:center"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M9 18V6l8-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="14.5" cy="16" r="2.5"/></svg></div><div class="m"><b>音频</b><span>mp3/flac/wav</span></div></div>
+      <div class="swatch"><div class="c f-zip" style="display:flex;align-items:center;justify-content:center"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5M12 11v2m0 2v1" stroke-dasharray="2 2.6"/></svg></div><div class="m"><b>压缩包</b><span>zip/7z/rar/gz</span></div></div>
+      <div class="swatch"><div class="c f-oth" style="display:flex;align-items:center;justify-content:center"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m8 9-3 3 3 3M16 9l3 3-3 3"/></svg></div><div class="m"><b>其他</b><span>exe/未知扩展名</span></div></div>
+    </div>
+  </div>
+
+  <!-- 硬约束速览 -->
+  <div class="sec">
+    <h2>③ 硬约束速览(交接文档 §3 / 设计 §8)</h2>
+    <div class="rule-grid">
+      <div class="card rule"><b><span class="no">1</span>路由即目录名</b><p>modules/filehub/ 自动挂载 /portal/filehub;管理页挂 system-manager 子标签(key filehub-admin,perm filehubAdmin);分享页 /s/:token 独立公开路由。</p></div>
+      <div class="card rule"><b><span class="no">2</span>轮询单接口</b><p>仅 GET /filehub/tasks/active(1.5s);无进行中任务停轮询;onDeactivated 停、回前台立即刷一次。</p></div>
+      <div class="card rule"><b><span class="no">3</span>虚拟滚动</b><p>列表 >300 行启用自研窗口裁剪(定高行);服务端分页 200/页,无限滚动追加。</p></div>
+      <div class="card rule"><b><span class="no">4</span>上传非 multipart</b><p>元数据走请求头、体为原始字节;≤8MB 单请求,>8MB 分片(8MB/片,断点续传 + 秒传);并发 3、超出排队。</p></div>
+      <div class="card rule"><b><span class="no">5</span>下载走令牌直链</b><p>POST download/token 换 10 分钟令牌 → location.href 跳转;不依赖 Cookie;多文件/目录转打包任务。</p></div>
+      <div class="card rule"><b><span class="no">6</span>动画与主题</b><p>拖拽/进度反馈只用 transform/opacity;亮暗主题全部走 tokens.css 语义令牌;prefers-reduced-motion 全局降级。</p></div>
+      <div class="card rule"><b><span class="no">7</span>回收站口径</b><p>用户侧"谁删的谁管";清空/彻底删除物理删除需二次确认;清空转后台任务;保留 30 天占用配额。</p></div>
+      <div class="card rule"><b><span class="no">8</span>分享免登录</b><p>默认持链接即可访问;提取码 → 2h 凭证 Cookie;(IP,token) 连错 5 次冷却 10 分钟;目标进回收站 → 内容暂不可用,恢复自动可用。</p></div>
+    </div>
+  </div>
+
+  <p class="cap faint" style="margin-top:var(--sp-10);text-align:center">ZiMo 文件空间 · 前端设计稿 v1 · 2026-09-16 · 依据《2026-09-15-文件空间业务需求》§7 与《2026-09-16-文件空间前端交接》</p>
+</div>
+
+<script>
+function toggleTheme(){const d=document.documentElement;d.dataset.theme=d.dataset.theme==='dark'?'light':'dark';localStorage.setItem('mock-theme',d.dataset.theme)}
+if(localStorage.getItem('mock-theme'))document.documentElement.dataset.theme=localStorage.getItem('mock-theme');
+</script>
+</body>
+</html>

@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>文件中心 · 传输任务面板 — ZiMo 文件空间设计稿</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="filehub.css">
+<style>
+  .wrap{max-width:1240px;margin:0 auto;padding:var(--sp-6) var(--sp-6) var(--sp-12)}
+  .task-panel.static{position:static;opacity:1;transform:none;pointer-events:auto;max-height:none;width:100%}
+  .fab-demo{display:flex;gap:var(--sp-6);align-items:flex-end;flex-wrap:wrap;padding:var(--sp-5)}
+  .fab-note{font-size:var(--fs-cap);color:var(--color-text-3);text-align:center;margin-top:8px}
+  .grp-label{display:flex;align-items:center;gap:8px;font-size:var(--fs-cap);font-weight:700;color:var(--color-text-3);padding:10px 12px 4px;letter-spacing:.4px}
+</style>
+</head>
+<body>
+<div class="mock-bar">
+  <span class="pg">文件中心 · 04 传输任务面板</span><span class="path">工作区右下角悬浮 · 轮询 /filehub/tasks/active</span>
+  <span class="spacer"></span>
+  <a href="03-dialogs.html">← 弹窗合集</a>
+  <a href="05-share.html">下一页:分享页 →</a>
+  <button class="theme-btn" onclick="toggleTheme()">🌗 亮/暗</button>
+</div>
+
+<div class="wrap">
+  <div class="page-head">
+    <div><h1>传输任务面板</h1><div class="sub">上传 / 复制 / 打包 / 回收站清理统一入队;单文件直链下载不建任务(浏览器接管)</div></div>
+  </div>
+
+  <!-- FAB 三态 -->
+  <div class="frame">
+    <h3><span class="idx">①</span>悬浮入口三态</h3>
+    <p class="fdesc">有进行中/排队任务:品牌渐变胶囊 + 数量徽标;无任务:中性 idle 态(仍可点开查看历史);失败存在:徽标转警告色。</p>
+    <div class="card demo-shell">
+      <div class="fab-demo">
+        <div><button class="task-fab"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v12m0 0-4-4m4 4 4-4"/><path d="M4 17v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1"/></svg>任务<span class="badge num">3</span></button><div class="fab-note">进行中(渐变 + 徽标)</div></div>
+        <div><button class="task-fab"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v12m0 0-4-4m4 4 4-4"/><path d="M4 17v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1"/></svg>任务<span class="badge" style="background:var(--color-warning-bg);color:var(--color-warning)">1</span></button><div class="fab-note">存在失败(徽标警示色)</div></div>
+        <div><button class="task-fab idle"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v12m0 0-4-4m4 4 4-4"/><path d="M4 17v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1"/></svg>任务</button><div class="fab-note">空闲(不轮询)</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 面板两页签 -->
+  <div class="frame">
+    <h3><span class="idx">②</span>展开面板 · 进行中 / 历史</h3>
+    <p class="fdesc">进行中:进度条 + 取消;文件夹上传按批次归组展示;历史:状态徽章 + 重试(失败)/ 下载+清理(打包完成)/ 清除历史。</p>
+    <div class="row2" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(400px,1fr));gap:var(--sp-6);align-items:start">
+      <!-- 进行中 -->
+      <div class="task-panel static">
+        <div class="task-head">
+          <b>传输任务</b><span class="badge badge-info num">进行中 3</span>
+          <div class="task-tabs"><button class="on">进行中</button><button onclick="toast('切到历史页签(见右)','info')">历史</button></div>
+          <button class="icon-btn" style="width:30px;height:30px"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+        </div>
+        <div class="task-list">
+          <div class="grp-label">上传文件夹「产品发布-素材」· 批次 09:41:07</div>
+          <div class="titem">
+            <div class="t-top"><span class="st-chip run">上传中</span><span class="t-name">开场视频-高清版.mp4</span><span class="t-ops"><button class="btn btn-ghost btn-sm">取消</button></span></div>
+            <div class="tprog"><i style="width:58%"></i></div>
+            <div class="t-sub"><span class="num">分片 15 / 26 · 120 MB / 208 MB · 58 MB/s</span></div>
+          </div>
+          <div class="titem">
+            <div class="t-top"><span class="st-chip ok">秒传完成</span><span class="t-name">发布会合影-原图.jpg</span><span class="t-ops"><span class="cap faint num">0s</span></span></div>
+            <div class="tprog done"><i style="width:100%"></i></div>
+            <div class="t-sub">同空间同内容命中,已复制入位,未传输字节</div>
+          </div>
+          <div class="titem">
+            <div class="t-top"><span class="st-chip wait">排队中</span><span class="t-name">BGM-备用.mp3</span><span class="t-ops"><button class="btn btn-ghost btn-sm">取消</button></span></div>
+            <div class="t-sub">单用户并发上限 3 · 当前 2 进行中,等待 1 位</div>
+          </div>
+          <div class="grp-label">打包下载</div>
+          <div class="titem">
+            <div class="t-top"><span class="st-chip run">打包中</span><span class="t-name">2026Q3-评审材料.zip</span><span class="t-ops"><button class="btn btn-ghost btn-sm">取消</button></span></div>
+            <div class="tprog"><i style="width:45%"></i></div>
+            <div class="t-sub"><span class="num">128 / 286 项 · 1.6 / 3.5 GB · 全局打包并发 2/2</span></div>
+          </div>
+          <div class="grp-label">跨空间复制</div>
+          <div class="titem">
+            <div class="t-top"><span class="st-chip run">复制中</span><span class="t-name">素材池 → 我的空间</span><span class="t-ops"><button class="btn btn-ghost btn-sm">取消</button></span></div>
+            <div class="tprog"><i style="width:82%"></i></div>
+            <div class="t-sub"><span class="num">41 / 50 项 · 2.1 / 2.6 GB</span></div>
+          </div>
+        </div>
+        <div class="t-foot">
+          <span class="hint">轮询 /filehub/tasks/active · 1.5s</span>
+          <button class="btn btn-ghost btn-sm">清除历史</button>
+        </div>
+      </div>
+      <!-- 历史 -->
+      <div class="task-panel static">
+        <div class="task-head">
+          <b>传输任务</b>
+          <div class="task-tabs"><button onclick="toast('切到进行中页签(见左)','info')">进行中</button><button class="on">历史</button></div>
+          <button class="icon-btn" style="width:30px;height:30px"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+        </div>
+        <div class="task-list">
+          <div class="titem">
+            <div class="t-top"><span class="st-chip ok">已完成</span><span class="t-name">2026Q2-复盘材料.zip</span>
+              <span class="t-ops"><button class="btn btn-secondary btn-sm" onclick="toast('换下载令牌 → 直链下载(压缩包空闲 30 分钟后清理)','success')">下载</button><button class="btn btn-ghost btn-sm">清理</button></span></div>
+            <div class="tprog done"><i style="width:100%"></i></div>
+            <div class="t-sub"><span class="num">3.5 GB · 09:41 → 09:46 · 286 项</span></div>
+          </div>
+          <div class="titem">
+            <div class="t-top"><span class="st-chip fail">失败</span><span class="t-name">宣传片-4K-母版.mp4</span>
+              <span class="t-ops"><button class="btn btn-secondary btn-sm" onclick="toast('重试:重走 init 取缺失分片续传','success')">重试</button></span></div>
+            <div class="tprog err"><i style="width:72%"></i></div>
+            <div class="t-sub">目标目录已被删除(DIR_NOT_FOUND)· 已传 208 MB</div>
+          </div>
+          <div class="titem">
+            <div class="t-top"><span class="st-chip stop">已取消</span><span class="t-name">BGM-合集.zip</span><span class="t-ops"></span></div>
+            <div class="t-sub"><span class="num">09-15 16:02 · 用户取消,半成品已清理</span></div>
+          </div>
+          <div class="titem">
+            <div class="t-top"><span class="st-chip stop">已中断</span><span class="t-name">素材合集.zip</span>
+              <span class="t-ops"><button class="btn btn-secondary btn-sm">重试</button></span></div>
+            <div class="t-sub">服务重启中断 · 分片已保留,可续传</div>
+          </div>
+          <div class="titem">
+            <div class="t-top"><span class="st-chip ok">已完成</span><span class="t-name">回收站清理(公共空间)</span>
+              <span class="t-ops"></span></div>
+            <div class="t-sub"><span class="num">清除 12 项 · 释放 3.4 GB · 09-14 03:00 周期任务</span></div>
+          </div>
+        </div>
+        <div class="t-foot">
+          <span class="hint">已完成/失败/取消/中断 保留 7 天</span>
+          <button class="btn btn-ghost btn-sm">清除历史</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="frame">
+    <div class="annotate">
+      <b>设计注记(04 任务面板)</b><br>
+      ① <b>轮询契约</b>:面板打开或存在进行中任务时,每 1.5s 打一次 <b>GET /filehub/tasks/active</b>(唯一轮询接口,一次拿全部任务);无进行中任务即停止;页面切走 onDeactivated 停、回前台立即刷新;② 上传进度为客户端视角(已完成片数 × 片大小),服务端 done_size 在合并阶段更新,两者不必一致;③ 打包并发全局 2,超出排队;上传并发单用户 3,前端队列顺序 = 用户选择顺序;④ 打包完成提供"下载"+"清理"(空闲 30 分钟自动删,多线程下载器分片请求不被误删);⑤ 服务重启把进行中任务置"已中断",上传分片保留可续传;⑥ 免会话分享页下载走分享面令牌,不进本面板。
+    </div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+<script>
+function toggleTheme(){const d=document.documentElement;d.dataset.theme=d.dataset.theme==='dark'?'light':'dark';localStorage.setItem('mock-theme',d.dataset.theme)}
+if(localStorage.getItem('mock-theme'))document.documentElement.dataset.theme=localStorage.getItem('mock-theme');
+function toast(msg,type='success',title='提示'){
+  const t=document.createElement('div');t.className='toast '+type;
+  t.innerHTML=`<span>${type==='success'?'✓':type==='error'?'✕':type==='warning'?'⚠':'ℹ'}</span><div><div class="t-title">${title}</div><div class="t-msg">${msg}</div></div>`;
+  document.getElementById('toasts').appendChild(t);setTimeout(()=>t.remove(),3200);
+}
+document.querySelectorAll('.switch').forEach(s=>s.addEventListener('click',()=>s.classList.toggle('on')));
+</script>
+</body>
+</html>

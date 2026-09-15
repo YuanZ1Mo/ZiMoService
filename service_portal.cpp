@@ -25,6 +25,22 @@
 #include "modules/module_user_admin.h"
 #include "modules/module_portal.h"
 
+// 文件中心
+#include "modules/module_file_db.h"
+#include "modules/module_file_store.h"
+#include "modules/module_file_audit.h"
+#include "modules/module_file_node.h"
+#include "modules/module_file_admin.h"
+#include "modules/module_file_task.h"
+#include "modules/module_file_upload.h"
+#include "modules/module_file_pack.h"
+#include "modules/module_file_token.h"
+#include "modules/module_file_share.h"
+#include "modules/module_file_defs.h"
+#include "modules/module_file_admin.h"
+#include "modules/module_file_hub.h"
+#include "modules/dir_lock.h"
+
 using namespace drogon;
 using std::string;
 
@@ -145,6 +161,71 @@ void ServicePortal::CreateModules()
                                                   m_security.get(), m_audit.get(), m_db.get(), m_gate.get());
     m_portal = std::make_unique<ZmPortalModule>(m_restful, m_user.get(), m_session.get(),
                                                 m_permission.get(), m_gate.get());
+
+    // ── 文件中心:独立库 filehub.db + 物理根 modules\\filehub ──
+    const std::string fileHubRoot = ZmExeDir() + "modules\\filehub";
+    m_fileDb = std::make_unique<ZmFileDbModule>();
+    if (!m_fileDb->Init(ZmExeDir() + "db\\filehub\\filehub.db", fileHubRoot))
+    {
+        DEFAULT_LOG_ERROR("ServicePortal::CreateModules: ZmFileDbModule::Init 失败,文件中心不可用");
+    }
+    else
+    {
+        m_fileDb->StartPeriodicCleanup();
+    }
+    m_fileStore = std::make_unique<ZmFileStoreModule>(m_fileDb.get(), fileHubRoot);
+    m_fileAudit = std::make_unique<ZmFileAuditModule>(m_fileDb.get());
+    m_dirLock = std::make_unique<ZmDirLock>();
+    m_fileTask = std::make_unique<ZmFileTaskModule>(m_fileDb.get());
+    m_fileNode = std::make_unique<ZmFileNodeModule>(m_fileDb.get(), m_fileStore.get(),
+                                                    m_dirLock.get(), m_fileAudit.get());
+    m_fileUpload = std::make_unique<ZmFileUploadModule>(m_fileDb.get(), m_fileStore.get(),
+                                                        m_fileNode.get(), m_fileTask.get(),
+                                                        m_fileAudit.get(), m_dirLock.get());
+    m_fileToken = std::make_unique<ZmFileTokenModule>(m_fileStore.get(), m_fileNode.get(),
+                                                      m_fileTask.get());
+    m_filePack = std::make_unique<ZmFilePackModule>(m_fileDb.get(), m_fileStore.get(),
+                                                    m_fileNode.get(), m_fileTask.get(),
+                                                    m_fileAudit.get(), m_fileToken.get());
+    m_fileShare = std::make_unique<ZmFileShareModule>(m_fileDb.get(), m_fileNode.get(),
+                                                      m_fileStore.get(), m_fileAudit.get(),
+                                                      m_fileToken.get(), m_filePack.get());
+    m_fileHub = std::make_unique<ZmFileHubModule>(
+        m_restful, m_session.get(), m_permission.get(), m_gate.get(), m_user.get(),
+        m_fileDb.get(), m_fileNode.get(), m_fileTask.get(), m_fileAudit.get(),
+        m_fileUpload.get(), m_filePack.get(), m_fileToken.get(), m_fileShare.get());
+    m_fileAdmin = std::make_unique<ZmFileAdminModule>(
+        m_restful, m_session.get(), m_permission.get(), m_gate.get(), m_user.get(),
+        m_fileDb.get(), m_fileNode.get(), m_fileTask.get(), m_fileAudit.get(),
+        m_filePack.get(), m_fileStore.get(), m_fileUpload.get());
+    // 启动期收尾:僵尸任务置已中断 + 打包任务中断标记
+    m_fileTask->MarkZombieTasks();
+    m_filePack->RecoverOrphans();
+    m_fileAdmin->StartMaintenance();
+    m_fileHub->StartDownloadSweeper();
+    // 权限点登记(filehub / filehubAdmin;幂等)
+    m_fileHub->RegisterPermissions();
+    // 周期清理的物理侧动作(依赖倒置:底层只挑数据,物理删除由上层注入)
+    ZmFileDbModule::CleanupHooks hooks;
+    hooks.purgeExpiredTrash = [this](int64_t now) {
+        if (m_fileNode)
+            m_fileNode->PurgeExpiredSync(now - zm_file::kTrashRetainDays * 86400);
+    };
+    hooks.purgeUploadChunks = [this](int64_t now) {
+        if (m_fileUpload)
+            m_fileUpload->PurgeExpired(now);
+    };
+    hooks.cleanCache = [this](int64_t now) {
+        if (m_filePack)
+            m_filePack->CleanCache(now);
+    };
+    // 每日一致性校验默认开启(与其它清理项同为 03:00;可用配置关闭)
+    hooks.verifyConsistency = [this](int64_t now) {
+        (void)now;
+        if (m_fileAdmin)
+            m_fileAdmin->StartSync(false, ZmOpCtx{0, "system", ""});
+    };
+    m_fileDb->SetCleanupHooks(hooks);
 }
 
 // ============================================================================
@@ -208,6 +289,8 @@ void ServicePortal::RegisterRestfulRoutes(ZmHttpRestfulServer* rest)
     m_auth->RegisterRoutes();
     m_admin->RegisterRoutes();
     m_portal->RegisterRoutes();
+    m_fileHub->RegisterRoutes();
+    m_fileAdmin->RegisterRoutes();
 }
 
 // ============================================================================

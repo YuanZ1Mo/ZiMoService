@@ -7,6 +7,8 @@ import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, onDeactivat
 import { adminApi } from '../../api/admin'
 import { useSessionStore } from '../../stores/session'
 import Modal from '../../components/Modal.vue'
+import FileHubAdmin from './FileHubAdmin.vue'
+import { USE_MOCK } from '../../api/filehub'
 
 const toast = inject('toast')
 const session = useSessionStore()
@@ -91,11 +93,13 @@ const confirmBox = reactive({ show: false, title: '', msg: '', fn: null })
 // 子功能独立授权:各子标签按对应功能权限点显隐(users ↔ userManage)
 const sysTabs = [
   { key: 'users', name: '用户管理', todo: false, perm: 'userManage' },
+  { key: 'filehub-admin', name: '文件中心管理', todo: false, perm: 'filehubAdmin' },
   { key: 'roles', name: '角色管理', todo: true, perm: '' },
   { key: 'perms', name: '权限管理', todo: true, perm: '' },
   { key: 'audit', name: '审计日志', todo: true, perm: '' }
 ]
-const visibleTabs = computed(() => sysTabs.filter(t => !t.perm || hasPerm(t.perm)))
+// mock 演示模式放行 filehub-admin 标签(权限点 filehubAdmin 尚未登记进 user.db)
+const visibleTabs = computed(() => sysTabs.filter(t => !t.perm || hasPerm(t.perm) || (USE_MOCK && t.key === 'filehub-admin')))
 const sysTab = ref('users')
 // 会话权限就绪/变化后:当前 tab 失去权限则落到第一个可见 tab
 watch(() => session.user && session.user.permissions, () => {
@@ -383,6 +387,10 @@ onMounted(init)
         <div class="empty-title">无权限访问</div>
         <div class="empty-sub">您没有用户管理模块的操作权限,请联系管理员授权</div>
       </div>
+    </div>
+
+    <div v-else-if="sysTab === 'filehub-admin'" style="margin-top:18px">
+      <FileHubAdmin />
     </div>
 
     <div v-else class="card work-card" style="margin-top:18px">
