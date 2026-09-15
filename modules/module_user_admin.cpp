@@ -13,6 +13,8 @@
 #include "zm_net_http_restful_server.h"
 #include "zm_util_logger.h"
 
+#include <algorithm>
+
 using namespace drogon;
 
 // ============================================================================
@@ -32,10 +34,10 @@ ZmUserAdminModule::ZmUserAdminModule(ZmHttpRestfulServer* rest, ZmUserModule* us
 ZmUserAdminModule::~ZmUserAdminModule() = default;
 
 std::string ZmUserAdminModule::CheckOperable(const ZmSessionCtx& op, int64_t targetUid,
-                                             int targetLevel)
+                                             int targetLevel, bool allowSelf)
 {
     if (op.uid == targetUid)
-        return "不可操作自己";
+        return allowSelf ? "" : "不可操作自己";
     if (op.level <= targetLevel)
         return "等级压制:仅可操作等级低于自己的用户";
     return "";
@@ -59,7 +61,7 @@ void ZmUserAdminModule::RegisterRoutes()
 {
     if (!m_rest)
         return;
-    // 全部接口需 userManager 权限(门禁 Filter 按路径前缀拦截)
+    // 全部接口需 systemManager 权限(门禁 Filter 按路径前缀拦截)
     m_rest->RegisterCoro("/zimo/api/admin/users", HttpMethod::Get,
                          [this](HttpRequestPtr req) -> Task<HttpResponsePtr> {
                              return HandleList(std::move(req));
@@ -123,7 +125,7 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleList(HttpRequestPtr req)
     {
         co_return ZmAuthGateModule::ApiError(r.status, r.code, r.message);
     }
-    if (!(co_await m_permission->HasPermission(ctx.uid, "userManager")))
+    if (!(co_await m_permission->HasPermission(ctx.uid, "userManage")))
     {
         co_return ZmAuthGateModule::ApiError(403, "PERM_DENIED", "无权限访问");
     }
@@ -154,7 +156,7 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleColumns(HttpRequestPtr re
     {
         co_return ZmAuthGateModule::ApiError(r.status, r.code, r.message);
     }
-    if (!(co_await m_permission->HasPermission(ctx.uid, "userManager")))
+    if (!(co_await m_permission->HasPermission(ctx.uid, "userManage")))
     {
         co_return ZmAuthGateModule::ApiError(403, "PERM_DENIED", "无权限访问");
     }
@@ -173,7 +175,7 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandlePermCodes(HttpRequestPtr 
     {
         co_return ZmAuthGateModule::ApiError(r.status, r.code, r.message);
     }
-    if (!(co_await m_permission->HasPermission(ctx.uid, "userManager")))
+    if (!(co_await m_permission->HasPermission(ctx.uid, "userManage")))
     {
         co_return ZmAuthGateModule::ApiError(403, "PERM_DENIED", "无权限访问");
     }
@@ -192,7 +194,7 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleGet(HttpRequestPtr req, s
     {
         co_return ZmAuthGateModule::ApiError(r.status, r.code, r.message);
     }
-    if (!(co_await m_permission->HasPermission(ctx.uid, "userManager")))
+    if (!(co_await m_permission->HasPermission(ctx.uid, "userManage")))
     {
         co_return ZmAuthGateModule::ApiError(403, "PERM_DENIED", "无权限访问");
     }
@@ -205,6 +207,12 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleGet(HttpRequestPtr req, s
     // 过滤敏感列
     for (const char* k : {"pass_salt", "pass_hash", "temp_pass_salt", "temp_pass_hash"})
         zm_json_erase(user, k);
+    // 附有效权限码全集(角色 ∪ 授予 − 拒绝),供编辑表单初始化模块勾选
+    auto perms = co_await m_permission->GetEffectiveCodes(uid);
+    ZMJSON arr = ZMJSON::array();
+    for (auto& c : perms)
+        arr.push_back(c);
+    user["permissions"] = std::move(arr);
     co_return ZmAuthGateModule::ApiOk(user);
 }
 
@@ -220,7 +228,7 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandlePatch(HttpRequestPtr req,
     {
         co_return ZmAuthGateModule::ApiError(r.status, r.code, r.message);
     }
-    if (!(co_await m_permission->HasPermission(ctx.uid, "userManager")))
+    if (!(co_await m_permission->HasPermission(ctx.uid, "userManage")))
     {
         co_return ZmAuthGateModule::ApiError(403, "PERM_DENIED", "无权限访问");
     }
@@ -232,7 +240,8 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandlePatch(HttpRequestPtr req,
     if (!zm_json_has(target, "uid"))
         co_return ZmAuthGateModule::ApiError(404, "USER_NOT_FOUND", "用户不存在");
     int targetLevel = co_await m_permission->GetLevel(uid);
-    std::string deny = CheckOperable(op, uid, targetLevel);
+    // 允许编辑自己(基本信息);平级/上级仍拒绝
+    std::string deny = CheckOperable(op, uid, targetLevel, true);
     if (!deny.empty())
         co_return ZmAuthGateModule::ApiError(403, "PERM_DENIED", deny);
 
@@ -242,12 +251,29 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandlePatch(HttpRequestPtr req,
         co_return ZmAuthGateModule::ApiError(400, "BAD_REQUEST", "请求体格式错误");
 
     // 白名单(动态列元数据中可编辑列;敏感列不在白名单由模块强制)
-    const std::vector<std::string> whitelist = {
+    std::vector<std::string> whitelist = {
         "account", "nickname", "email", "phone", "status", "avatar", "signature", "preferences"};
+    if (uid == op.uid)
+    {
+        // 自己不可经 PATCH 停用自己(status 联动吊销会话会自锁),仅资料字段可改
+        whitelist.erase(std::remove(whitelist.begin(), whitelist.end(), "status"), whitelist.end());
+    }
     ZMJSON patch = body;
+    // 空操作幂等成功:统一保存表单下"只改角色/模块"时 PATCH 无白名单字段属常态
+    bool hasField = false;
+    for (const auto& it : patch.items())
+    {
+        if (std::find(whitelist.begin(), whitelist.end(), it.key()) != whitelist.end())
+        {
+            hasField = true;
+            break;
+        }
+    }
+    if (!hasField)
+        co_return ZmAuthGateModule::ApiOk(ZMJSON::object());
     bool ok = co_await m_user->UpdateUserRow(uid, whitelist, patch);
     if (!ok)
-        co_return ZmAuthGateModule::ApiError(400, "PATCH_REJECTED", "无可更新字段或校验失败");
+        co_return ZmAuthGateModule::ApiError(400, "PATCH_REJECTED", "字段校验失败(昵称/账号/状态非法或重复)");
     // 停用(status=2)联动吊销全部会话
     if (patch.contains("status") && zm_json_get_int(patch, "status", 0) == 2)
     {
@@ -273,7 +299,7 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleRole(HttpRequestPtr req, 
     {
         co_return ZmAuthGateModule::ApiError(r.status, r.code, r.message);
     }
-    if (!(co_await m_permission->HasPermission(ctx.uid, "userManager")))
+    if (!(co_await m_permission->HasPermission(ctx.uid, "userManage")))
     {
         co_return ZmAuthGateModule::ApiError(403, "PERM_DENIED", "无权限访问");
     }
@@ -308,7 +334,7 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleRole(HttpRequestPtr req, 
 }
 
 // ============================================================================
-// 模块授权 / 解除
+// 模块授权(单人覆盖:按目标集合 diff,勾选=授予/取消=拒绝或清除)
 // ============================================================================
 drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandlePermissions(HttpRequestPtr req, std::string uidStr)
 {
@@ -319,7 +345,7 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandlePermissions(HttpRequestPt
     {
         co_return ZmAuthGateModule::ApiError(r.status, r.code, r.message);
     }
-    if (!(co_await m_permission->HasPermission(ctx.uid, "userManager")))
+    if (!(co_await m_permission->HasPermission(ctx.uid, "userManage")))
     {
         co_return ZmAuthGateModule::ApiError(403, "PERM_DENIED", "无权限访问");
     }
@@ -331,26 +357,34 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandlePermissions(HttpRequestPt
     ZMJSON body = zm_json_parse(std::string(req->getBody()), err);
     if (!err.empty() || !body.is_object())
         co_return ZmAuthGateModule::ApiError(400, "BAD_REQUEST", "请求体格式错误");
-    std::string permCode = zm_json_get_str(body, "permCode");
-    int grantType = zm_json_get_int(body, "grantType", 0);
-    if (permCode.empty() || (grantType != 1 && grantType != 2))
-        co_return ZmAuthGateModule::ApiError(400, "BAD_REQUEST", "permCode/grantType 非法");
+    // 请求体:{ codes: [权限 code 全集] }(空数组合法 = 全部取消)
+    if (!body.contains("codes") || !body["codes"].is_array())
+        co_return ZmAuthGateModule::ApiError(400, "BAD_REQUEST", "codes 必须为数组");
+    std::vector<std::string> codes;
+    for (const auto& v : body["codes"])
+    {
+        if (!v.is_string())
+            co_return ZmAuthGateModule::ApiError(400, "BAD_REQUEST", "codes 元素必须为字符串");
+        codes.push_back(v.get<std::string>());
+    }
     // 存在性校验(DEF-5 2026-09-12;同 HandleRole:否则会对不存在用户写授权)
     auto target = co_await m_user->FindByUid(uid);
     if (!zm_json_has(target, "uid"))
         co_return ZmAuthGateModule::ApiError(404, "USER_NOT_FOUND", "用户不存在");
     int targetLevel = co_await m_permission->GetLevel(uid);
-    std::string deny = CheckOperable(op, uid, targetLevel);
+    // 允许配置自己的模块(权限点均不高于操作者可见范围,无越权);平级/上级仍拒绝
+    std::string deny = CheckOperable(op, uid, targetLevel, true);
     if (!deny.empty())
         co_return ZmAuthGateModule::ApiError(403, "PERM_DENIED", deny);
-    bool ok = co_await m_permission->SetUserPermission(uid, permCode, grantType, op.uid);
+    ZMJSON diff;
+    bool ok = co_await m_permission->SetUserPermissions(uid, codes, op.uid, diff);
     if (!ok)
         co_return ZmAuthGateModule::ApiError(400, "GRANT_FAILED", "授权失败(权限点不存在?)");
-    ZMJSON detail = ZMJSON::object();
-    detail["permCode"] = permCode;
-    detail["grantType"] = grantType;
-    co_await m_audit->RecordOperation(op.uid, op.account, "grant_permission", "user", uid,
-                                      zm_json_dump(detail), op.ip);
+    if (diff.is_object() && !diff.empty())
+    {
+        co_await m_audit->RecordOperation(op.uid, op.account, "grant_permission", "user", uid,
+                                          zm_json_dump(diff), op.ip);
+    }
     co_return ZmAuthGateModule::ApiOk(ZMJSON::object());
 }
 
@@ -366,7 +400,7 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleDisable(HttpRequestPtr re
     {
         co_return ZmAuthGateModule::ApiError(r.status, r.code, r.message);
     }
-    if (!(co_await m_permission->HasPermission(ctx.uid, "userManager")))
+    if (!(co_await m_permission->HasPermission(ctx.uid, "userManage")))
     {
         co_return ZmAuthGateModule::ApiError(403, "PERM_DENIED", "无权限访问");
     }
@@ -403,7 +437,7 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleEnable(HttpRequestPtr req
     {
         co_return ZmAuthGateModule::ApiError(r.status, r.code, r.message);
     }
-    if (!(co_await m_permission->HasPermission(ctx.uid, "userManager")))
+    if (!(co_await m_permission->HasPermission(ctx.uid, "userManage")))
     {
         co_return ZmAuthGateModule::ApiError(403, "PERM_DENIED", "无权限访问");
     }
@@ -440,7 +474,7 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleDelete(HttpRequestPtr req
     {
         co_return ZmAuthGateModule::ApiError(r.status, r.code, r.message);
     }
-    if (!(co_await m_permission->HasPermission(ctx.uid, "userManager")))
+    if (!(co_await m_permission->HasPermission(ctx.uid, "userManage")))
     {
         co_return ZmAuthGateModule::ApiError(403, "PERM_DENIED", "无权限访问");
     }
@@ -475,7 +509,7 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleRestore(HttpRequestPtr re
     {
         co_return ZmAuthGateModule::ApiError(r.status, r.code, r.message);
     }
-    if (!(co_await m_permission->HasPermission(ctx.uid, "userManager")))
+    if (!(co_await m_permission->HasPermission(ctx.uid, "userManage")))
     {
         co_return ZmAuthGateModule::ApiError(403, "PERM_DENIED", "无权限访问");
     }
@@ -511,7 +545,7 @@ drogon::Task<HttpResponsePtr> ZmUserAdminModule::HandleResetPassword(HttpRequest
     {
         co_return ZmAuthGateModule::ApiError(r.status, r.code, r.message);
     }
-    if (!(co_await m_permission->HasPermission(ctx.uid, "userManager")))
+    if (!(co_await m_permission->HasPermission(ctx.uid, "userManage")))
     {
         co_return ZmAuthGateModule::ApiError(403, "PERM_DENIED", "无权限访问");
     }

@@ -41,7 +41,7 @@ function icoOf(m) {
   if (m.code === 'home') {
     return '<path d="m3 10 9-7 9 7v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M9 22V12h6v10"/>'
   }
-  if (m.code === 'userManager') {
+  if (m.code === 'systemManager') {
     return '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3h.1a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5h.1a1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/>'
   }
   return '<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/>'
@@ -59,6 +59,7 @@ async function loadHome() {
     session.setUser({
       uid: data.uid, account: data.account, nickname: data.nickname,
       roleCode: data.role && data.role.code, level: data.role && data.role.level,
+      permissions: data.permissions || [],
       forceChange: session.forceChange
     })
     modulesStore.fetchModules()
@@ -210,7 +211,6 @@ onBeforeUnmount(() => {
           <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" v-html="icoOf(m)"></svg>
         </span>
         <span class="side-label">{{ m.name }}</span>
-        <span class="side-badge num" style="margin-left:auto;font-size:11px;color:var(--color-text-3)">{{ m.index }}</span>
       </button>
       <div class="side-foot">ZiMo Portal · v1.0</div>
     </nav>

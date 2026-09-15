@@ -15,8 +15,8 @@ export const adminApi = {
   detail: (uid) => api.get(`/admin/users/${uid}`),
   patch: (uid, body) => api.patch(`/admin/users/${uid}`, body),
   role: (uid, roleCode) => api.post(`/admin/users/${uid}/role`, { roleCode }),
-  permissions: (uid, permCode, grantType) =>
-    api.post(`/admin/users/${uid}/permissions`, { permCode, grantType }),
+  // 模块授权:提交该用户最终应持有的权限 code 全集(服务端与角色默认做 diff)
+  permissions: (uid, codes) => api.post(`/admin/users/${uid}/permissions`, { codes }),
   disable: (uid) => api.post(`/admin/users/${uid}/disable`),
   enable: (uid) => api.post(`/admin/users/${uid}/enable`),
   remove: (uid) => api.del(`/admin/users/${uid}`),

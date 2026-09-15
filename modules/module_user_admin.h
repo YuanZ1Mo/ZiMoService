@@ -2,9 +2,10 @@
 #define ZM_MODULE_USER_ADMIN_H
 
 // ============================================================================
-// ZmUserAdminModule:用户管理模块(设计文档 §3.9,系统管理-用户管理)
-//  全部管理操作编排(列表/列元数据/属性修改/提降权/模块授权/停用启用/
-//  删除恢复/强制重置密码);可见权限点 userManager(门禁已拦截)。
+// ZmUserAdminModule:用户管理模块(设计文档 §3.9,系统管理→用户管理)
+//  全部管理操作编排(列表/列元数据/属性修改/角色变更/模块授权/停用启用/
+//  删除恢复/强制重置密码);API 授权功能权限点 userManage(门禁已拦截),
+//  门户入口由 systemManager 控制(两者分层,子功能可独立授权)。
 //  等级压制:操作者 level > 目标,不可操作自己;developer(level 3)天然自我保护。
 //  每次操作联动操作审计 + 安全事件 + 权限缓存失效 + 策略版本递增。
 // ============================================================================
@@ -41,8 +42,8 @@ public:
 
 private:
     /// 等级压制 + 不可操作自己;返回错误信息(空 = 允许)
-    static std::string CheckOperable(const ZmSessionCtx& operatorCtx, int64_t targetUid,
-                                     int targetLevel);
+    static std::string CheckOperable(const ZmSessionCtx& op, int64_t targetUid,
+                                             int targetLevel, bool allowSelf = false);
     /// 从请求提取 {1} 占位符 uid(先取参数,取不到则从路径解析)
     /// 路径参数 uid 文本 → int64(非法返回 0;调用方按 uid<=0 → 400)
     /// P3/v2.11:路径参数由路由形参直接传入,不再从 req 手工解析路径

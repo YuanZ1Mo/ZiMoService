@@ -72,5 +72,11 @@ drogon::Task<HttpResponsePtr> ZmPortalModule::HandleHome(HttpRequestPtr req)
     data["role"]["level"] = ctx.level;
     // 拥有的模块清单
     data["modules"] = co_await m_permission->GetModuleList(ctx.uid);
+    // 有效权限码全集(含功能权限点,供页面子功能显隐判断)
+    auto perms = co_await m_permission->GetEffectiveCodes(ctx.uid);
+    ZMJSON permsArr = ZMJSON::array();
+    for (const auto& c : perms)
+        permsArr.push_back(c);
+    data["permissions"] = std::move(permsArr);
     co_return ZmAuthGateModule::ApiOk(data);
 }

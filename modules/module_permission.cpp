@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <sstream>
+#include <unordered_map>
 #include <unordered_set>
 
 // ============================================================================
@@ -198,27 +199,114 @@ drogon::Task<bool> ZmPermissionModule::ChangeRole(int operatorLevel, int64_t tar
     co_return ok;
 }
 
-drogon::Task<bool> ZmPermissionModule::SetUserPermission(int64_t uid,
-                                                         const std::string& permCode,
-                                                         int grantType, int64_t grantBy)
+drogon::Task<bool> ZmPermissionModule::SetUserPermissions(
+    int64_t uid, const std::vector<std::string>& targetCodes,
+    int64_t grantBy, ZMJSON& diff)
 {
-    if (grantType != 1 && grantType != 2)
-        co_return false;
-    auto p = co_await m_db->QueryRow("SELECT code FROM permissions WHERE code=?1;",
-                                     {permCode});
-    if (!zm_json_has(p, "code"))
-        co_return false;
+    // 单人授权域 = 全部权限点(门户模块 type=0 + 功能权限 type=1)
+    // 目标集合去重,并校验全部为已存在权限点(越域整体拒绝,避免静默丢勾选)
+    std::unordered_set<std::string> target;
+    for (const auto& code : targetCodes)
+        target.insert(code);
+    auto allRows = co_await m_db->QueryRows("SELECT code FROM permissions;", {});
+    std::unordered_set<std::string> known;
+    for (const auto& r : allRows)
+        known.insert(zm_json_get_str(r, "code"));
+    for (const auto& code : target)
+    {
+        if (!known.count(code))
+            co_return false;
+    }
+    // 角色默认集合(取消角色自带权限需 deny 覆盖,勾选角色自带权限应清覆盖行)
+    auto row = co_await m_db->QueryRow(
+        "SELECT u.role_code, COALESCE(r.permission_codes,'[]') AS perms "
+        "FROM users u LEFT JOIN roles r ON u.role_code=r.code WHERE u.uid=?1;",
+        {std::to_string(uid)});
+    std::unordered_set<std::string> roleSet;
+    {
+        std::string err;
+        ZMJSON arr = zm_json_parse(zm_json_get_str(row, "perms", "[]"), err);
+        if (err.empty() && arr.is_array())
+        {
+            for (const auto& v : arr)
+            {
+                if (v.is_string())
+                    roleSet.insert(v.get<std::string>());
+            }
+        }
+    }
+    // 现有覆盖行
+    auto grants = co_await m_db->QueryRows(
+        "SELECT perm_code, grant_type FROM user_permissions WHERE uid=?1;",
+        {std::to_string(uid)});
+    std::unordered_map<std::string, int> existing;
+    for (const auto& g : grants)
+        existing[zm_json_get_str(g, "perm_code")] = zm_json_get_int(g, "grant_type", 1);
+
+    // 目标动作推导:对角色默认与目标的并集逐项决定最终覆盖行
+    //   勾选(目标)∩角色 → 清覆盖;勾选∩非角色 → grant=1
+    //   取消(非目标)∩角色 → deny=2;取消∩非角色 → 清覆盖(含旧 deny 残留)
+    std::unordered_map<std::string, int> want;   // code → 期望 grant_type(1/2)或 0=删除
+    std::unordered_set<std::string> domain = roleSet;   // 评估域:角色 ∪ 目标 ∪ 现有覆盖
+    for (const auto& c : target)
+        domain.insert(c);
+    for (const auto& kv : existing)
+        domain.insert(kv.first);
+    for (const auto& c : domain)
+    {
+        bool inTarget = target.count(c) > 0;
+        bool inRole = roleSet.count(c) > 0;
+        if (inTarget && inRole)
+            want[c] = 0;    // 回归角色默认
+        else if (inTarget)
+            want[c] = 1;    // 单人授予
+        else if (inRole)
+            want[c] = 2;    // 拒绝覆盖角色默认
+        else
+            want[c] = 0;    // 无意义行清理
+    }
+
+    ZMJSON granted = ZMJSON::array(), denied = ZMJSON::array(), cleared = ZMJSON::array();
     int64_t now = ZmDbModule::Now();
-    bool ok = co_await m_db->Exec(
-        "INSERT INTO user_permissions(uid, perm_code, grant_type, grant_by, create_time) "
-        "VALUES(?1,?2,?3,?4,?5) "
-        "ON CONFLICT(uid, perm_code) DO UPDATE SET grant_type=excluded.grant_type, "
-        "grant_by=excluded.grant_by, create_time=excluded.create_time;",
-        {std::to_string(uid), permCode, std::to_string(grantType),
-         std::to_string(grantBy), std::to_string(now)});
-    if (ok)
+    bool ok = true;
+    for (const auto& [code, wantType] : want)
+    {
+        auto it = existing.find(code);
+        int curType = it != existing.end() ? it->second : 0;
+        if (curType == wantType)
+            continue;   // 覆盖行已符合期望(含双方都无覆盖)
+        if (wantType == 0)
+        {
+            if (it == existing.end())
+                continue;
+            ok = ok && co_await m_db->Exec("DELETE FROM user_permissions WHERE uid=?1 AND perm_code=?2;",
+                                           {std::to_string(uid), code});
+            cleared.push_back(code);
+        }
+        else
+        {
+            ok = ok && co_await m_db->Exec(
+                "INSERT INTO user_permissions(uid, perm_code, grant_type, grant_by, create_time) "
+                "VALUES(?1,?2,?3,?4,?5) "
+                "ON CONFLICT(uid, perm_code) DO UPDATE SET grant_type=excluded.grant_type, "
+                "grant_by=excluded.grant_by, create_time=excluded.create_time;",
+                {std::to_string(uid), code, std::to_string(wantType),
+                 std::to_string(grantBy), std::to_string(now)});
+            (wantType == 1 ? granted : denied).push_back(code);
+        }
+    }
+    if (!ok)
+        co_return false;
+    bool changed = granted.size() + denied.size() + cleared.size() > 0;
+    if (changed)
+    {
+        diff = ZMJSON::object();
+        diff["granted"] = std::move(granted);
+        diff["denied"] = std::move(denied);
+        diff["cleared"] = std::move(cleared);
         co_await InvalidatePermCache(uid);
-    co_return ok;
+    }
+    co_return true;
 }
 
 drogon::Task<void> ZmPermissionModule::InvalidatePermCache(int64_t uid)
@@ -240,6 +328,7 @@ drogon::Task<ZMJSON> ZmPermissionModule::ListRoles()
 drogon::Task<ZMJSON> ZmPermissionModule::ListPermCodes()
 {
     // 注意:index 是 SQLite 保留字,列名必须加引号,否则准备语句直接语法错误
+    // 返回全部权限点(含 type 字段):前端按门户模块/功能权限分组展示
     auto rows = co_await m_db->QueryRows(
         "SELECT code, name, module, url, type, \"index\", enabled FROM permissions "
         "ORDER BY sort ASC;",

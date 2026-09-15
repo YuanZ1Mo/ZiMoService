@@ -117,9 +117,9 @@ bool ServicePortal::BroadcastMessage(const string& topic, const string& content,
  */
 void ServicePortal::CreateModules()
 {
-    // 数据访问(全新建库建表 + 种子;库文件 exe 同级 db\user.db)
+    // 数据访问(全新建库建表 + 种子;库文件 exe 同级 db\user\user.db)
     m_db = std::make_unique<ZmDbModule>();
-    if (!m_db->Init(ZmExeDir() + "db\\user.db"))
+    if (!m_db->Init(ZmExeDir() + "db\\user\\user.db"))
     {
         DEFAULT_LOG_ERROR("ServicePortal::CreateModules: ZmDbModule::Init 失败,业务功能不可用");
     }

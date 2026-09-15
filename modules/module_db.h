@@ -41,7 +41,7 @@ public:
     ~ZmDbModule();
 
     /// 打开库 + 全新建表 + 种子(幂等:仅首次建库);后续表结构变更由运维手工执行 SQL
-    /// @param dbPath 数据库文件绝对路径(exe 同级 db\user.db)
+    /// @param dbPath 数据库文件绝对路径(exe 同级 db\user\user.db)
     bool Init(const std::string& dbPath);
 
     /// 注册事件循环启动回调:启动后注册每日 03:00 周期清理任务
@@ -127,8 +127,9 @@ private:
 /// Redis 键命名空间助手(zimo:<域>:<维度>:<键值>)
 namespace zm_redis_key
 {
-inline std::string PermCodes(int64_t uid) { return "zimo:perm:codes:" + std::to_string(uid); }
-inline std::string PermModules(int64_t uid) { return "zimo:perm:modules:" + std::to_string(uid); }
+/// v2:userManager→systemManager 重命名后作废旧版缓存(旧值含废弃 code)
+inline std::string PermCodes(int64_t uid) { return "zimo:perm:codes:v2:" + std::to_string(uid); }
+inline std::string PermModules(int64_t uid) { return "zimo:perm:modules:v2:" + std::to_string(uid); }
 inline std::string PolicyVersion() { return "zimo:policy:version"; }
 }  // namespace zm_redis_key
 

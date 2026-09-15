@@ -86,7 +86,7 @@ public:
      * @return 鉴权结果;ok=false 时按 status/code/message 直接回响应
      *
      * @example
-     *   auto r = co_await m_gate->Authorize(req, "userManager");
+     *   auto r = co_await m_gate->Authorize(req, "systemManager");
      *   if (!r.ok) co_return ZmAuthGateModule::ApiError(r.status, r.code, r.message);
      */
     drogon::Task<ZmGateResult> Authorize(const drogon::HttpRequestPtr& req,

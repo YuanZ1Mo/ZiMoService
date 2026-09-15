@@ -14,7 +14,7 @@ import PortalLayout from '../layouts/PortalLayout.vue'
 const moduleViews = import.meta.glob('../modules/**/index.vue')
 
 function kebabOf(key) {
-  // ../modules/home/index.vue → home;../modules/user-manager/index.vue → user-manager
+  // ../modules/home/index.vue → home;../modules/system-manager/index.vue → system-manager
   const m = key.match(/\.\.\/modules\/([^/]+)\/index\.vue$/)
   return m ? m[1] : null
 }

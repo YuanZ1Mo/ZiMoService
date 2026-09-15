@@ -611,9 +611,9 @@ bool ZmDbModule::SeedData()
     int64_t now = Now();
     // 角色(§6:developer/admin/user)
     std::vector<std::string> roles = {
-        "developer", "开发者", "3", R"(["home","userManager"])", "1", "1",
+        "developer", "开发者", "3", R"(["home","systemManager","userManage"])", "1", "1",
         "系统最高权限(首个注册用户)",
-        "admin", "管理员", "2", R"(["home","userManager"])", "2", "1",
+        "admin", "管理员", "2", R"(["home","systemManager","userManage"])", "2", "1",
         "管理操作(由提权授予)",
         "user", "用户", "1", R"(["home"])", "3", "1",
         "普通用户",
@@ -626,13 +626,12 @@ bool ZmDbModule::SeedData()
                        roles[i + 5], roles[i + 6], std::to_string(now)}))
             return false;
     }
-    // 权限点(§3.9):本期两个门户模块 + 预留(disabled=0 停用不显示)
+    // 权限点(§3.9):type 0=门户模块(进侧边栏) / 1=功能权限(index=0 不进门户清单)
+    // 门户模块与系统管理子功能分层:systemManager=门户入口,userManage=用户管理 API 授权
     std::vector<std::string> perms = {
         "home", "用户主页", "portal", "/portal/home", "0", "1", "1", "1", "用户主页模块",
-        "userManager", "系统管理-用户管理", "system", "/portal/user-manager", "0", "-1", "2", "1", "用户管理权限",
-        "filehub", "文件中心(预留)", "filehub", "/portal/filehub", "0", "0", "3", "0", "文件中心模块(下一期)",
-        "serverAudioStream", "远程音频流(预留)", "audio", "/portal/server-audio-stream", "0", "0", "4", "0", "远程音频流模块(下一期)",
-        "filehubAdmin", "文件中心管理(预留)", "filehub", "/portal/filehub-admin", "0", "0", "5", "0", "文件中心管理(下一期)",
+        "systemManager", "系统管理", "system", "/portal/system-manager", "0", "-1", "2", "1", "系统管理权限",
+        "userManage", "用户管理", "system", "", "1", "0", "3", "1", "系统管理-用户管理功能权限",
     };
     for (size_t i = 0; i + 9 <= perms.size(); i += 9)
     {

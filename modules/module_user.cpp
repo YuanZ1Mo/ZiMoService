@@ -317,14 +317,27 @@ drogon::Task<bool> ZmUserModule::UpdateUserRow(int64_t uid,
 
     // 主表与资料表分写
     bool ok = co_await m_db->WithTx([&](ZmDbModule& db) -> bool {
-        // users 基础列
+        // 可空唯一列(email/phone):空串落 NULL,否则多个"无邮箱"用户互相撞 UNIQUE
+        static const std::unordered_set<std::string> kNullableUnique = {"email", "phone"};
         for (const std::string& key : cols)
         {
             if (kProfile.count(key))
                 continue;
-            std::string sql = "UPDATE users SET " + key + "=?1 WHERE uid=?2;";
-            if (!db.ExecSync(sql, {params[std::find(cols.begin(), cols.end(), key) -
-                                   cols.begin()], std::to_string(uid)}))
+            const size_t idx = static_cast<size_t>(
+                std::find(cols.begin(), cols.end(), key) - cols.begin());
+            std::string sql;
+            std::vector<std::string> p;
+            if (kNullableUnique.count(key) && params[idx].empty())
+            {
+                sql = "UPDATE users SET " + key + "=NULL WHERE uid=?1;";
+                p = {std::to_string(uid)};
+            }
+            else
+            {
+                sql = "UPDATE users SET " + key + "=?1 WHERE uid=?2;";
+                p = {params[idx], std::to_string(uid)};
+            }
+            if (!db.ExecSync(sql, p))
                 return false;
         }
         // profile 列

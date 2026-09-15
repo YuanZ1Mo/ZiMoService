@@ -55,8 +55,7 @@
 .side-ico{width:22px;height:22px;flex:none;display:flex;align-items:center;justify-content:center}
 .side-label{overflow:hidden;text-overflow:ellipsis}
 .portal-side.collapsed .side-label,
-.portal-side.collapsed .side-cap,
-.portal-side.collapsed .side-badge{display:none}
+.portal-side.collapsed .side-cap{display:none}
 .side-foot{margin-top:auto;padding:12px;font-size:var(--fs-cap);color:var(--color-text-3);white-space:nowrap;overflow:hidden}
 
 /* ---------- 工作区:宽度随浏览器视口自适应 ---------- */
@@ -76,8 +75,7 @@
   }
   .portal-side.open{transform:translateX(0)}
   .portal-side.open .side-label,
-  .portal-side.open .side-cap,
-  .portal-side.open .side-badge{display:inline}
+  .portal-side.open .side-cap{display:inline}
   .portal-main{margin-left:0 !important;padding:16px}
 }
 

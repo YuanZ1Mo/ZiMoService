@@ -141,12 +141,15 @@ bool ZmAuthGateModule::IsForceChangeAllowedApi(const std::string& path)
  * @return 该路径所需的权限点;空 = 不额外要求权限(仅需有效会话)
  *
  * @example
- *   // /zimo/api/admin/users/5 → "userManager"
+ *   // /zimo/api/admin/users/5 → "userManage";/zimo/api/admin/其他 → "systemManager"
  */
 std::string ZmAuthGateModule::ApiPermForPath(const std::string& path)
 {
+    // 子功能独立授权:各管理子域一行映射(/admin 兜底 = 门户入口权限)
+    if (path.rfind("/zimo/api/admin/users", 0) == 0)
+        return "userManage";
     if (path.rfind("/zimo/api/admin", 0) == 0)
-        return "userManager";
+        return "systemManager";
     return "";
 }
 

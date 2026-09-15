@@ -148,7 +148,7 @@ drogon::Task<HttpResponsePtr> ZmAuthModule::HandleRegister(HttpRequestPtr req)
     {
         co_return ZmAuthGateModule::ApiError(500, "INTERNAL", "用户创建失败");
     }
-    // 签发会话(自动登录;cookie 写入响应)
+    // 签发会话(自动登录;cookie 写入响应);注册即首次登录,同步记录 last_login
     auto resp = HttpResponse::newHttpResponse();
     resp->setStatusCode(k200OK);
     resp->setContentTypeCode(drogon::CT_APPLICATION_JSON);
@@ -158,6 +158,7 @@ drogon::Task<HttpResponsePtr> ZmAuthModule::HandleRegister(HttpRequestPtr req)
     {
         co_return ZmAuthGateModule::ApiError(500, "INTERNAL", "会话签发失败");
     }
+    co_await m_user->TouchLastLogin(uid, ip, ZmDbModule::Now());
     ZMJSON data = ZMJSON::object();
     data["uid"] = uid;
     data["account"] = norm;

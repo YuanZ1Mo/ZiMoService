@@ -36,9 +36,13 @@ public:
     /// 提权/降权:等级压制(操作者 level > 目标;提升最高到操作者下一级)
     drogon::Task<bool> ChangeRole(int operatorLevel, int64_t targetUid,
                                   const std::string& newRoleCode, std::string& errMsg);
-    /// 单人授权/拒绝(UNIQUE(uid,perm_code) 覆盖;grantType 1=授予 2=拒绝)
-    drogon::Task<bool> SetUserPermission(int64_t uid, const std::string& permCode,
-                                         int grantType, int64_t grantBy);
+    /// 单人授权(全域:门户模块 + 功能权限点;按目标集合 diff:勾选=授予,
+    /// 取消=拒绝/清除覆盖;与角色默认的差集落 user_permissions,空 diff 不写库)
+    /// @param targetCodes 用户最终应持有的权限 code 全集(去重)
+    /// @param diff [out] 变更明细 granted/denied/cleared(code 列表),供审计
+    drogon::Task<bool> SetUserPermissions(int64_t uid,
+                                          const std::vector<std::string>& targetCodes,
+                                          int64_t grantBy, ZMJSON& diff);
     /// 变更后失效缓存 + 递增策略版本
     drogon::Task<void> InvalidatePermCache(int64_t uid);
 

@@ -40,7 +40,8 @@ export const useSessionStore = defineStore('session', {
           account: data.account,
           nickname: data.nickname,
           roleCode: data.role && data.role.code,
-          level: data.role && data.role.level
+          level: data.role && data.role.level,
+          permissions: data.permissions || []
         }
         this.forceChange = false
         return true
