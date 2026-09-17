@@ -73,95 +73,94 @@ async function cleanPack(t) {
     <span v-else-if="store.failedCount" class="badge" style="background:var(--color-warn-bg);color:var(--color-warn)">{{ store.failedCount }}</span>
   </button>
 
-  <Teleport to="body">
-    <div v-if="store.panelOpen" class="task-panel" role="dialog" aria-label="传输任务面板">
-      <div class="task-head">
-        <b>传输任务</b>
-        <span v-if="store.activeCount" class="badge badge-info num">进行中 {{ store.activeCount }}</span>
-        <div class="task-tabs">
-          <button type="button" :class="{ on: tab === 'active' }" @click="tab = 'active'">进行中</button>
-          <button type="button" :class="{ on: tab === 'history' }" @click="tab = 'history'">历史</button>
-        </div>
-        <button class="icon-btn" style="width:30px;height:30px" type="button" aria-label="收起面板" @click="store.togglePanel(false)">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
-        </button>
+  <!-- 面板留在模块 DOM 内:传送到 body 会在 keep-alive 缓存期间残留到其它页面 -->
+  <div v-if="store.panelOpen" class="task-panel" role="dialog" aria-label="传输任务面板">
+    <div class="task-head">
+      <b>传输任务</b>
+      <span v-if="store.activeCount" class="badge badge-info num">进行中 {{ store.activeCount }}</span>
+      <div class="task-tabs">
+        <button type="button" :class="{ on: tab === 'active' }" @click="tab = 'active'">进行中</button>
+        <button type="button" :class="{ on: tab === 'history' }" @click="tab = 'history'">历史</button>
       </div>
+      <button class="icon-btn" style="width:30px;height:30px" type="button" aria-label="收起面板" @click="store.togglePanel(false)">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
 
-      <div class="task-list">
-        <template v-if="tab === 'active'">
-          <!-- 客户端上传队列(客户端视角进度) -->
-          <template v-for="u in [...store.uploads].reverse()" :key="u.key">
-            <div class="grp-label" v-if="u.batch && u === store.uploads.find(x => x.batch === u.batch)">上传{{ u.batch ? `「${u.batch}」` : '' }}</div>
-            <div class="titem">
-              <div class="t-top">
-                <span class="st-chip" :class="{ run: u.status === 'run', wait: u.status === 'wait', ok: u.status === 'ok', fail: u.status === 'fail', stop: u.status === 'stop' }">
-                  {{ { run: '上传中', wait: '排队中', ok: '已完成', fail: '失败', stop: '已取消' }[u.status] }}
-                </span>
-                <span class="t-name">{{ u.name }}</span>
-                <span class="t-ops">
-                  <button v-if="u.status === 'run' || u.status === 'wait'" class="btn btn-ghost btn-sm" type="button" @click="store.cancelUpload(u.key)">取消</button>
-                  <button v-if="u.status === 'fail'" class="btn btn-secondary btn-sm" type="button" @click="store.retryUpload(u.key)">重试</button>
-                </span>
-              </div>
-              <div class="tprog" :class="{ done: u.status === 'ok', err: u.status === 'fail' }"><i :style="{ width: (u.size ? Math.min(100, u.done / u.size * 100) : 0) + '%' }"></i></div>
-              <div class="t-sub">
-                <template v-if="u.status === 'fail'">{{ u.error }}</template>
-                <template v-else-if="u.status === 'ok'">秒传/入位完成</template>
-                <template v-else><span class="num">{{ fmtSize(u.done) }} / {{ fmtSize(u.size) }}</span></template>
-              </div>
-            </div>
-          </template>
-          <!-- 服务端任务(1.5s 轮询 tasks/active) -->
-          <div v-for="t in store.serverTasks" :key="t.task_no" class="titem">
+    <div class="task-list">
+      <template v-if="tab === 'active'">
+        <!-- 客户端上传队列(客户端视角进度) -->
+        <template v-for="u in [...store.uploads].reverse()" :key="u.key">
+          <div class="grp-label" v-if="u.batch && u === store.uploads.find(x => x.batch === u.batch)">上传{{ u.batch ? `「${u.batch}」` : '' }}</div>
+          <div class="titem">
             <div class="t-top">
-              <span class="st-chip" :class="statusChip(t.status)">{{ STATUS_NAME[Number(t.status)] }}</span>
-              <span class="t-name">{{ t.name }}</span>
+              <span class="st-chip" :class="{ run: u.status === 'run', wait: u.status === 'wait', ok: u.status === 'ok', fail: u.status === 'fail', stop: u.status === 'stop' }">
+                {{ { run: '上传中', wait: '排队中', ok: '已完成', fail: '失败', stop: '已取消' }[u.status] }}
+              </span>
+              <span class="t-name">{{ u.name }}</span>
               <span class="t-ops">
-                <button class="btn btn-ghost btn-sm" type="button" @click="cancelTask(t)">取消</button>
+                <button v-if="u.status === 'run' || u.status === 'wait'" class="btn btn-ghost btn-sm" type="button" @click="store.cancelUpload(u.key)">取消</button>
+                <button v-if="u.status === 'fail'" class="btn btn-secondary btn-sm" type="button" @click="store.retryUpload(u.key)">重试</button>
               </span>
             </div>
-            <div class="tprog"><i :style="{ width: progress(t) + '%' }"></i></div>
-            <div class="t-sub"><span class="num">{{ TYPE_NAME[Number(t.type)] }} · {{ progressText(t) }}</span></div>
-          </div>
-        </template>
-
-        <template v-else>
-          <div v-if="loadingHistory" style="padding:12px">
-            <div v-for="i in 4" :key="i" class="skeleton" style="height:20px;margin-bottom:10px"></div>
-          </div>
-          <div v-for="t in historyItems" :key="t.task_no" class="titem">
-            <div class="t-top">
-              <span class="st-chip" :class="statusChip(t.status)">{{ STATUS_NAME[Number(t.status)] }}</span>
-              <span class="t-name">{{ t.name }}</span>
-              <span class="t-ops">
-                <!-- 打包完成:下载 + 清理(空闲 30 分钟自动删) -->
-                <template v-if="Number(t.type) === 3 && Number(t.status) === 3">
-                  <button class="btn btn-secondary btn-sm" type="button" @click="store.downloadZip(t.task_no)">下载</button>
-                  <button class="btn btn-ghost btn-sm" type="button" @click="cleanPack(t)">清理</button>
-                </template>
-                <button v-if="Number(t.status) === 4 || Number(t.status) === 6" class="btn btn-secondary btn-sm" type="button" @click="retryTask(t)">重试</button>
-              </span>
-            </div>
-            <div class="tprog" :class="{ done: Number(t.status) === 3, err: Number(t.status) === 4 }"><i :style="{ width: progress(t) + '%' }"></i></div>
+            <div class="tprog" :class="{ done: u.status === 'ok', err: u.status === 'fail' }"><i :style="{ width: (u.size ? Math.min(100, u.done / u.size * 100) : 0) + '%' }"></i></div>
             <div class="t-sub">
-              <template v-if="t.error && Number(t.status) !== 3">{{ t.error }}</template>
-              <template v-else>
-                <span class="num">{{ TYPE_NAME[Number(t.type)] }} · {{ fmtTime(t.end_time || t.create_time) }}{{ Number(t.total_items) ? ` · ${t.total_items} 项` : '' }}{{ t.size ? ` · ${fmtSize(t.size)}` : '' }}</span>
-              </template>
+              <template v-if="u.status === 'fail'">{{ u.error }}</template>
+              <template v-else-if="u.status === 'ok'">秒传/入位完成</template>
+              <template v-else><span class="num">{{ fmtSize(u.done) }} / {{ fmtSize(u.size) }}</span></template>
             </div>
           </div>
         </template>
-
-        <div v-if="isEmpty" class="empty" style="padding:32px 16px">
-          <div class="empty-icon">🛫</div>
-          <div class="empty-title" style="font-size:var(--fs-body)">{{ tab === 'active' ? '暂无进行中任务' : '暂无历史任务' }}</div>
+        <!-- 服务端任务(1.5s 轮询 tasks/active) -->
+        <div v-for="t in store.serverTasks" :key="t.task_no" class="titem">
+          <div class="t-top">
+            <span class="st-chip" :class="statusChip(t.status)">{{ STATUS_NAME[Number(t.status)] }}</span>
+            <span class="t-name">{{ t.name }}</span>
+            <span class="t-ops">
+              <button class="btn btn-ghost btn-sm" type="button" @click="cancelTask(t)">取消</button>
+            </span>
+          </div>
+          <div class="tprog"><i :style="{ width: progress(t) + '%' }"></i></div>
+          <div class="t-sub"><span class="num">{{ TYPE_NAME[Number(t.type)] }} · {{ progressText(t) }}</span></div>
         </div>
-      </div>
+      </template>
 
-      <div class="t-foot">
-        <span class="hint">轮询 /filehub/tasks/active · 1.5s · 无任务自动停止</span>
-        <button class="btn btn-ghost btn-sm" type="button" @click="clearHistory">清除历史</button>
+      <template v-else>
+        <div v-if="loadingHistory" style="padding:12px">
+          <div v-for="i in 4" :key="i" class="skeleton" style="height:20px;margin-bottom:10px"></div>
+        </div>
+        <div v-for="t in historyItems" :key="t.task_no" class="titem">
+          <div class="t-top">
+            <span class="st-chip" :class="statusChip(t.status)">{{ STATUS_NAME[Number(t.status)] }}</span>
+            <span class="t-name">{{ t.name }}</span>
+            <span class="t-ops">
+              <!-- 打包完成:下载 + 清理(空闲 30 分钟自动删) -->
+              <template v-if="Number(t.type) === 3 && Number(t.status) === 3">
+                <button class="btn btn-secondary btn-sm" type="button" @click="store.downloadZip(t.task_no)">下载</button>
+                <button class="btn btn-ghost btn-sm" type="button" @click="cleanPack(t)">清理</button>
+              </template>
+              <button v-if="Number(t.status) === 4 || Number(t.status) === 6" class="btn btn-secondary btn-sm" type="button" @click="retryTask(t)">重试</button>
+            </span>
+          </div>
+          <div class="tprog" :class="{ done: Number(t.status) === 3, err: Number(t.status) === 4 }"><i :style="{ width: progress(t) + '%' }"></i></div>
+          <div class="t-sub">
+            <template v-if="t.error && Number(t.status) !== 3">{{ t.error }}</template>
+            <template v-else>
+              <span class="num">{{ TYPE_NAME[Number(t.type)] }} · {{ fmtTime(t.end_time || t.create_time) }}{{ Number(t.total_items) ? ` · ${t.total_items} 项` : '' }}{{ t.size ? ` · ${fmtSize(t.size)}` : '' }}</span>
+            </template>
+          </div>
+        </div>
+      </template>
+
+      <div v-if="isEmpty" class="empty" style="padding:32px 16px">
+        <div class="empty-icon">🛫</div>
+        <div class="empty-title" style="font-size:var(--fs-body)">{{ tab === 'active' ? '暂无进行中任务' : '暂无历史任务' }}</div>
       </div>
     </div>
-  </Teleport>
+
+    <div class="t-foot">
+      <span class="hint">轮询 /filehub/tasks/active · 1.5s · 无任务自动停止</span>
+      <button class="btn btn-ghost btn-sm" type="button" @click="clearHistory">清除历史</button>
+    </div>
+  </div>
 </template>

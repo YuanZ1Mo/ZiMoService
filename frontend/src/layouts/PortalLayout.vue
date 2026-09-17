@@ -241,19 +241,20 @@ onBeforeUnmount(() => {
 .uc-name{max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .side-mask{position:fixed;inset:0;z-index:650;background:var(--color-scrim)}
 
-/* 门户特效区(壳级):固定视口底部,所有模块共享;静态三色渐变(活力蓝→青→粉) */
+/* 门户特效带(壳级):壳层 flex 的固定高度条带,与模块区并列,不覆盖内容;
+   所有模块共享,新增模块自动附带。左侧让出侧边导航宽度(静态三色渐变:活力蓝→青→粉) */
 .portal-fx{
-  position:fixed;left:var(--sidebar-w);right:0;bottom:0;height:56px;z-index:600;
+  flex:none;height:var(--fx-h);margin-left:var(--sidebar-w);
   overflow:hidden;
   background:
     linear-gradient(90deg,rgba(2,132,199,.18) 0%,rgba(6,182,212,.24) 30%,rgba(236,72,153,.18) 70%,rgba(2,132,199,.18) 100%),
     var(--color-bg);
   border-top:1px solid var(--color-border-soft);
-  transition:left var(--dur-slow) var(--ease);
+  transition:margin-left var(--dur-slow) var(--ease);
 }
-.portal-fx.wide{left:var(--sidebar-w-min)}
+.portal-fx.wide{margin-left:var(--sidebar-w-min)}
 @media (max-width:768px){
-  .portal-fx{left:0}
+  .portal-fx{margin-left:0}
 }
 </style>
 

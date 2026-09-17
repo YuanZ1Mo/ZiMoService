@@ -3,7 +3,7 @@
 // 四区块:①概览 ②一致性同步(手动触发/进度/取消) ③缓存与任务(缓存区/全量回收站/全量任务) ④审计日志(业务日志+分享访问日志)
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, inject } from 'vue'
 import { useSessionStore } from '../../stores/session'
-import { filehubApi, USE_MOCK, fmtSize, fmtTime } from '../../api/filehub'
+import { filehubApi, fmtSize, fmtTime } from '../../api/filehub'
 import { useFilehubStore } from '../../stores/filehub'
 import Modal from '../../components/Modal.vue'
 import FileIcon from '../filehub/FileIcon.vue'
@@ -18,8 +18,8 @@ function hasPerm(code) {
   const ps = session.user && session.user.permissions
   return Array.isArray(ps) && ps.includes(code)
 }
-// 权限判定:mock 演示模式放行(权限点 filehubAdmin 尚未登记,见交接文档)
-const denied = computed(() => denied403.value || (!USE_MOCK && !hasPerm('filehubAdmin')))
+// 权限判定:按会话权限码(权限点 filehubAdmin 由服务端启动时登记给 developer/admin)
+const denied = computed(() => denied403.value || !hasPerm('filehubAdmin'))
 
 const tab = ref('overview')
 const TABS = [

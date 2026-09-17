@@ -69,6 +69,7 @@
 
   /* 布局 */
   --topbar-h:60px;
+  --fx-h:56px;              /* 底部特效带高度(壳层独立条带,模块区不覆盖到它) */
   --sidebar-w:240px;
   --sidebar-w-min:68px;
 

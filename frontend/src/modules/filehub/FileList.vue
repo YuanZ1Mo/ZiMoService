@@ -4,7 +4,7 @@
 // 交互:单击选中 / 双击进目录或下载 / 行尾 ⋯ 菜单 / 行拖拽到文件夹移动 / 系统文件拖入上传
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import FileIcon from './FileIcon.vue'
-import { fmtSize, fmtTime, kindOf } from '../../api/filehub'
+import { fmtSize, fmtTime, kindLabel, highlightText } from '../../api/filehub'
 import { collectDropItems } from '../../api/drop-entries'
 
 const props = defineProps({
@@ -19,6 +19,10 @@ const props = defineProps({
   hasMore: { type: Boolean, default: false }
 })
 const emit = defineEmits(['toggle', 'open', 'ctx', 'drag-to', 'files', 'sort', 'load-more'])
+
+// 可排序列表头:键必须落在服务端支持的范围(name|size|mtime|type,见 ListOrderClause)
+// "创建者"列不参与排序(服务端无该排序键),故单独成列、不写在本表内
+const SORTS = [['name', '名称'], ['type', '类型'], ['size', '大小'], ['mtime', '修改时间']]
 
 // ── 虚拟滚动(定高窗口裁剪,约 40 行核心) ──
 const ROW_H = 57
@@ -96,6 +100,7 @@ async function onDropFiles(e) {
                 :style="k === 'name' ? 'min-width:200px' : ''" @click="emit('sort', k)">
               {{ label }}{{ sort === k ? (order === 'asc' ? ' ↑' : ' ↓') : '' }}
             </th>
+            <th style="min-width:70px">创建者</th>
             <th v-if="showPath" style="min-width:180px">位置</th>
             <th style="width:60px"></th>
           </tr>
@@ -118,7 +123,7 @@ async function onDropFiles(e) {
               <div class="fcell">
                 <FileIcon :node="n" ext />
                 <span class="fname">
-                  <template v-for="(seg, i) in highlight(n.name)" :key="i">
+                  <template v-for="(seg, i) in highlightText(n.name, keyword)" :key="i">
                     <mark v-if="seg.hit">{{ seg.t }}</mark><template v-else>{{ seg.t }}</template>
                   </template>
                 </span>

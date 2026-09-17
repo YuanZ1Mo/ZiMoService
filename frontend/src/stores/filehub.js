@@ -140,14 +140,14 @@ export const useFilehubStore = defineStore('filehub', {
     // ── 下载/打包便捷封装 ──
     async download(ids) {
       const r = await filehubApi.downloadToken(ids)
-      if (r && r.url) downloadByUrl(r.url, '')
+      if (r && r.url) downloadByUrl(r.url)
       else if (r && r.task_no) { this.refreshActive(); this.ensurePolling(); this.togglePanel(true) }
       return r
     },
     async downloadZip(taskNo) {
       // 打包产物下载:按 task_no 换取直链
       const r = await filehubApi.downloadPack(taskNo)
-      if (r && r.url) downloadByUrl(r.url, '')
+      if (r && r.url) downloadByUrl(r.url)
     }
   }
 })

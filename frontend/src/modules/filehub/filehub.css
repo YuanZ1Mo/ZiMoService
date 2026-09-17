@@ -118,7 +118,8 @@ tr:hover .row-ops,tr.sel .row-ops{opacity:1}
 .drop-hint b{font-size:var(--fs-h2);color:var(--color-primary)}
 
 /* ---------- 任务面板 ---------- */
-.task-fab{position:fixed;right:20px;bottom:20px;z-index:550;display:flex;align-items:center;gap:9px;height:46px;padding:0 18px;
+/* 悬浮组件按视口定位,需自行让开壳层底部的特效带(--fx-h),否则会压到带子上 */
+.task-fab{position:fixed;right:20px;bottom:calc(var(--fx-h) + 20px);z-index:550;display:flex;align-items:center;gap:9px;height:46px;padding:0 18px;
   border-radius:var(--r-pill);background:var(--grad-brand);color:#fff;font-weight:700;box-shadow:var(--shadow-pop);cursor:pointer;
   transition:transform var(--dur-fast) var(--ease),box-shadow var(--dur);border:none}
 .task-fab:hover{transform:translateY(-2px)}
@@ -126,7 +127,7 @@ tr:hover .row-ops,tr.sel .row-ops{opacity:1}
 .task-fab.idle{background:var(--color-card);color:var(--color-text-2);border:1px solid var(--color-border-soft);box-shadow:var(--shadow-card)}
 .task-fab .badge{background:#fff;color:var(--sky-600)}
 .task-fab.idle .badge{background:var(--color-border-soft);color:var(--color-text-2)}
-.task-panel{position:fixed;right:20px;bottom:76px;z-index:551;width:410px;max-width:calc(100vw - 24px);max-height:min(72vh,640px);
+.task-panel{position:fixed;right:20px;bottom:calc(var(--fx-h) + 76px);z-index:551;width:410px;max-width:calc(100vw - 24px);max-height:min(72vh,640px);
   display:flex;flex-direction:column;background:var(--color-card);border:1px solid var(--color-border-soft);border-radius:var(--r-xl);
   box-shadow:var(--shadow-lg)}
 .task-head{display:flex;align-items:center;gap:10px;padding:16px 20px;border-bottom:1px solid var(--color-border-soft)}

@@ -402,25 +402,84 @@ drogon::Task<ZMJSON> ZmFileAdminModule::StartSync(bool dryRun, const ZmOpCtx& ct
     // 任务表登记(type=5),前端按任务轮询进度
     ZMJSON created = co_await m_task->Start(
         zm_file::kTaskSync, ctx.uid, -1, "全空间一致性同步", dryRun ? "预演" : "", 0, 0, "",
-        [this, dryRun, ctx](ZmTaskHandle& h)
-        {
-            ZMJSON report = RunSyncSync(h.TaskNo(), dryRun, &h);
-            h.Finish(zm_file::kTaskDone, "", report.dump());
-            // 审计:管理操作与业务同事务(此处只有一行日志)
-            m_db->WithTxSync(
-                [&](ZmSqliteDb& db) -> bool
-                {
-                    return m_audit->RecordFileOpSync(
-                        db, ctx.uid, ctx.account, zm_file::kActAdminSync, -1, 0,
-                        "全空间一致性同步", report.dump(), ctx.ip, 1);
-                });
-        });
+        [this, dryRun, ctx](ZmTaskHandle& h) { RunSyncBody(dryRun, ctx, h); });
     std::string taskNo = zm_file_row_str(created, "task_no");
+    if (taskNo.empty())
+    {
+        ResetSyncFlags();   // 任务行没建起来 → 不留"运行中"标志,否则后续同步全被 409 挡住
+        co_return created;
+    }
     {
         std::lock_guard<std::mutex> lk(m_syncMtx);
         m_syncTaskNo = taskNo;
     }
     co_return created;
+}
+
+bool ZmFileAdminModule::StartSyncDetached(bool dryRun, const ZmOpCtx& ctx)
+{
+    {
+        std::lock_guard<std::mutex> lk(m_syncMtx);
+        if (m_syncRunning.load())
+            return false;
+        m_syncRunning.store(true);
+        m_syncCancel.store(false);
+    }
+    // 任务行用同步接口创建:本入口由清理钩子在工作池线程调用,拿不到事件循环
+    std::string taskNo;
+    if (!m_task->CreateSync(zm_file::kTaskSync, ctx.uid, -1, "全空间一致性同步",
+                            dryRun ? "预演" : "", 0, 0, "", taskNo))
+    {
+        ResetSyncFlags();
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lk(m_syncMtx);
+        m_syncTaskNo = taskNo;
+    }
+    ZmHttpServer::WorkPool().Submit(
+        [this, taskNo, dryRun, ctx]()
+        {
+            m_task->SetStatusSync(taskNo, zm_file::kTaskRunning);
+            ZmTaskHandle h(m_task, taskNo, ctx.uid, -1);
+            RunSyncBody(dryRun, ctx, h);
+        });
+    return true;
+}
+
+void ZmFileAdminModule::ResetSyncFlags()
+{
+    std::lock_guard<std::mutex> lk(m_syncMtx);
+    m_syncRunning.store(false);
+    m_syncCancel.store(false);
+}
+
+void ZmFileAdminModule::RunSyncBody(bool dryRun, const ZmOpCtx& ctx, ZmTaskHandle& h)
+{
+    try
+    {
+        ZMJSON report = RunSyncSync(h.TaskNo(), dryRun, &h);
+        h.Finish(zm_file::kTaskDone, "", report.dump());
+        // 审计:管理操作与业务同事务(此处只有一行日志)
+        m_db->WithTxSync(
+            [&](ZmSqliteDb& db) -> bool
+            {
+                return m_audit->RecordFileOpSync(
+                    db, ctx.uid, ctx.account, zm_file::kActAdminSync, -1, 0,
+                    "全空间一致性同步", report.dump(), ctx.ip, 1);
+            });
+    }
+    catch (const std::exception& e)
+    {
+        DEFAULT_LOG_ERROR("一致性同步执行异常: {}", e.what());
+        h.Finish(zm_file::kTaskFailed, std::string("内部错误:") + e.what());
+        ResetSyncFlags();
+    }
+    catch (...)
+    {
+        h.Finish(zm_file::kTaskFailed, "内部错误");
+        ResetSyncFlags();
+    }
 }
 
 namespace

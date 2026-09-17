@@ -57,6 +57,17 @@ class ZmFileAdminModule
     /// @return {task_no} 或失败结果
     drogon::Task<ZMJSON> StartSync(bool dryRun, const ZmOpCtx& ctx);
 
+    /// @brief 启动一致性同步(非协程入口:供清理钩子在工作池线程调用)
+    ///
+    /// 与 StartSync 的唯一区别是任务行用同步 DB 接口创建 —— 清理钩子运行在工作池
+    /// 线程,没有可挂起的事件循环;直接丢弃 StartSync 返回的 Task 会因 drogon 协程
+    /// initial_suspend 为 suspend_always 而一行都不执行(任务行建了、扫描不跑)。
+    ///
+    /// @param dryRun  只报告不修复
+    /// @param ctx     操作者(清理钩子传系统身份)
+    /// @return true 已启动;false 任务行创建失败或已有一轮在运行
+    bool StartSyncDetached(bool dryRun, const ZmOpCtx& ctx);
+
     /// @brief 取消同步(已完成部分保留、不回滚)
     drogon::Task<ZMJSON> CancelSync();
 
@@ -94,6 +105,19 @@ private:
                                                          std::string            spaceStr);
 
     // ── 一致性同步实现(工作池线程内) ──
+    /// @brief 任务执行体:跑一轮扫描 → 收尾任务 → 写审计
+    ///
+    /// 自带兜底收尾:扫描抛异常或漏调 Finish 都不会把任务留在"进行中",并复位同步
+    /// 运行标志(否则后续同步会被 409 永久挡住)。调用方负责先置"进行中"。
+    ///
+    /// @param dryRun  只报告不修复
+    /// @param ctx     操作者(清理钩子传系统身份)
+    /// @param handle  任务句柄
+    void RunSyncBody(bool dryRun, const ZmOpCtx& ctx, ZmTaskHandle& handle);
+
+    /// @brief 复位同步运行标志(正常收尾由 RunSyncSync 完成,异常路径由此兜底)
+    void ResetSyncFlags();
+
     /// @brief 同步执行体:遍历全部空间与目录,按磁盘为准修复漂移
     /// @param taskNo 任务号;dryRun 只报告;handle 进度/取消
     /// @return 报告 {scanned_dirs, scanned_items, added, removed, fixed, skipped, elapsed_ms}

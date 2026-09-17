@@ -39,7 +39,7 @@
 #include "modules/module_file_defs.h"
 #include "modules/module_file_admin.h"
 #include "modules/module_file_hub.h"
-#include "modules/dir_lock.h"
+#include "modules/util/dir_lock.h"
 
 using namespace drogon;
 using std::string;
@@ -220,10 +220,11 @@ void ServicePortal::CreateModules()
             m_filePack->CleanCache(now);
     };
     // 每日一致性校验默认开启(与其它清理项同为 03:00;可用配置关闭)
+    // 走非协程入口:本钩子在工作池线程执行,协程版的返回 Task 无人 await 不会启动
     hooks.verifyConsistency = [this](int64_t now) {
         (void)now;
-        if (m_fileAdmin)
-            m_fileAdmin->StartSync(false, ZmOpCtx{0, "system", ""});
+        if (m_fileAdmin && !m_fileAdmin->StartSyncDetached(false, ZmOpCtx{0, "system", ""}))
+            DEFAULT_LOG_WARN("每日一致性校验未启动(已有一轮在运行或任务行创建失败)");
     };
     m_fileDb->SetCleanupHooks(hooks);
 }
@@ -391,13 +392,17 @@ void CorsPreflight(const HttpRequestPtr& req, AdviceCallback&& cb, AdviceChainCa
     }
 
     // 命中:回显 Origin 与凭据头,并声明允许的方法与请求头
+    // 方法与请求头 = 业务实际使用面:上传走 PUT(分片),元数据走自定义头
+    // (X-Space/X-Dir-Id/X-File-Name/X-Conflict/X-Upload-Id/X-Chunk-Index),
+    // 漏一个浏览器就会在预检处拦掉整个上传 —— 新增自定义头时必须同步本清单
     ZMJSON d;
     auto resp = ZmHttpServer::JsonResponse(200, d);
     resp->addHeader("Access-Control-Allow-Origin", origin);
     resp->addHeader("Access-Control-Allow-Credentials", "true");
-    resp->addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PATCH, DELETE");
+    resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS, PATCH, DELETE");
     resp->addHeader("Access-Control-Allow-Headers",
-                    "Origin, Content-Type, Accept, X-File-Size");
+                    "Origin, Content-Type, Accept, X-File-Size, X-Space, X-Dir-Id, "
+                    "X-File-Name, X-Conflict, X-Upload-Id, X-Chunk-Index");
     cb(resp);
 }
 

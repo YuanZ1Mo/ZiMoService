@@ -1,10 +1,6 @@
 // /filehub/* 接口封装(照 api/admin.js 写法)
-// ⚠ USE_MOCK = true 时走内存 mock(api/filehub-mock.js,响应结构严格照需求 §6);
-//   服务端联调就绪后改为 false 即切真实 HTTP,界面与队列逻辑零改动。
+// 全部走真实 HTTP:上传的元数据走请求头、体为原始字节(§6.5)
 import { api } from './client'
-import { mock, mockMe } from './filehub-mock'
-
-export const USE_MOCK = true
 
 // 查询参数序列化(GET)
 function qs(params = {}) {
@@ -19,31 +15,8 @@ function qs(params = {}) {
 // ── 上传引擎:单请求(≤8MB)/ 分片(8MB,并发 3,断点续传,§3.8) ──
 // 真实实现要点:元数据走请求头、体为原始字节(非 multipart,§6.5)
 const CHUNK_SIZE = 8 * 1024 * 1024
-const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 
-async function mockUpload(file, { space, dirId, conflict, signal, onProgress }) {
-  // mock:按 8MB 粒度推进,服务端逐片"接收"
-  const total = file.size
-  const chunks = Math.max(1, Math.ceil(total / CHUNK_SIZE))
-  if (total <= CHUNK_SIZE) {
-    for (let p = 0; p <= 100; p += 20) {
-      if (signal?.aborted) throw new DOMException('aborted', 'AbortError')
-      onProgress(Math.min(100, p) / 100 * total)
-      await sleep(90)
-    }
-  } else {
-    for (let i = 0; i < chunks; i++) {
-      if (signal?.aborted) throw new DOMException('aborted', 'AbortError')
-      await sleep(180 + Math.random() * 220)
-      onProgress(Math.min(total, (i + 1) * CHUNK_SIZE))
-    }
-  }
-  const r = await mock.uploadSimple({ space, dir_id: dirId, name: file.name, size: file.size, conflict })
-  onProgress(total)
-  return r
-}
-
-async function realUpload(file, { space, dirId, conflict, signal, onProgress, onSession }) {
+async function uploadFile(file, { space, dirId, conflict, signal, onProgress, onSession }) {
   // 单请求:POST /filehub/upload/simple(头传元数据,体为原始字节)
   if (file.size <= CHUNK_SIZE) {
     const r = await rawRequest('/filehub/upload/simple', {
@@ -56,13 +29,7 @@ async function realUpload(file, { space, dirId, conflict, signal, onProgress, on
     return r
   }
   // 分片:init → 逐片(并发 3,可断点续传)→ complete
-  let init
-  try {
-    init = await api.post('/filehub/upload/init', { space, dir_id: dirId, name: file.name, size: file.size, conflict })
-  } catch (e) {
-    if (e.code === 'NAME_EXISTS' || e.code === 'QUOTA_EXCEEDED' || e.code === 'TOO_MANY_UPLOADS') throw e
-    throw e
-  }
+  const init = await api.post('/filehub/upload/init', { space, dir_id: dirId, name: file.name, size: file.size, conflict })
   if (init.instant) { onProgress(file.size); return { node_id: init.node_id, task_no: init.task_no } }
   if (onSession) onSession(init.upload_id)
   const uploaded = new Set(init.uploaded || [])
@@ -107,82 +74,79 @@ async function rawRequest(path, { method, headers, body, signal }) {
   return data
 }
 
-// 下载:换令牌后跳直链(mock 下为 blob 占位链接,用 a[download] 保住文件名)
-export function downloadByUrl(url, filename) {
-  if (url.startsWith('blob:')) {
-    const a = document.createElement('a')
-    a.href = url; a.download = filename || 'download'
-    document.body.appendChild(a); a.click(); a.remove()
-    return
-  }
-  location.href = url
+// 下载:换令牌后跳直链(服务端下发绝对地址,与 Cookie 无关)
+export function downloadByUrl(url) {
+  if (url) location.href = url
 }
 
 // ── API 集合(路径与需求 §6 一一对应) ──
 export const filehubApi = {
   // 空间与浏览
-  spaces: () => USE_MOCK ? mock.spaces() : api.get('/filehub/spaces'),
-  list: (p) => USE_MOCK ? mock.list(p) : api.get('/filehub/list' + qs(p)),
-  search: (p) => USE_MOCK ? mock.search(p) : api.get('/filehub/search' + qs(p)),
-  node: (id) => USE_MOCK ? mock.node(id) : api.get(`/filehub/node/${id}`),
-  stat: (space, ids) => USE_MOCK ? mock.stat({ space, ids }) : api.post('/filehub/stat', { space, ids }),
+  spaces: () => api.get('/filehub/spaces'),
+  list: (p) => api.get('/filehub/list' + qs(p)),
+  search: (p) => api.get('/filehub/search' + qs(p)),
+  node: (id) => api.get(`/filehub/node/${id}`),
+  stat: (space, ids) => api.post('/filehub/stat', { space, ids }),
   // 目录与文件
-  createDir: (space, parent_id, name) => USE_MOCK ? mock.createDir({ space, parent_id, name }) : api.post('/filehub/dirs', { space, parent_id, name }),
+  createDir: (space, parent_id, name) => api.post('/filehub/dirs', { space, parent_id, name }),
   // 批量建目录树(文件夹上传先建层级,响应 map: "a/b" → 目录 id)
-  ensureBatch: (space, parent_id, paths) => USE_MOCK ? Promise.resolve({ created: 0, reused: 0, roots: {}, map: {} }) : api.post('/filehub/dirs/ensure_batch', { space, parent_id, paths }),
-  rename: (id, name) => USE_MOCK ? mock.rename(id, { name }) : api.patch(`/filehub/nodes/${id}`, { name }),
-  move: (body) => USE_MOCK ? mock.move(body) : api.post('/filehub/nodes/move', body),
-  copy: (body) => USE_MOCK ? mock.copy(body) : api.post('/filehub/nodes/copy', body),
-  remove: (ids) => USE_MOCK ? mock.remove({ ids }) : api.post('/filehub/nodes/delete', { ids }),
+  ensureBatch: (space, parent_id, paths) => api.post('/filehub/dirs/ensure_batch', { space, parent_id, paths }),
+  rename: (id, name) => api.patch(`/filehub/nodes/${id}`, { name }),
+  move: (body) => api.post('/filehub/nodes/move', body),
+  copy: (body) => api.post('/filehub/nodes/copy', body),
+  remove: (ids) => api.post('/filehub/nodes/delete', { ids }),
   // 回收站
-  trash: (p) => USE_MOCK ? mock.trash(p) : api.get('/filehub/trash' + qs(p)),
-  trashRestore: (ids) => USE_MOCK ? mock.trashRestore({ ids }) : api.post('/filehub/trash/restore', { ids }),
-  trashPurge: (ids) => USE_MOCK ? mock.trashPurge({ ids }) : api.post('/filehub/trash/purge', { ids }),
-  trashClear: (space) => USE_MOCK ? mock.trashClear({ space }) : api.post('/filehub/trash/clear', { space }),
+  trash: (p) => api.get('/filehub/trash' + qs(p)),
+  trashRestore: (ids) => api.post('/filehub/trash/restore', { ids }),
+  trashPurge: (ids) => api.post('/filehub/trash/purge', { ids }),
+  trashClear: (space) => api.post('/filehub/trash/clear', { space }),
   // 上传(engine 由 store 驱动)
-  upload: (file, opts) => USE_MOCK ? mockUpload(file, opts) : realUpload(file, opts),
-  uploadCancel: (uploadId) => USE_MOCK ? mock.uploadCancel(uploadId) : api.del(`/filehub/upload/${uploadId}`),
+  upload: uploadFile,
+  uploadCancel: (uploadId) => api.del(`/filehub/upload/${uploadId}`),
   // 下载与打包
-  downloadToken: (ids) => USE_MOCK ? mock.downloadToken({ ids }) : api.post('/filehub/download/token', { ids }),
-  pack: (space, ids) => USE_MOCK ? mock.pack({ space, ids }) : api.post('/filehub/pack', { space, ids }),
-  packClean: (taskNo) => USE_MOCK ? mock.packClean(taskNo) : api.post(`/filehub/pack/${taskNo}/clean`),
-  // 打包产物下载:按 task_no 换直链(压缩包为缓存文件;真实实现为 POST /filehub/download/token {task_no})
-  downloadPack: (taskNo) => USE_MOCK ? mock.downloadPack(taskNo) : api.post('/filehub/download/token', { task_no: taskNo }),
+  downloadToken: (ids) => api.post('/filehub/download/token', { ids }),
+  pack: (space, ids) => api.post('/filehub/pack', { space, ids }),
+  packClean: (taskNo) => api.post(`/filehub/pack/${taskNo}/clean`),
+  // 打包产物下载:按 task_no 换直链(压缩包是缓存文件,不是 nodes 条目)
+  downloadPack: (taskNo) => api.post('/filehub/download/token', { task_no: taskNo }),
   // 传输任务
-  tasks: (p) => USE_MOCK ? mock.tasks(p) : api.get('/filehub/tasks' + qs(p)),
-  tasksActive: () => USE_MOCK ? mock.tasksActive() : api.get('/filehub/tasks/active'),
-  taskCancel: (no) => USE_MOCK ? mock.taskCancel(no) : api.post(`/filehub/tasks/${no}/cancel`),
-  taskRetry: (no) => USE_MOCK ? mock.taskRetry(no) : api.post(`/filehub/tasks/${no}/retry`),
-  tasksClear: (status) => USE_MOCK ? mock.tasksClear({ status }) : api.post('/filehub/tasks/clear', { status }),
+  tasks: (p) => api.get('/filehub/tasks' + qs(p)),
+  tasksActive: () => api.get('/filehub/tasks/active'),
+  taskCancel: (no) => api.post(`/filehub/tasks/${no}/cancel`),
+  taskRetry: (no) => api.post(`/filehub/tasks/${no}/retry`),
+  tasksClear: (status) => api.post('/filehub/tasks/clear', { status }),
   // 分享(登录侧)
-  shareCreate: (body) => USE_MOCK ? mock.shareCreate(body) : api.post('/filehub/shares', body),
-  shareList: (p) => USE_MOCK ? mock.shareList(p) : api.get('/filehub/shares' + qs(p)),
-  sharePatch: (id, body) => USE_MOCK ? mock.sharePatch(id, body) : api.patch(`/filehub/shares/${id}`, body),
-  shareCancel: (id) => USE_MOCK ? mock.shareCancel(id) : api.del(`/filehub/shares/${id}`),
-  shareLogs: (id, p) => USE_MOCK ? mock.shareLogs(id, p) : api.get(`/filehub/shares/${id}/logs` + qs(p)),
+  shareCreate: (body) => api.post('/filehub/shares', body),
+  shareList: (p) => api.get('/filehub/shares' + qs(p)),
+  sharePatch: (id, body) => api.patch(`/filehub/shares/${id}`, body),
+  shareCancel: (id) => api.del(`/filehub/shares/${id}`),
+  shareLogs: (id, p) => api.get(`/filehub/shares/${id}/logs` + qs(p)),
+  // 分享(公开面,免会话;提取码通过后由服务端下发 zm_share 凭证 Cookie)
+  shareInfo: (token) => api.get(`/filehub/share/${token}`),
+  shareVerify: (token, body) => api.post(`/filehub/share/${token}/verify`, body),
+  shareListDir: (token, p) => api.get(`/filehub/share/${token}/list` + qs(p)),
+  shareDownload: (token, body) => api.post(`/filehub/share/${token}/download`, body),
   // 管理端(filehubAdmin)
   admin: {
-    stats: () => USE_MOCK ? mock.adminStats() : api.get('/filehub/admin/stats'),
-    syncStart: (dryRun) => USE_MOCK ? mock.adminSyncStart({ dry_run: dryRun }) : api.post('/filehub/admin/sync', { dry_run: dryRun }),
-    syncStatus: () => USE_MOCK ? mock.adminSyncStatus() : api.get('/filehub/admin/sync'),
-    syncCancel: () => USE_MOCK ? mock.adminSyncCancel() : api.post('/filehub/admin/sync/cancel'),
-    cache: (p = {}) => USE_MOCK ? mock.adminCache(p) : api.get('/filehub/admin/cache' + qs(p)),
-    cacheClean: (names) => USE_MOCK ? mock.adminCacheClean({ names }) : api.post('/filehub/admin/cache/clean', { names }),
-    trash: (p) => USE_MOCK ? mock.adminTrash(p) : api.get('/filehub/admin/trash' + qs(p)),
-    trashRestore: (ids) => USE_MOCK ? mock.adminTrashRestore ? mock.adminTrashRestore({ ids }) : mock.trashRestore({ ids }) : api.post('/filehub/admin/trash/restore', { ids }),
-    trashPurge: (ids) => USE_MOCK ? mock.trashPurge({ ids }) : api.post('/filehub/admin/trash/purge', { ids }),
-    trashClean: (space) => USE_MOCK ? mock.trashClear({ space: space || 0 }) : api.post('/filehub/admin/trash/clean', { space }),
+    stats: () => api.get('/filehub/admin/stats'),
+    syncStart: (dryRun) => api.post('/filehub/admin/sync', { dry_run: dryRun }),
+    syncStatus: () => api.get('/filehub/admin/sync'),
+    syncCancel: () => api.post('/filehub/admin/sync/cancel'),
+    cache: (p = {}) => api.get('/filehub/admin/cache' + qs(p)),
+    cacheClean: (names) => api.post('/filehub/admin/cache/clean', { names }),
+    trash: (p) => api.get('/filehub/admin/trash' + qs(p)),
+    trashRestore: (ids) => api.post('/filehub/admin/trash/restore', { ids }),
+    trashPurge: (ids) => api.post('/filehub/admin/trash/purge', { ids }),
+    trashClean: (space) => api.post('/filehub/admin/trash/clean', { space }),
     // 整体清空:物理删除全部回收站条目(不受 30 天保留期限制)
-    trashClear: (space) => USE_MOCK ? mock.trashClear({ space: space || 0 }) : api.post('/filehub/admin/trash/clear', { space }),
-    tasks: (p) => USE_MOCK ? mock.adminTasks(p) : api.get('/filehub/admin/tasks' + qs(p)),
-    taskCancel: (no) => USE_MOCK ? mock.taskCancel(no) : api.post(`/filehub/admin/tasks/${no}/cancel`),
-    logs: (p) => USE_MOCK ? mock.adminLogs(p) : api.get('/filehub/admin/logs' + qs(p)),
-    shareLogs: (p) => USE_MOCK ? mock.adminShareLogs(p) : api.get('/filehub/admin/share_logs' + qs(p)),
-    spaces: (p = {}) => USE_MOCK ? mock.adminSpaces(p) : api.get('/filehub/admin/spaces' + qs(p)),
-    setQuota: (space, quota) => USE_MOCK ? mock.adminSetQuota(space, { quota }) : api.patch(`/filehub/admin/spaces/${space}`, { quota })
-  },
-  // mock 会话上下文同步(真实模式不需要)
-  _syncMe(uid, name) { if (USE_MOCK) { mockMe.uid = uid; mockMe.name = name } }
+    trashClear: (space) => api.post('/filehub/admin/trash/clear', { space }),
+    tasks: (p) => api.get('/filehub/admin/tasks' + qs(p)),
+    taskCancel: (no) => api.post(`/filehub/admin/tasks/${no}/cancel`),
+    logs: (p) => api.get('/filehub/admin/logs' + qs(p)),
+    shareLogs: (p) => api.get('/filehub/admin/share_logs' + qs(p)),
+    spaces: (p = {}) => api.get('/filehub/admin/spaces' + qs(p)),
+    setQuota: (space, quota) => api.patch(`/filehub/admin/spaces/${space}`, { quota })
+  }
 }
 
 // 文件类型归类与图标(§3.1:服务端只回 ext,分类由前端维护)
@@ -202,6 +166,41 @@ export function kindOf(node) {
     if (FILE_KINDS[k].exts.includes(e)) return k
   }
   return 'oth'
+}
+
+/// @brief 取条目的类型中文名(列表"类型"列用)
+export function kindLabel(node) {
+  return FILE_KINDS[kindOf(node)].label
+}
+
+/**
+ * @brief 按关键词把名称切成高亮片段(搜索结果里标红命中部分)
+ *
+ * 大小写不敏感,逐段匹配(关键词可多次出现)。
+ *
+ * @param name     条目名称
+ * @param keyword  搜索关键词(空 → 整段不命中)
+ * @return 片段数组 [{ t: 文本, hit: 是否命中 }]
+ */
+export function highlightText(name, keyword) {
+  const text = String(name == null ? '' : name)
+  const kw = String(keyword == null ? '' : keyword).trim()
+  if (!kw) return [{ t: text, hit: false }]
+  const segs = []
+  const lower = text.toLowerCase()
+  const k = kw.toLowerCase()
+  let i = 0
+  while (i < text.length) {
+    const p = lower.indexOf(k, i)
+    if (p < 0) {
+      segs.push({ t: text.slice(i), hit: false })
+      break
+    }
+    if (p > i) segs.push({ t: text.slice(i, p), hit: false })
+    segs.push({ t: text.slice(p, p + k.length), hit: true })
+    i = p + k.length
+  }
+  return segs
 }
 
 // 人性化字节(需求 §3.1)

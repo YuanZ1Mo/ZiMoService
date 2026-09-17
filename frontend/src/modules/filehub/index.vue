@@ -5,7 +5,7 @@
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, onActivated, onDeactivated, inject } from 'vue'
 import { useSessionStore } from '../../stores/session'
 import { useFilehubStore } from '../../stores/filehub'
-import { filehubApi, USE_MOCK, fmtSize, fmtTime, kindOf, FILE_KINDS } from '../../api/filehub'
+import { filehubApi, fmtSize, fmtTime, kindOf, FILE_KINDS } from '../../api/filehub'
 import FileList from './FileList.vue'
 import TrashView from './TrashView.vue'
 import TaskPanel from './TaskPanel.vue'
@@ -24,8 +24,8 @@ function hasPerm(code) {
   const ps = session.user && session.user.permissions
   return Array.isArray(ps) && ps.includes(code)
 }
-// 权限判定:mock 演示模式放行(权限点 filehub 尚未登记进 user.db,见交接文档);真实模式按会话权限码
-const denied = computed(() => denied403.value || (!USE_MOCK && !hasPerm('filehub')))
+// 权限判定:按会话权限码(权限点 filehub 由服务端启动时登记);API 403 亦可兜底
+const denied = computed(() => denied403.value || !hasPerm('filehub'))
 
 // ── 侧栏 ──
 const view = ref('files')            // files | trash | shares
@@ -359,7 +359,6 @@ function onSort(k) {
 onActivated(() => { store.onActivated(); if (view.value === 'files') load(); loadSpaces() })
 onDeactivated(() => { store.onDeactivated(); closeCtx() })
 onMounted(() => {
-  filehubApi._syncMe(meSpace.value, (session.user && session.user.nickname) || '')
   loadSpaces()
   load()
   store.onChange(() => { if (view.value === 'files') load() })

@@ -5,7 +5,7 @@
 
 #include <openssl/evp.h>
 
-#include "modules/dir_lock.h"
+#include "modules/util/dir_lock.h"
 #include "modules/module_file_audit.h"
 #include "modules/module_file_db.h"
 #include "modules/module_file_defs.h"

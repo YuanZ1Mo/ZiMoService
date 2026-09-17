@@ -3,7 +3,9 @@
    设计基准:docs/designs/mockups/user-system/04-portal-home.html
    ============================================================ */
 
-.portal { min-height: 100vh; padding-top: var(--topbar-h); }
+/* 纵向三段:顶栏(固定悬浮,壳层 padding-top 让位) → 模块区(占满剩余,自成滚动容器)
+   → 特效带(流内条带)。模块区与特效带是并列的两个区域,内容不会压到特效带下面。 */
+.portal { height: 100vh; padding-top: var(--topbar-h); display: flex; flex-direction: column; overflow: hidden; }
 
 /* ---------- 顶部状态栏:固定悬浮,不随页面滚动 ---------- */
 /* 毛玻璃安全:状态点脉冲为心跳时单次 WAAPI 闪动,无常驻 CSS 动画驱动产帧(高刷屏 CPU) */
@@ -59,10 +61,11 @@
 .side-foot{margin-top:auto;padding:12px;font-size:var(--fs-cap);color:var(--color-text-3);white-space:nowrap;overflow:hidden}
 
 /* ---------- 工作区:宽度随浏览器视口自适应 ---------- */
-/* 底部预留门户特效条高度(56px),避免内容被遮挡 */
+/* 模块区=壳层 flex 的伸缩段:自身成为滚动容器,故模块内容再长也不会盖到特效带;
+   min-height:0 是 flex 子项可收缩的必要条件(否则内容会把容器撑破)。 */
 .portal-main{
-  margin-left:var(--sidebar-w);padding:24px 32px calc(56px + 24px);
-  min-height:calc(100vh - var(--topbar-h));
+  margin-left:var(--sidebar-w);padding:24px 32px;
+  flex:1;min-height:0;overflow-y:auto;
   transition:margin-left var(--dur-slow) var(--ease);
 }
 .portal-main.wide{margin-left:var(--sidebar-w-min)}

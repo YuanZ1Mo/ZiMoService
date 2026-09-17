@@ -8,7 +8,6 @@ import { adminApi } from '../../api/admin'
 import { useSessionStore } from '../../stores/session'
 import Modal from '../../components/Modal.vue'
 import FileHubAdmin from './FileHubAdmin.vue'
-import { USE_MOCK } from '../../api/filehub'
 
 const toast = inject('toast')
 const session = useSessionStore()
@@ -98,8 +97,8 @@ const sysTabs = [
   { key: 'perms', name: '权限管理', todo: true, perm: '' },
   { key: 'audit', name: '审计日志', todo: true, perm: '' }
 ]
-// mock 演示模式放行 filehub-admin 标签(权限点 filehubAdmin 尚未登记进 user.db)
-const visibleTabs = computed(() => sysTabs.filter(t => !t.perm || hasPerm(t.perm) || (USE_MOCK && t.key === 'filehub-admin')))
+// 标签显隐一律按权限码(无 perm 的标签恒显)
+const visibleTabs = computed(() => sysTabs.filter(t => !t.perm || hasPerm(t.perm)))
 const sysTab = ref('users')
 // 会话权限就绪/变化后:当前 tab 失去权限则落到第一个可见 tab
 watch(() => session.user && session.user.permissions, () => {

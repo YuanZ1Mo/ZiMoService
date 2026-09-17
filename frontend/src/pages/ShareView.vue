@@ -4,7 +4,7 @@
 // 打包下载:服务端返回 {task_no} 表示压缩中,前端每 2s 重试同一请求直至返回 {url}(免登录无任务面板)
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { filehubApi, fmtSize, fmtTime, kindOf } from '../api/filehub'
+import { filehubApi, downloadByUrl, fmtSize, fmtTime, kindOf } from '../api/filehub'
 import FileIcon from '../modules/filehub/FileIcon.vue'
 import '../modules/filehub/filehub.css'
 
@@ -78,7 +78,7 @@ function toggleSel(n) {
 function downloadOne(n) {
   if (Number(n.type) === 1) { dirId.value = n.id; loadList(); return }
   filehubApi.shareDownload(token.value, { ids: [n.id] })
-    .then(r => { if (r && r.url) downloadByUrl(r.url, n.name) })
+    .then(r => { if (r && r.url) downloadByUrl(r.url) })
     .catch(e => toastErr(e.message || '下载失败'))
 }
 function downloadAll() {
@@ -90,7 +90,7 @@ function downloadAll() {
       const r = await filehubApi.shareDownload(token.value, { ids })
       if (r && r.url) {
         packing.value = false; packTimer && clearTimeout(packTimer)
-        downloadByUrl(r.url, '')
+        downloadByUrl(r.url)
         return
       }
       // {task_no} = 压缩中:免登录无任务面板,2s 后幂等重试直至就绪(契约见交接文档 §3.4)
@@ -98,13 +98,6 @@ function downloadAll() {
     } catch (e) { packing.value = false; toastErr(e.message || '打包失败') }
   }
   attempt()
-}
-function downloadByUrl(url, filename) {
-  if (url.startsWith('blob:')) {
-    const a = document.createElement('a')
-    a.href = url; a.download = filename || 'download'
-    document.body.appendChild(a); a.click(); a.remove()
-  } else location.href = url
 }
 function toastErr(msg) { toastMsg.value = msg; setTimeout(() => { toastMsg.value = '' }, 3000) }
 const toastMsg = ref('')
