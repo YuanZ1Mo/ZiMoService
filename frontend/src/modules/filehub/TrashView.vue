@@ -1,7 +1,7 @@
 <script setup>
 // 回收站视图(§3.7.2/§7.4):只读 + 恢复/彻底删除/清空;仅显示"我删除的"(del_owner_uid=我)
 // 不提供重命名/移动/复制/上传入口;清空为异步任务(转任务面板),需二次确认
-import { ref, reactive, computed, onMounted, inject } from 'vue'
+import { ref, reactive, computed, onMounted, watch, inject } from 'vue'
 import Modal from '../../components/Modal.vue'
 import FileIcon from './FileIcon.vue'
 import { filehubApi, fmtSize, fmtTime } from '../../api/filehub'
@@ -20,22 +20,42 @@ const retainDays = ref(30)
 const loading = ref(false)
 const selected = ref(new Set())
 const confirmBox = reactive({ show: false, title: '', msg: '', html: '', fn: null })
+const page = ref(1)
+const PAGE_SIZE = 100
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
 
 async function load() {
   loading.value = true
   try {
-    const d = await filehubApi.trash({ space: props.space, page: 1, size: 200 })
+    const d = await filehubApi.trash({ space: props.space, page: page.value, size: PAGE_SIZE })
     rows.value = d.list || []
     total.value = d.total || 0
     used.size = d.used_size || 0
     used.items = d.used_items || 0
     retainDays.value = d.retain_days || 30
     selected.value = new Set()
+    // 删空当前页时回退一页,避免停在空白页
+    if (!rows.value.length && page.value > 1 && total.value > 0) {
+      page.value--
+      return load()
+    }
   } catch (e) {
     toast(e.message || '加载回收站失败', 'err')
   } finally { loading.value = false }
 }
 onMounted(load)
+// 切空间:回收站内容与占用都换了,回到第 1 页重载
+watch(() => props.space, () => { page.value = 1; load() })
+
+/**
+ * 翻页
+ * @param p  目标页(越界或当前页则忽略)
+ */
+function goto(p) {
+  if (p < 1 || p > totalPages.value || p === page.value) return
+  page.value = p
+  load()
+}
 function reload() { emit('changed'); load() }
 
 function toggleSel(n) {
@@ -60,7 +80,10 @@ function restore(items) {
     try {
       const r = await filehubApi.trashRestore(items.map(x => x.id))
       const okN = (r.restored || []).length
-      toast(`已恢复 ${okN} 项${(r.restored || []).some(x => / \(\d+\)$/.test(x.name)) ? '(部分自动重命名)' : ''}`, 'ok')
+      const failN = (r.failed || []).length
+      // 部分失败要说清数量,否则用户以为全都恢复了
+      toast(`已恢复 ${okN} 项${(r.restored || []).some(x => / \(\d+\)$/.test(x.name)) ? '(部分自动重命名)' : ''}` +
+            (failN ? `,${failN} 项失败(可能已被彻底删除)` : ''), failN ? 'warn' : 'ok')
       reload()
     } catch (e) { toast(e.message || '恢复失败', 'err') }
   })
@@ -72,8 +95,10 @@ function purge(items) {
     `将连同全部子项<b style="color:var(--color-err)">物理删除</b>,共 ${fmtSize(bytes)},<b style="color:var(--color-err)">不可撤销</b>。`,
     async () => {
       try {
-        await filehubApi.trashPurge(items.map(x => x.id))
-        toast('已彻底删除', 'ok')
+        const r = await filehubApi.trashPurge(items.map(x => x.id))
+        const okN = (r.success || []).length
+        const failN = (r.failed || []).length
+        toast(`已彻底删除 ${okN} 项` + (failN ? `,${failN} 项失败` : ''), failN ? 'warn' : 'ok')
         reload()
       } catch (e) { toast(e.message || '删除失败', 'err') }
     })
@@ -167,6 +192,14 @@ function clearAll() {
           </template>
         </tbody>
       </table>
+    </div>
+    <!-- 分页:超过一页的条目此前完全不可见、无法勾选 -->
+    <div v-if="total > PAGE_SIZE" class="pager">
+      <span class="pg-info">共 <b class="num">{{ total }}</b> 项 · 第 <b class="num">{{ page }} / {{ totalPages }}</b> 页</span>
+      <div class="pg-btns">
+        <button class="pg-btn" type="button" :disabled="page <= 1" @click="goto(page - 1)">‹</button>
+        <button class="pg-btn" type="button" :disabled="page >= totalPages" @click="goto(page + 1)">›</button>
+      </div>
     </div>
   </div>
 

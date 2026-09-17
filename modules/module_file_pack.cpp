@@ -252,6 +252,12 @@ drogon::Task<ZMJSON> ZmFilePackModule::Create(int64_t space, const std::vector<i
         co_return ZmFileError(zm_file_err::kPackTooLarge, 400,
                               "打包超出条目数或大小上限,请分批下载");
 
+    // 单用户进行中打包任务 ≤2(§3.11):超出直接 429,不进入排队。
+    // 与 RunPack 里"全局同时 ≤2"的闸门是两回事:那个是排队等待,这个是拒绝
+    if (m_task->CountRunningPacksSync(ctx.uid) >= zm_file::kPackMaxRunning)
+        co_return ZmFileError(zm_file_err::kTooManyPacks, 429,
+                              "进行中的打包任务已达上限,请等前一个完成");
+
     std::string display = DisplayName(firstNode, uniq.size());
     ZMJSON      task = co_await m_task->Create(zm_file::kTaskPack, ctx.uid, space, display, "",
                                                bytes, items, "");
@@ -314,6 +320,10 @@ void ZmFilePackModule::RunPack(const std::string& taskNo)
         handle.Finish(zm_file::kTaskFailed, "打包任务输入已失效");
         return;
     }
+
+    // 拿到闸门、开始真正打包时才置"进行中":排队等闸门期间应显示"排队中";
+    // 同时"进行中"是进度写库的前置条件(UpdateProgressSync 只更新该状态的行)
+    m_task->SetStatusSync(taskNo, zm_file::kTaskRunning);
 
     m_store->EnsureDir(m_store->ZipDir(space));
     std::string zipName = CacheFileName(uid);
@@ -467,13 +477,13 @@ void ZmFilePackModule::CleanIdle(int64_t now)
     if (!m_store)
         return;
     std::vector<ZmDiskEntry> spaces;
-    if (!m_store->ScanDirSync(m_store->RootDir() + "\space_cache", spaces).ok)
+    if (!m_store->ScanDirSync(m_store->RootDir() + "\\space_cache", spaces).ok)
         return;
     for (const auto& sp : spaces)
     {
         if (!sp.isDir)
             continue;
-        std::string              zipDir = m_store->RootDir() + "\space_cache\\" + sp.name + "\zip";
+        std::string zipDir = m_store->RootDir() + "\\space_cache\\" + sp.name + "\\zip";
         std::vector<ZmDiskEntry> zips;
         if (!m_store->ScanDirSync(zipDir, zips).ok)
             continue;

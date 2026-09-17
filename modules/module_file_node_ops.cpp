@@ -156,7 +156,10 @@ ZMJSON ZmFileNodeModule::MkdirSync(int64_t space, int64_t parentId, const std::s
     std::string trimmed = TrimSpaces(name);
     std::string msg;
     if (!ValidateName(trimmed, msg))
+    {
+        m_audit->RecordFailSync(ctx, zm_file::kActMkdir, space, 0, trimmed, zm_file_err::kNameInvalid);
         return ZmFileError(zm_file_err::kNameInvalid, 400, msg);
+    }
     if (parentId != 0)
     {
         ZMJSON row;
@@ -181,7 +184,10 @@ ZMJSON ZmFileNodeModule::MkdirSync(int64_t space, int64_t parentId, const std::s
     int64_t          dupId   = 0;
     int              dupType = 0;
     if (ConflictSync(space, parentId, trimmed, 0, dupId, dupType))
+    {
+        m_audit->RecordFailSync(ctx, zm_file::kActMkdir, space, dupId, trimmed, zm_file_err::kNameExists);
         return ZmFileError(zm_file_err::kNameExists, 409, "同名文件或文件夹已存在");
+    }
 
     m_db->EnsureSpaceSync(space);
     m_store->EnsureSpaceRoot(space);
@@ -798,6 +804,9 @@ ZMJSON ZmFileNodeModule::MoveSync(const std::vector<int64_t>& idsIn, int64_t tar
                 if (overwrite)
                 {
                     // 覆盖:目标文件的行与占用一并清除,由源条目顶替
+                    // 被顶掉的那份内容已经不存在,指向它的分享同样要失效
+                    if (!ZmFileDbModule::InvalidateSharesByNodesSync(db, {dupId}))
+                        return false;
                     if (!db.ExecSync("DELETE FROM nodes WHERE id = ?1",
                                          {std::to_string(dupId)}))
                         return false;
@@ -1414,6 +1423,7 @@ ZMJSON ZmFileNodeModule::TrashListSync(int64_t space, const ZmListQuery& q, int6
         ZmFileNode n          = ZmFileNode::FromRow(r);
         ZMJSON     item       = ZMJSON::object();
         item["id"]            = n.id;
+        item["space"]         = n.space;   // 管理端"空间"列按它推导,缺了下发就恒为公共空间
         item["name"]          = n.name;
         item["type"]          = n.type;
         item["size"]          = n.size;
@@ -1650,6 +1660,15 @@ ZMJSON ZmFileNodeModule::PurgeSync(const std::vector<int64_t>& idsIn, const ZmOp
         bool ok = m_db->WithTxSync(
             [&](ZmSqliteDb& db) -> bool
             {
+                // 指向被删条目的有效分享一并失效(必须在删行之前:失效判定要靠这些行)
+                std::vector<int64_t> gone;
+                for (const auto& v : subIds)
+                {
+                    if (v.is_number_integer())
+                        gone.push_back(v.get<int64_t>());
+                }
+                if (!ZmFileDbModule::InvalidateSharesByNodesSync(db, gone))
+                    return false;
                 if (!db.ExecSync("WITH RECURSIVE sub(id, depth) AS ("
                                  " SELECT id, 0 FROM nodes WHERE id = ?1"
                                  " UNION ALL"

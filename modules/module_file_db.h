@@ -132,6 +132,20 @@ class ZmFileDbModule : public ZmSqliteDb
     static bool ApplyUsageSync(ZmSqliteDb& db, int64_t space, int64_t dSize, int64_t dItems);
 
     /**
+ * @brief 把指向这些条目的有效分享置为失效
+ *
+ * 与"删除条目行"放同一事务:分享目标被彻底删除后必须失效,否则访问者拿到的是
+ * "分享不可用"(404),而不是"分享已失效"。目录分享的子孙条目同样算作目标,
+ * 调用方把子树的全部 id 一并传入即可。
+ *
+ * @param db 事务连接(来自 WithTx 回调形参)
+ * @param nodeIds 本次被物理删除的条目 id
+ * @return true 写入成功
+ */
+    static bool InvalidateSharesByNodesSync(ZmSqliteDb& db,
+                                            const std::vector<int64_t>& nodeIds);
+
+    /**
  * @brief 重算空间用量(一致性校验结束后调用)
  *
  * 计入 deleted=1 的占用(回收站占配额)。

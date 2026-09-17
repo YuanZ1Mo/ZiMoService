@@ -220,6 +220,8 @@ ZMJSON ZmFileUploadModule::FinalizeSync(const ZmOpCtx& ctx, int64_t space, int64
             if (!taskNo.empty())
                 m_task->SetStatusSync(taskNo, zm_file::kTaskFailed,
                                       "同名冲突(未选择处理策略)");
+            m_audit->RecordFailSync(ctx, zm_file::kActUpload, space, dupId, name,
+                                    zm_file_err::kNameExists);
             m_store->RemoveFileSync(tmpPath);
             ZMJSON extra       = ZMJSON::object();
             extra["conflicts"] = std::move(conflicts);
@@ -349,7 +351,11 @@ drogon::Task<ZMJSON> ZmFileUploadModule::Simple(const ZmOpCtx& ctx, int64_t spac
                 int64_t quota    = zm_file_row_int(spaceRow, "quota", 0);
                 int64_t used     = zm_file_row_int(spaceRow, "used_size", 0);
                 if (quota > 0 && used + static_cast<int64_t>(body.size()) > quota)
+                {
+                    m_audit->RecordFailSync(ctx, zm_file::kActUpload, space, 0, name,
+                                            zm_file_err::kQuotaExceeded);
                     return ZmFileError(zm_file_err::kQuotaExceeded, 403, "空间配额不足");
+                }
             }
             m_store->EnsureSpaceRoot(space);
             std::string   tmp = NewTmpPath(space);
@@ -418,7 +424,11 @@ drogon::Task<ZMJSON> ZmFileUploadModule::Init(const ZmOpCtx& ctx, int64_t space,
             int64_t quota    = zm_file_row_int(spaceRow, "quota", 0);
             int64_t used     = zm_file_row_int(spaceRow, "used_size", 0);
             if (quota > 0 && used + size > quota)
+            {
+                m_audit->RecordFailSync(ctx, zm_file::kActUpload, space, 0, name,
+                                        zm_file_err::kQuotaExceeded);
                 return ZmFileError(zm_file_err::kQuotaExceeded, 403, "空间配额不足");
+            }
 
             int64_t chunkTotal = (size + zm_file::kChunkSize - 1) / zm_file::kChunkSize;
             if (chunkTotal > zm_file::kMaxChunks)
@@ -519,6 +529,21 @@ drogon::Task<ZMJSON> ZmFileUploadModule::Init(const ZmOpCtx& ctx, int64_t space,
             out["instant"]     = false;
             out["expire_time"] = expire;
             out["task_no"]     = taskNo;
+            // 同名预检:仅回传冲突项、不在此裁决(裁决在 complete 的目录写锁内做)。
+            // 目的是让前端在传完整个文件之前就能提示用户选策略
+            {
+                int64_t dupId   = 0;
+                int     dupType = 0;
+                if (m_node->ConflictSync(space, dirId, name, 0, dupId, dupType))
+                {
+                    ZMJSON c    = ZMJSON::object();
+                    c["id"]     = dupId;
+                    c["name"]   = name;
+                    c["why"]    = std::string("目标已存在同名") +
+                               (dupType == zm_file::kTypeDir ? "文件夹" : "文件");
+                    out["conflicts"] = ZMJSON::array({std::move(c)});
+                }
+            }
             return out;
         });
 }

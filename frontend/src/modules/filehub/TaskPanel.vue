@@ -100,12 +100,21 @@ async function cleanPack(t) {
               <span class="t-name">{{ u.name }}</span>
               <span class="t-ops">
                 <button v-if="u.status === 'run' || u.status === 'wait'" class="btn btn-ghost btn-sm" type="button" @click="store.cancelUpload(u.key)">取消</button>
-                <button v-if="u.status === 'fail'" class="btn btn-secondary btn-sm" type="button" @click="store.retryUpload(u.key)">重试</button>
+                <!-- 同名冲突:服务端列了冲突条目,选策略后按该策略重发(直接重试仍是 ask,会再撞 409) -->
+                <template v-else-if="u.status === 'fail' && u.conflicts.length">
+                  <button class="btn btn-ghost btn-sm" type="button" @click="store.retryUpload(u.key, 'skip')">跳过</button>
+                  <button class="btn btn-primary btn-sm" type="button" @click="store.retryUpload(u.key, 'rename')">重命名</button>
+                  <button class="btn btn-ghost btn-sm" type="button" @click="store.retryUpload(u.key, 'overwrite')">覆盖</button>
+                </template>
+                <button v-else-if="u.status === 'fail'" class="btn btn-secondary btn-sm" type="button" @click="store.retryUpload(u.key)">重试</button>
               </span>
             </div>
             <div class="tprog" :class="{ done: u.status === 'ok', err: u.status === 'fail' }"><i :style="{ width: (u.size ? Math.min(100, u.done / u.size * 100) : 0) + '%' }"></i></div>
             <div class="t-sub">
-              <template v-if="u.status === 'fail'">{{ u.error }}</template>
+              <template v-if="u.status === 'fail' && u.conflicts.length">
+                与「{{ u.conflicts.map(c => c.name).join('、') }}」同名,请选择处理方式
+              </template>
+              <template v-else-if="u.status === 'fail'">{{ u.error }}</template>
               <template v-else-if="u.status === 'ok'">秒传/入位完成</template>
               <template v-else><span class="num">{{ fmtSize(u.done) }} / {{ fmtSize(u.size) }}</span></template>
             </div>

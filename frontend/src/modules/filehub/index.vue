@@ -48,6 +48,8 @@ function switchSpace(s) {
   space.value = s
   dirId.value = 0          // 切空间回到根目录(§3.1)
   selected.value = new Set()
+  // 搜索态切空间:关键词与结果都属于旧空间,先退出搜索(它内部会按新空间重载)
+  if (query.searching) { exitSearch(); return }
   load()
 }
 
@@ -56,6 +58,8 @@ const dirId = ref(0)
 const breadcrumb = ref([])
 const items = ref([])
 const total = ref(0)
+const listEpoch = ref(0)     // 整表被替换时自增,列表据此复位滚动位置
+let loadSeq = 0              // 列表请求序号(丢弃过期响应)
 const loading = ref(false)
 const sortKey = ref('name')
 const sortOrder = ref('asc')
@@ -63,6 +67,9 @@ const pageSize = 200
 const query = reactive({ keyword: '', searching: false, truncated: false })
 
 async function load(append = false) {
+  // 请求序号:切目录/搜索/刷新会并发发请求,回来晚的旧响应必须丢弃,
+  // 否则会把上一个目录的行拼进当前列表
+  const seq = ++loadSeq
   loading.value = true
   try {
     const d = await filehubApi.list({
@@ -71,15 +78,30 @@ async function load(append = false) {
       // 追加时按已加载行数翻页;刷新(含上传完成/切回前台)一律回到第 1 页
       page: append ? Math.ceil(items.value.length / pageSize) + 1 : 1, size: pageSize
     })
+    if (seq !== loadSeq) return
     items.value = append ? items.value.concat(d.list || []) : (d.list || [])
+    if (!append) listEpoch.value++   // 整表替换:通知列表把滚动位置复位
     total.value = d.total || 0
     breadcrumb.value = d.breadcrumb || []
   } catch (e) {
+    if (seq !== loadSeq) return
     if (e.status === 404) toast('目录不存在,可能已被删除,建议触发一致性同步', 'warn')
     else toast(e.message || '加载目录失败', 'err')
-  } finally { loading.value = false }
+  } finally { if (seq === loadSeq) loading.value = false }
 }
 function loadMore() { if (items.value.length < total.value) load(true) }
+
+/**
+ * 去抖刷新列表与空间用量
+ *
+ * 批量上传时每个文件完成都会触发一次(store 的 onDone 与 onChange 各一次),
+ * 逐次刷新会打出数百个列表请求,并把用户反复打回第 1 页 —— 合并成一次。
+ */
+function scheduleRefresh() {
+  if (refreshTimer) clearTimeout(refreshTimer)
+  refreshTimer = setTimeout(() => { refreshTimer = null; load(); loadSpaces() }, 500)
+}
+let refreshTimer = null
 
 // ── 搜索(当前目录及子目录,§3.2) ──
 const searchInput = ref('')
@@ -125,9 +147,13 @@ function clearSel() { selected.value = new Set(); lastIdx = -1 }
 const selTargets = computed(() => items.value.filter(x => selected.value.has(x.id)))
 const selBytes = computed(() => selTargets.value.reduce((a, x) => a + Number(x.size || 0), 0))
 function onKeydown(e) {
+  const t = e.target
+  // 输入框/可编辑区里不劫持快捷键:否则 Ctrl+A 无法全选输入内容
+  const typing = !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
   if (e.key === 'Escape') { clearSel(); ctxMenu.show = false }
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a' && view.value === 'files' && !query.searching) { e.preventDefault(); selectAll() }
+  if (!typing && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a' && view.value === 'files' && !query.searching) { e.preventDefault(); selectAll() }
 }
+// keep-alive 下组件不卸载、只失活:监听须随激活状态挂摘,否则隐藏页仍会吃掉 Ctrl+A
 onMounted(() => document.addEventListener('keydown', onKeydown))
 onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
 
@@ -285,7 +311,7 @@ async function enqueueWithDirs(files, base, { rels = [], dirs = [] } = {}) {
   store.enqueueUploads(list, {
     space: space.value, dirId: base, conflict: 'ask', dirOf,
     batchName: list.length > 1 ? (relOf(list[0], 0).split('/')[0] || '') : '',
-    onDone: () => { load(); loadSpaces() }
+    onDone: () => scheduleRefresh()
   })
   toast(`已加入上传队列 ${list.length} 个文件${dirPaths.length ? `(${dirPaths.length} 个目录)` : ''}`, 'ok')
 }
@@ -356,12 +382,22 @@ function onSort(k) {
 }
 
 // ── keep-alive 钩子:回前台立即刷新;切走停轮询(§8.3) ──
-onActivated(() => { store.onActivated(); if (view.value === 'files') load(); loadSpaces() })
-onDeactivated(() => { store.onDeactivated(); closeCtx() })
+onActivated(() => {
+  store.onActivated()
+  if (view.value === 'files') load()
+  loadSpaces()
+  document.addEventListener('keydown', onKeydown)   // 与 onDeactivated 成对(同函数重复注册无副作用)
+})
+onDeactivated(() => {
+  store.onDeactivated()
+  closeCtx()
+  document.removeEventListener('keydown', onKeydown)
+  if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null }
+})
 onMounted(() => {
   loadSpaces()
   load()
-  store.onChange(() => { if (view.value === 'files') load() })
+  store.onChange(() => { if (view.value === 'files') scheduleRefresh() })
 })
 </script>
 
@@ -492,7 +528,7 @@ onMounted(() => {
               </div>
               <FileList :items="items" :selected="selected" :keyword="query.searching ? searchInput : ''"
                         :show-path="query.searching" :sort="sortKey" :order="sortOrder"
-                        :loading="loading" :has-more="items.length < total"
+                        :loading="loading" :has-more="items.length < total" :epoch="listEpoch"
                         @toggle="toggleSel" @open="openNode" @ctx="openCtx" @sort="onSort"
                         @drag-to="onDragTo" @files="onListFiles" @load-more="loadMore" />
             </div>

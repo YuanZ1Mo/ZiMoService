@@ -478,6 +478,29 @@ void ZmFileHubModule::RegisterRoutes()
     DEFAULT_LOG_INFO("ZmFileHubModule: /filehub/* 接口已注册");
 }
 
+drogon::Task<HttpResponsePtr> ZmFileHubModule::DenyForeignSpace(int64_t space,
+                                                               const ZmOpCtx& ctx,
+                                                               const std::string& action)
+{
+    if (ZmFileNodeModule::SpaceWritable(space, ctx.uid))
+        co_return HttpResponsePtr{};
+    // 被拒绝的请求也要留痕:记 result=2 + 动作码,便于排查"为什么删不掉"与越权尝试
+    co_await ZmHttpServer::RunOnPool<bool>(
+        [this, space, &ctx, &action]() -> bool
+        {
+            return m_db->WithTxSync(
+                [&](ZmSqliteDb& db) -> bool
+                {
+                    return m_audit->RecordFileOpSync(db, ctx.uid, ctx.account, action, space, 0,
+                                                     "", "{\"error\":\"" +
+                                                             std::string(zm_file_err::kPermDenied) +
+                                                             "\"}",
+                                                     ctx.ip, 2);
+                });
+        });
+    co_return ZmAuthGateModule::ApiError(403, zm_file_err::kPermDenied, "无权访问该空间");
+}
+
 void ZmFileHubModule::StartDownloadSweeper()
 {
     if (!m_token)
@@ -770,8 +793,8 @@ drogon::Task<HttpResponsePtr> ZmFileHubModule::HandleMkdir(HttpRequestPtr req)
         co_return ZmAuthGateModule::ApiError(gate.status, gate.code, gate.message);
     ZMJSON  body  = ParseBody(req);
     int64_t space = zm_file_row_int(body, "space", 0);
-    if (!ZmFileNodeModule::SpaceWritable(space, gate.ctx.uid))
-        co_return ZmAuthGateModule::ApiError(403, zm_file_err::kPermDenied, "无权写入该空间");
+    if (auto deny = co_await DenyForeignSpace(space, OpOf(gate.ctx, req), zm_file::kActMkdir))
+        co_return deny;
     int64_t     parentId = zm_file_row_int(body, "parent_id", 0);
     std::string name     = zm_file_row_str(body, "name");
     if (name.empty())
@@ -787,8 +810,8 @@ drogon::Task<HttpResponsePtr> ZmFileHubModule::HandleEnsure(HttpRequestPtr req)
         co_return ZmAuthGateModule::ApiError(gate.status, gate.code, gate.message);
     ZMJSON  body  = ParseBody(req);
     int64_t space = zm_file_row_int(body, "space", 0);
-    if (!ZmFileNodeModule::SpaceWritable(space, gate.ctx.uid))
-        co_return ZmAuthGateModule::ApiError(403, zm_file_err::kPermDenied, "无权写入该空间");
+    if (auto deny = co_await DenyForeignSpace(space, OpOf(gate.ctx, req), zm_file::kActMkdir))
+        co_return deny;
     int64_t     parentId = zm_file_row_int(body, "parent_id", 0);
     std::string path     = zm_file_row_str(body, "path");
     if (path.empty())
@@ -805,8 +828,8 @@ drogon::Task<HttpResponsePtr> ZmFileHubModule::HandleEnsureBatch(HttpRequestPtr 
         co_return ZmAuthGateModule::ApiError(gate.status, gate.code, gate.message);
     ZMJSON  body  = ParseBody(req);
     int64_t space = zm_file_row_int(body, "space", 0);
-    if (!ZmFileNodeModule::SpaceWritable(space, gate.ctx.uid))
-        co_return ZmAuthGateModule::ApiError(403, zm_file_err::kPermDenied, "无权写入该空间");
+    if (auto deny = co_await DenyForeignSpace(space, OpOf(gate.ctx, req), zm_file::kActMkdir))
+        co_return deny;
     int64_t                  parentId = zm_file_row_int(body, "parent_id", 0);
     std::vector<std::string> paths    = BodyStrings(body, "paths");
     if (paths.empty())
@@ -983,8 +1006,8 @@ drogon::Task<HttpResponsePtr> ZmFileHubModule::HandleTrashClear(HttpRequestPtr r
         co_return ZmAuthGateModule::ApiError(gate.status, gate.code, gate.message);
     ZMJSON  body  = ParseBody(req);
     int64_t space = zm_file_row_int(body, "space", 0);
-    if (!ZmFileNodeModule::SpaceWritable(space, gate.ctx.uid))
-        co_return ZmAuthGateModule::ApiError(403, zm_file_err::kPermDenied, "无权操作该空间");
+    if (auto deny = co_await DenyForeignSpace(space, OpOf(gate.ctx, req), zm_file::kActTrashClear))
+        co_return deny;
     ZmOpCtx ctx     = OpOf(gate.ctx, req);
     ZMJSON  created = co_await m_task->Start(
         zm_file::kTaskTrashClear, ctx.uid, space, "清空回收站", "", 0, 0, "",
@@ -1184,6 +1207,9 @@ ZmFileHubModule::HandleDownload(HttpRequestPtr req, std::string token, std::stri
     opts.raw          = true;
     opts.chunkSize    = 4 * 1024 * 1024;
     opts.interBlockMs = 0;
+    // ETag 带上条目 id:同名同大小同时间的两个条目不应共用缓存标识
+    if (target.nodeId > 0)
+        opts.etagKey = std::to_string(target.nodeId);
     opts.onFinish     = [this, token]() {
         // 传完 / 客户端断开 / 读失败 / 对端停滞:四条路径都汇到这里,名额在此归还
         m_token->Release(token);
@@ -1218,8 +1244,8 @@ drogon::Task<HttpResponsePtr> ZmFileHubModule::HandlePack(HttpRequestPtr req)
         co_return ZmAuthGateModule::ApiError(gate.status, gate.code, gate.message);
     ZMJSON  body  = ParseBody(req);
     int64_t space = zm_file_row_int(body, "space", 0);
-    if (!ZmFileNodeModule::SpaceWritable(space, gate.ctx.uid))
-        co_return ZmAuthGateModule::ApiError(403, zm_file_err::kPermDenied, "无权访问该空间");
+    if (auto deny = co_await DenyForeignSpace(space, OpOf(gate.ctx, req), zm_file::kActPack))
+        co_return deny;
     std::vector<int64_t> ids = BodyIds(body);
     if (ids.empty())
         co_return ZmAuthGateModule::ApiError(400, zm_file_err::kBadRequest, "未指定条目");

@@ -22,7 +22,10 @@ function hasPerm(code) {
   return Array.isArray(ps) && ps.includes(code)
 }
 const denied403 = ref(false)   // API PERM_DENIED 兜底
-const denied = computed(() => denied403.value || !hasPerm('userManage'))
+// 权限按当前标签判定:用户管理要 userManage、文件中心管理要 filehubAdmin,
+// 两者互相独立 —— 只授 filehubAdmin 的用户不应被用户管理的拒绝分支挡住
+const denied = computed(() => denied403.value ||
+  (sysTab.value === 'filehub-admin' ? !hasPerm('filehubAdmin') : !hasPerm('userManage')))
 
 const query = reactive({ page: 1, size: 10, search: '', role: '', status: '' })
 const incDel = ref(false)   // 包含已删除(默认不显示,符合"列表默认不显示"约定)
@@ -384,7 +387,10 @@ onMounted(init)
       <div class="empty">
         <div class="empty-icon">⛔</div>
         <div class="empty-title">无权限访问</div>
-        <div class="empty-sub">您没有用户管理模块的操作权限,请联系管理员授权</div>
+        <div class="empty-sub">
+          {{ sysTab === 'filehub-admin' ? '您没有文件中心管理权限,请联系管理员授权'
+                                        : '您没有用户管理模块的操作权限,请联系管理员授权' }}
+        </div>
       </div>
     </div>
 

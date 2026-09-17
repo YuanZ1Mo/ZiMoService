@@ -2,6 +2,7 @@
 
 #include "modules/module_file_db.h"
 #include "modules/module_file_defs.h"
+#include "modules/module_file_node.h" // ZmOpCtx 定义
 
 #include "zm_net_http_server.h"
 #include "zm_util_logger.h"
@@ -48,6 +49,18 @@ bool ZmFileAuditModule::RecordFileOpSync(ZmSqliteDb& db, int64_t uid,
         {std::to_string(uid), account, action, std::to_string(space), std::to_string(nodeId),
          Clip(nodeName, 255), detail, Clip(ip, 64), std::to_string(result),
          std::to_string(ZmSqliteDb::Now())});
+}
+
+bool ZmFileAuditModule::RecordFailSync(const ZmOpCtx& ctx, const std::string& action,
+                                       int64_t space, int64_t nodeId,
+                                       const std::string& nodeName, const std::string& code)
+{
+    return m_db->WithTxSync(
+        [&](ZmSqliteDb& db) -> bool
+        {
+            return RecordFileOpSync(db, ctx.uid, ctx.account, action, space, nodeId, nodeName,
+                                    "{\"error\":\"" + code + "\"}", ctx.ip, 2);
+        });
 }
 
 bool ZmFileAuditModule::RecordBatchSync(ZmSqliteDb& db, int64_t uid,

@@ -404,6 +404,24 @@ bool ZmFileDbModule::ApplyUsageSync(ZmSqliteDb& db, int64_t space, int64_t dSize
                         std::to_string(ZmSqliteDb::Now()), std::to_string(space)});
 }
 
+bool ZmFileDbModule::InvalidateSharesByNodesSync(ZmSqliteDb& db,
+                                                 const std::vector<int64_t>& nodeIds)
+{
+    if (nodeIds.empty())
+        return true;
+    // IN 列表按整数拼接:值来自库内 id,不存在注入面
+    std::string in;
+    for (size_t i = 0; i < nodeIds.size(); ++i)
+    {
+        if (i)
+            in += ",";
+        in += std::to_string(nodeIds[i]);
+    }
+    return db.ExecSync("UPDATE shares SET status = 3, update_time = ?1 "
+                       "WHERE status = 1 AND node_id IN (" + in + ")",
+                       {std::to_string(ZmSqliteDb::Now())});
+}
+
 bool ZmFileDbModule::RecountUsageSync(ZmSqliteDb& db, int64_t space)
 {
     // 计入 deleted=1 的占用(回收站条目仍占配额)

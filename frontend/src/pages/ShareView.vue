@@ -1,8 +1,9 @@
 <script setup>
 // 免登录分享页 /s/:token(meta.public,不进门户壳,§7.5)
 // 状态:加载 → 提取码校验 / 需登录 → 浏览(只读+下载+打包)/ 失效
-// 打包下载:服务端返回 {task_no} 表示压缩中,前端每 2s 重试同一请求直至返回 {url}(免登录无任务面板)
-import { ref, reactive, computed, onMounted, watch } from 'vue'
+// 打包下载:服务端返回 {task_no} 表示压缩中,前端每 2s 重试同一请求直至返回 {url}(免登录无任务面板;
+// 上限约 60s,超时提示失败)
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { filehubApi, downloadByUrl, fmtSize, fmtTime, kindOf } from '../api/filehub'
 import FileIcon from '../modules/filehub/FileIcon.vue'
@@ -22,7 +23,9 @@ const items = ref([])
 const loadingList = ref(false)
 const selected = ref(new Set())
 const packing = ref(false)      // 下载全部打包中
+const PACK_RETRY_MAX = 30       // 2s × 30 ≈ 60s 上限,超时提示失败
 let packTimer = null
+let packTries = 0
 
 async function loadInfo() {
   state.value = 'loading'
@@ -40,6 +43,7 @@ async function loadInfo() {
   }
 }
 onMounted(loadInfo)
+onUnmounted(stopPackRetry)
 
 async function verify() {
   if (!pwd.value.trim()) return
@@ -81,21 +85,31 @@ function downloadOne(n) {
     .then(r => { if (r && r.url) downloadByUrl(r.url) })
     .catch(e => toastErr(e.message || '下载失败'))
 }
+/** 停掉打包轮询定时器(就绪、失败、超时、离开页面都要停,否则离开后仍在后台反复请求) */
+function stopPackRetry() {
+  if (packTimer) { clearTimeout(packTimer); packTimer = null }
+}
 function downloadAll() {
   const ids = selected.value.size ? [...selected.value] : items.value.map(x => x.id)
   if (!ids.length) return
   packing.value = true
+  packTries = 0
   const attempt = async () => {
     try {
       const r = await filehubApi.shareDownload(token.value, { ids })
       if (r && r.url) {
-        packing.value = false; packTimer && clearTimeout(packTimer)
+        packing.value = false; stopPackRetry()
         downloadByUrl(r.url)
         return
       }
-      // {task_no} = 压缩中:免登录无任务面板,2s 后幂等重试直至就绪(契约见交接文档 §3.4)
+      // {task_no} = 压缩中:免登录无任务面板,2s 后幂等重试直至就绪
+      if (++packTries >= PACK_RETRY_MAX) {
+        packing.value = false; stopPackRetry()
+        toastErr('打包超时,请稍后在「我的分享」重试')
+        return
+      }
       packTimer = setTimeout(attempt, 2000)
-    } catch (e) { packing.value = false; toastErr(e.message || '打包失败') }
+    } catch (e) { packing.value = false; stopPackRetry(); toastErr(e.message || '打包失败') }
   }
   attempt()
 }

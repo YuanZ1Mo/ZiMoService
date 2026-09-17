@@ -147,6 +147,7 @@ private:
     std::atomic<bool> m_syncRunning{false};
     std::atomic<bool> m_syncCancel{false};
     std::string       m_syncTaskNo;
+    int64_t           m_syncBeginMs = 0; ///< 本轮开始时刻(steady_clock 毫秒;供运行中 elapsed)
     ZMJSON            m_syncProgress; ///< 运行中进度(供 sync 状态接口)
 };
 

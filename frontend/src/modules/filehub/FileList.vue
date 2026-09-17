@@ -16,7 +16,9 @@ const props = defineProps({
   sort: { type: String, default: 'name' },
   order: { type: String, default: 'asc' },
   loading: { type: Boolean, default: false },
-  hasMore: { type: Boolean, default: false }
+  hasMore: { type: Boolean, default: false },
+  /// 整表替换标记:调用方每次替换 items(刷新/换目录/搜索)自增,列表据此复位滚动
+  epoch: { type: Number, default: 0 }
 })
 const emit = defineEmits(['toggle', 'open', 'ctx', 'drag-to', 'files', 'sort', 'load-more'])
 
@@ -37,7 +39,13 @@ function onScroll() {
   if (el.scrollTop + el.clientHeight >= el.scrollHeight - 60 && props.hasMore && !props.loading)
     emit('load-more')
 }
-watch(() => props.view, () => { scrollTop.value = 0; scroller.value && (scroller.value.scrollTop = 0) })
+/** 复位滚动:整表被替换后旧位置可能越过新列表长度,视口会整片空白 */
+function resetScroll() {
+  scrollTop.value = 0
+  if (scroller.value) scroller.value.scrollTop = 0
+}
+watch(() => props.view, resetScroll)
+watch(() => props.epoch, resetScroll)
 const vStart = computed(() => props.view !== 'list' ? 0 : Math.max(0, Math.floor(scrollTop.value / ROW_H) - 5))
 const vEnd = computed(() => props.view !== 'list' ? props.items.length : Math.min(props.items.length, vStart.value + Math.ceil(viewH.value / ROW_H) + 10))
 const padTop = computed(() => props.view !== 'list' ? 0 : vStart.value * ROW_H)

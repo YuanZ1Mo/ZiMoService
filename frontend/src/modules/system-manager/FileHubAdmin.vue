@@ -26,6 +26,7 @@ const TABS = [
   { key: 'overview', name: '概览' },
   { key: 'sync', name: '一致性同步' },
   { key: 'cache', name: '缓存与任务' },
+  { key: 'quota', name: '空间配额' },
   { key: 'audit', name: '审计日志' }
 ]
 
@@ -64,8 +65,37 @@ const dryRun = ref(true)
 
 // ── ③ 缓存与任务 ──
 const cache = ref([])
+// ── 列表分页(四张表各自独立:此前都只取第 1 页且无翻页入口) ──
+/** 页数(至少 1 页) */
+function pages(total, size) { return Math.max(1, Math.ceil(total / size)) }
+/**
+ * 翻页:越界或原地不动则忽略,否则改写页码并重载该表
+ *
+ * @param cur     页码 ref
+ * @param total   总条数
+ * @param size    每页条数
+ * @param p       目标页
+ * @param reload  该表的重载函数
+ */
+function gotoPage(cur, total, size, p, reload) {
+  if (p < 1 || p > pages(total, size) || p === cur.value) return
+  cur.value = p
+  reload()
+}
+
+const TRASH_SIZE = 50
+const trashPage = ref(1)
+const trashTotal = ref(0)
+const trashUsed = reactive({ size: 0, items: 0 })   // 全库口径(确认框用,不能拿当前页推算)
 const adminTrashRows = ref([])
+/// 回收站翻页
+function gotoTrash(p) { gotoPage(trashPage, trashTotal.value, TRASH_SIZE, p, loadAdminTrash) }
+const TASK_SIZE = 50
+const taskPage = ref(1)
+const taskTotal = ref(0)
 const adminTasks = ref([])
+/// 全量任务翻页
+function gotoTask(p) { gotoPage(taskPage, taskTotal.value, TASK_SIZE, p, loadAdminTasks) }
 async function loadCache() {
   try { const d = await filehubApi.admin.cache(); cache.value = d.list || [] } catch { /* 静默 */ }
 }
@@ -78,13 +108,25 @@ async function cleanCache(names) {
 }
 const cacheConfirm = reactive({ show: false, name: '' })
 async function loadAdminTrash() {
-  try { const d = await filehubApi.admin.trash({ page: 1, size: 50 }); adminTrashRows.value = d.list || [] } catch { /* 静默 */ }
+  try {
+    const d = await filehubApi.admin.trash({ page: trashPage.value, size: TRASH_SIZE })
+    adminTrashRows.value = d.list || []
+    trashTotal.value = d.total || 0
+    trashUsed.size = d.used_size || 0
+    trashUsed.items = d.used_items || 0
+    // 删空当前页时回退一页,避免停在空白页
+    if (!adminTrashRows.value.length && trashPage.value > 1 && trashTotal.value > 0) {
+      trashPage.value--
+      return loadAdminTrash()
+    }
+  } catch { /* 静默 */ }
 }
 const dangerConfirm = reactive({ show: false, title: '', html: '', fn: null })
 function askDanger(title, html, fn) { dangerConfirm.title = title; dangerConfirm.html = html; dangerConfirm.fn = fn; dangerConfirm.show = true }
 function cleanAllTrash() {
-  const n = adminTrashRows.value.length
-  const bytes = adminTrashRows.value.reduce((a, x) => a + Number(x.size || 0), 0)
+  // 清空是全库动作:数字必须取服务端的全量口径(当前页只有 50 条,拿它推算会严重少报)
+  const n = trashUsed.items || trashTotal.value
+  const bytes = trashUsed.size
   askDanger('整体清空回收站?', `将<b style="color:var(--color-err)">物理删除</b>全部 <b>${n}</b> 个条目,共 <b>${fmtSize(bytes)}</b>,不可撤销。`, async () => {
     try {
       const r = await filehubApi.admin.trashClear('')
@@ -114,7 +156,11 @@ function adminRestore(row) {
   })
 }
 async function loadAdminTasks() {
-  try { const d = await filehubApi.admin.tasks({ page: 1, size: 50 }); adminTasks.value = d.list || [] } catch { /* 静默 */ }
+  try {
+    const d = await filehubApi.admin.tasks({ page: taskPage.value, size: TASK_SIZE })
+    adminTasks.value = d.list || []
+    taskTotal.value = d.total || 0
+  } catch { /* 静默 */ }
 }
 async function forceCancel(t) {
   try { await filehubApi.admin.taskCancel(t.task_no); toast('已强制取消', 'warn'); loadAdminTasks() } catch { /* 静默 */ }
@@ -126,7 +172,15 @@ const logsTotal = ref(0)
 const logQuery = reactive({ action: '', page: 1, size: 20 })
 const shareLogs = ref([])
 const shareLogsTotal = ref(0)
+const SHARE_LOG_SIZE = 20
+const shareLogPage = ref(1)
 const auditTab = ref('file')
+/// 业务日志翻页(带筛选条件,改页只需换页码)
+function gotoLogs(p) { gotoPage(logQuery, logsTotal.value, logQuery.size, p, loadLogs) }
+/// 分享日志翻页
+function gotoShareLogs(p) {
+  gotoPage(shareLogPage, shareLogsTotal.value, SHARE_LOG_SIZE, p, loadShareLogs)
+}
 async function loadLogs() {
   try {
     const d = await filehubApi.admin.logs({ ...logQuery })
@@ -135,7 +189,7 @@ async function loadLogs() {
 }
 async function loadShareLogs() {
   try {
-    const d = await filehubApi.admin.shareLogs({ page: 1, size: 20 })
+    const d = await filehubApi.admin.shareLogs({ page: shareLogPage.value, size: SHARE_LOG_SIZE })
     shareLogs.value = d.list || []; shareLogsTotal.value = d.total || 0
   } catch { /* 静默 */ }
 }
@@ -152,8 +206,45 @@ const TASK_TYPE_NAME = { 1: '上传', 2: '复制', 3: '打包下载', 4: '目录
 const TASK_STATUS_NAME = { 1: '排队中', 2: '进行中', 3: '已完成', 4: '失败', 5: '已取消', 6: '已中断' }
 const SHARE_ACTION = { 1: '访问', 2: '提取码校验', 3: '列目录', 4: '下载', 5: '打包下载' }
 
+// ── ⑤ 空间配额(逐用户/公共空间的可用量上限) ──
+const QUOTA_SIZE = 50
+const quotaPage = ref(1)
+const quotaTotal = ref(0)
+const quotaRows = ref([])
+/// 字节 → GB 输入框显示值(0 = 不限量 → 空串,让 placeholder 提示)
+function gbOf(bytes) { return Number(bytes) ? (Number(bytes) / (1024 ** 3)).toFixed(1) : '' }
+/// 配额翻页
+function gotoQuota(p) { gotoPage(quotaPage, quotaTotal.value, QUOTA_SIZE, p, loadQuota) }
+async function loadQuota() {
+  try {
+    const d = await filehubApi.admin.spaces({ page: quotaPage.value, size: QUOTA_SIZE })
+    quotaRows.value = (d.list || []).map(x => ({ ...x, _gb: gbOf(x.quota) }))
+    quotaTotal.value = d.total || 0
+  } catch { /* 静默 */ }
+}
+/**
+ * 保存某空间的配额
+ *
+ * 输入按 GB 收,提交前换算成整数字节:服务端按整数解析配额,传非数字串会静默落成 0(不限量)。
+ *
+ * @param s  配额行(含 space 与输入框 _gb)
+ */
+async function saveQuota(s) {
+  const raw = String(s._gb ?? '').trim()
+  if (raw !== '' && !/^\d+(\.\d+)?$/.test(raw)) {
+    toast('配额请填非负数字(单位 GB;留空或 0 = 不限量)', 'err')
+    return
+  }
+  const bytes = raw === '' ? 0 : Math.round(Number(raw) * 1024 ** 3)
+  try {
+    await filehubApi.admin.setQuota(s.space, bytes)
+    toast(`「${s.name}」配额已设为 ${bytes ? fmtSize(bytes) : '不限量'}`, 'ok')
+    loadQuota()
+  } catch (e) { toast(e.message || '设置配额失败', 'err') }
+}
+
 onMounted(() => {
-  loadStats(); loadSync(); loadCache(); loadAdminTrash(); loadAdminTasks(); loadLogs()
+  loadStats(); loadSync(); loadCache(); loadAdminTrash(); loadAdminTasks(); loadQuota(); loadLogs()
 })
 onBeforeUnmount(() => { if (syncTimer) clearInterval(syncTimer) })
 </script>
@@ -311,6 +402,13 @@ onBeforeUnmount(() => { if (syncTimer) clearInterval(syncTimer) })
               </tbody>
             </table>
           </div>
+          <div v-if="trashTotal > TRASH_SIZE" class="pager" style="padding:0 16px 14px">
+            <span class="pg-info">共 <b class="num">{{ trashTotal }}</b> 条 · 第 <b class="num">{{ trashPage }} / {{ pages(trashTotal, TRASH_SIZE) }}</b> 页</span>
+            <div class="pg-btns">
+              <button class="pg-btn" type="button" :disabled="trashPage <= 1" @click="gotoTrash(trashPage - 1)">‹</button>
+              <button class="pg-btn" type="button" :disabled="trashPage >= pages(trashTotal, TRASH_SIZE)" @click="gotoTrash(trashPage + 1)">›</button>
+            </div>
+          </div>
         </div>
 
         <div class="row between" style="margin:18px 0 10px"><b>全量任务</b><button class="btn btn-ghost btn-sm" type="button" @click="loadAdminTasks">刷新</button></div>
@@ -333,6 +431,13 @@ onBeforeUnmount(() => { if (syncTimer) clearInterval(syncTimer) })
                 <tr v-if="!adminTasks.length"><td :colspan="7"><div class="empty"><div class="empty-icon">🗂</div><div class="empty-title">暂无任务</div></div></td></tr>
               </tbody>
             </table>
+          </div>
+          <div v-if="taskTotal > TASK_SIZE" class="pager" style="padding:0 16px 14px">
+            <span class="pg-info">共 <b class="num">{{ taskTotal }}</b> 条 · 第 <b class="num">{{ taskPage }} / {{ pages(taskTotal, TASK_SIZE) }}</b> 页</span>
+            <div class="pg-btns">
+              <button class="pg-btn" type="button" :disabled="taskPage <= 1" @click="gotoTask(taskPage - 1)">‹</button>
+              <button class="pg-btn" type="button" :disabled="taskPage >= pages(taskTotal, TASK_SIZE)" @click="gotoTask(taskPage + 1)">›</button>
+            </div>
           </div>
         </div>
       </template>
@@ -368,6 +473,13 @@ onBeforeUnmount(() => { if (syncTimer) clearInterval(syncTimer) })
               </tbody>
             </table>
           </div>
+          <div v-if="logsTotal > logQuery.size" class="pager" style="padding:0 16px 14px">
+            <span class="pg-info">共 <b class="num">{{ logsTotal }}</b> 条 · 第 <b class="num">{{ logQuery.page }} / {{ pages(logsTotal, logQuery.size) }}</b> 页</span>
+            <div class="pg-btns">
+              <button class="pg-btn" type="button" :disabled="logQuery.page <= 1" @click="gotoLogs(logQuery.page - 1)">‹</button>
+              <button class="pg-btn" type="button" :disabled="logQuery.page >= pages(logsTotal, logQuery.size)" @click="gotoLogs(logQuery.page + 1)">›</button>
+            </div>
+          </div>
         </div>
         <div v-else class="card work-card" style="padding:0;overflow:hidden">
           <div style="overflow-x:auto">
@@ -385,6 +497,46 @@ onBeforeUnmount(() => { if (syncTimer) clearInterval(syncTimer) })
                 <tr v-if="!shareLogs.length"><td :colspan="6"><div class="empty"><div class="empty-icon">📭</div><div class="empty-title">暂无日志</div></div></td></tr>
               </tbody>
             </table>
+          </div>
+          <div v-if="shareLogsTotal > SHARE_LOG_SIZE" class="pager" style="padding:0 16px 14px">
+            <span class="pg-info">共 <b class="num">{{ shareLogsTotal }}</b> 条 · 第 <b class="num">{{ shareLogPage }} / {{ pages(shareLogsTotal, SHARE_LOG_SIZE) }}</b> 页</span>
+            <div class="pg-btns">
+              <button class="pg-btn" type="button" :disabled="shareLogPage <= 1" @click="gotoShareLogs(shareLogPage - 1)">‹</button>
+              <button class="pg-btn" type="button" :disabled="shareLogPage >= pages(shareLogsTotal, SHARE_LOG_SIZE)" @click="gotoShareLogs(shareLogPage + 1)">›</button>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <!-- ⑤ 空间配额:逐用户的可用量上限(只列出已使用过文件中心的空间) -->
+      <template v-else-if="tab === 'quota'">
+        <div class="row between" style="margin:18px 0 10px">
+          <b>空间配额</b>
+          <span class="cap" style="color:var(--color-text-3)">留空或 0 = 不限量;单位 GB</span>
+          <button class="btn btn-ghost btn-sm" type="button" @click="loadQuota">刷新</button>
+        </div>
+        <div class="card work-card" style="padding:0;overflow:hidden">
+          <div style="overflow-x:auto">
+            <table class="table">
+              <thead><tr><th style="min-width:160px">空间</th><th style="width:120px">已用</th><th style="width:100px">条目数</th><th style="width:160px">配额(GB)</th><th style="width:100px">操作</th></tr></thead>
+              <tbody>
+                <tr v-for="s in quotaRows" :key="s.space">
+                  <td>{{ s.name }}</td>
+                  <td class="num">{{ fmtSize(s.used_size) }}</td>
+                  <td class="num">{{ s.used_items }}</td>
+                  <td><input v-model="s._gb" class="input" style="height:32px;width:120px" placeholder="不限量" /></td>
+                  <td><button class="btn btn-secondary btn-sm" type="button" @click="saveQuota(s)">保存</button></td>
+                </tr>
+                <tr v-if="!quotaRows.length"><td :colspan="5"><div class="empty"><div class="empty-icon">📦</div><div class="empty-title">暂无空间</div><div class="empty-sub">用户首次使用文件中心后才会出现</div></div></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div v-if="quotaTotal > QUOTA_SIZE" class="pager" style="padding:0 16px 14px">
+            <span class="pg-info">共 <b class="num">{{ quotaTotal }}</b> 个空间 · 第 <b class="num">{{ quotaPage }} / {{ pages(quotaTotal, QUOTA_SIZE) }}</b> 页</span>
+            <div class="pg-btns">
+              <button class="pg-btn" type="button" :disabled="quotaPage <= 1" @click="gotoQuota(quotaPage - 1)">‹</button>
+              <button class="pg-btn" type="button" :disabled="quotaPage >= pages(quotaTotal, QUOTA_SIZE)" @click="gotoQuota(quotaPage + 1)">›</button>
+            </div>
           </div>
         </div>
       </template>

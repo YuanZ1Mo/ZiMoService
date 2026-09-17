@@ -1,9 +1,9 @@
 <script setup>
 // 移动/复制 · 目录树选择器(可跨空间,§3.5/§3.6)
 // 树懒加载:切空间拉根目录,点展开再拉子目录;冲突策略 skip/rename/overwrite 重试整批(ask=409 冲突清单)
-import { ref, reactive, watch } from 'vue'
+import { ref, watch } from 'vue'
 import Modal from '../../components/Modal.vue'
-import FileIcon from './FileIcon.vue'
+import DirTreeNode from './DirTreeNode.vue'
 import { filehubApi, fmtSize } from '../../api/filehub'
 
 const props = defineProps({
@@ -16,13 +16,12 @@ const emit = defineEmits(['close', 'done'])
 
 const spaces = [{ space: 0, name: '公共空间' }, { space: 'me', name: '我的空间' }]
 const spaceSel = ref(0)
-const roots = ref([])                 // [{id,name,open,loaded,kids}]
+const roots = ref([])                 // [{id,name,open,loading,loaded,kids}]
 const destName = ref('')
 const destId = ref(0)
 const conflict = ref('ask')
 const conflicts = ref([])             // ask 409 冲突清单
 const busy = ref(false)
-const expanding = reactive(new Set())
 
 watch(() => props.show, async (v) => {
   if (!v) return
@@ -40,17 +39,26 @@ async function loadRoots() {
 }
 // 我的空间 space=uid(由父组件经会话注入)
 function realSpace() { return spaceSel.value === 'me' ? Number(props.meSpace) : Number(spaceSel.value) }
-function toTree(n) { return { id: n.id, name: n.name, open: false, loaded: false, kids: [] } }
+function toTree(n) {
+  return { id: n.id, name: n.name, open: false, loading: false, loaded: false, kids: [] }
+}
 
-async function toggleNode(t) {
+/**
+ * 展开/收起一个节点;首次展开时懒加载其子目录
+ *
+ * 加载态挂在节点自身上(供递归组件显示骨架条),重复展开不会重复请求。
+ *
+ * @param t  树节点(见 toTree)
+ */
+async function loadKids(t) {
   t.open = !t.open
-  if (t.open && !t.loaded) {
-    expanding.add(t.id)
+  if (t.open && !t.loaded && !t.loading) {
+    t.loading = true
     try {
       const d = await filehubApi.list({ space: realSpace(), dir_id: t.id, page: 1, size: 1000 })
       t.kids = (d.list || []).filter(n => Number(n.type) === 1).map(toTree)
       t.loaded = true
-    } catch { /* 静默 */ } finally { expanding.delete(t.id) }
+    } catch { /* 静默 */ } finally { t.loading = false }
   }
 }
 function pick(t) { destId.value = t.id; destName.value = t.name }
@@ -92,21 +100,8 @@ const totalSize = () => props.targets.reduce((a, t) => a + (Number(t.type) === 2
         </span>
         {{ spaces.find(s => s.space === spaceSel).name }}(根)
       </button>
-      <template v-for="t in roots" :key="t.id">
-        <button type="button" class="tree-item" :class="{ sel: destId === t.id }" @click="toggleNode(t); pick(t)">
-          <svg class="tw" :class="{ exp: t.open }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg>
-          <FileIcon :node="{ type: 1, ext: '' }" />
-          {{ t.name }}
-        </button>
-        <div v-if="t.open" class="tree-kids">
-          <button v-for="k in t.kids" :key="k.id" type="button" class="tree-item" :class="{ sel: destId === k.id }" @click="toggleNode(k); pick(k)">
-            <svg class="tw" :class="{ exp: k.open }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg>
-            <FileIcon :node="{ type: 1, ext: '' }" />
-            {{ k.name }}
-          </button>
-          <div v-if="expanding.has(t.id)" style="padding:8px 12px"><span class="skeleton" style="display:block;height:16px"></span></div>
-        </div>
-      </template>
+      <DirTreeNode v-for="t in roots" :key="t.id" :node="t" :sel-id="destId"
+                   :load-kids="loadKids" @pick="pick" />
     </div>
 
     <div class="dest-bar" style="margin-top:12px">

@@ -452,6 +452,7 @@ void ZmFileAdminModule::ResetSyncFlags()
     std::lock_guard<std::mutex> lk(m_syncMtx);
     m_syncRunning.store(false);
     m_syncCancel.store(false);
+    m_syncBeginMs = 0;
 }
 
 void ZmFileAdminModule::RunSyncBody(bool dryRun, const ZmOpCtx& ctx, ZmTaskHandle& h)
@@ -725,6 +726,10 @@ ZMJSON ZmFileAdminModule::RunSyncSync(const std::string& taskNo, bool dryRun,
         m_syncProgress["removed"] = 0;
         m_syncProgress["fixed"]   = 0;
         m_syncProgress["skipped"] = 0;
+        // 运行中 elapsed 的基准:结束后由 report.elapsed 给总耗时,中途靠它推算
+        m_syncBeginMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            begin.time_since_epoch())
+                            .count();
     }
     // 进度分母:库中可见目录总数(单条聚合查询,代价可忽略)
     {
@@ -759,6 +764,7 @@ ZMJSON ZmFileAdminModule::RunSyncSync(const std::string& taskNo, bool dryRun,
         m_syncProgress["total"] = zm_file_row_int(report, "scanned", 0);
         m_syncRunning.store(false);
         m_syncCancel.store(false);
+        m_syncBeginMs = 0;
     }
     DEFAULT_LOG_INFO(
         "一致性同步完成: 扫描目录={} 补建={} 删行={} 修正={} 跳过={} 耗时={}ms",
@@ -805,8 +811,15 @@ drogon::Task<HttpResponsePtr> ZmFileAdminModule::HandleSyncStatus(HttpRequestPtr
     if (running)
     {
         std::lock_guard<std::mutex> lk(m_syncMtx);
-        ZMJSON p        = m_syncProgress.is_object() ? m_syncProgress : ZMJSON::object();
-        p["task_no"]    = m_syncTaskNo;
+        ZMJSON p     = m_syncProgress.is_object() ? m_syncProgress : ZMJSON::object();
+        p["task_no"] = m_syncTaskNo;
+        // 已运行时长(毫秒):进度快照本身不带时间,按开始时刻现算
+        if (m_syncBeginMs > 0)
+            p["elapsed"] =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch())
+                    .count() -
+                m_syncBeginMs;
         out["progress"] = std::move(p);
     }
     else

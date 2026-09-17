@@ -49,6 +49,18 @@ class ZmFileHubModule
     /// @brief 注册用户侧全部路由(含分享公开面;公开面走免鉴权分支)
     void RegisterRoutes();
 
+    /// @brief 空间归属门禁:越权访问他人空间时记一条失败审计并返回 403
+    ///
+    /// 失败也入审计:被拒绝的写请求要留痕(便于排查"为什么删不掉",也留下越权尝试记录)。
+    /// 审计写库走工作池,不在事件循环线程做阻塞 DB。
+    ///
+    /// @param space   目标空间(0 = 公共空间)
+    /// @param ctx     操作者(审计快照 uid/account/ip)
+    /// @param action  本次试图执行的动作码(zm_file::kAct*)
+    /// @return 非空 = 应直接返回的 403 响应;空 = 放行
+    drogon::Task<drogon::HttpResponsePtr> DenyForeignSpace(int64_t space, const ZmOpCtx& ctx,
+                                                          const std::string& action);
+
     /// @brief 注册下载闸门的巡检定时器(事件循环启动后生效)
     ///
     /// 每 30 秒回收一次"客户端在响应开始发送前就断开"而漏掉的并发名额 ——

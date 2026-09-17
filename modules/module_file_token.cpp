@@ -334,6 +334,23 @@ drogon::Task<ZmTokenTarget> ZmFileTokenModule::Resolve(const std::string& token)
             t.message = "下载目标已变更,请重新发起下载";
             co_return t;
         }
+        // 防交错:令牌只认签发时那一份文件。改名/移动会改变物理路径,若仍按冻结路径
+        // 发送,发出去的可能是"换了名字的另一份内容" —— 路径一变即判令牌失效
+        std::string nowPath;
+        bool        moved = co_await ZmHttpServer::RunOnPool<bool>(
+            [this, &rec, &nowPath]() -> bool
+            {
+                int64_t       sp = 0;
+                ZmStoreResult pr = m_store->PhysicalPathSync(rec.nodeId, sp, nowPath);
+                return !pr.ok || nowPath != rec.path;
+            });
+        if (moved)
+        {
+            t.status  = 410;
+            t.code    = zm_file_err::kTokenExpired;
+            t.message = "下载目标已变更,请重新发起下载";
+            co_return t;
+        }
     }
     else if (rec.kind == ZmTokenKind::Pack)
     {

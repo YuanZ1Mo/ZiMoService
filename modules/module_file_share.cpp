@@ -16,6 +16,7 @@
 #include "zm_util_logger.h"
 
 #include <algorithm>
+#include <cstring>
 #include <random>
 #include <set>
 
@@ -76,7 +77,8 @@ std::string ZmFileShareModule::GeneratePwd()
     static const char* cs = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
     std::random_device rd;
     std::mt19937       gen(rd());
-    std::uniform_int_distribution<int> dist(0, 56);
+    // 上界按字符集长度算:硬写常数会越界取到结尾的 NUL,生成出无法输入的提取码
+    std::uniform_int_distribution<int> dist(0, static_cast<int>(std::strlen(cs)) - 1);
     std::string                        s;
     for (int i = 0; i < 4; ++i)
         s += cs[dist(gen)];
@@ -495,8 +497,12 @@ drogon::Task<ZMJSON> ZmFileShareModule::Verify(const std::string& token,
                                                const std::string& pwd, const std::string& ip,
                                                const std::string& ua)
 {
-    co_return co_await ZmHttpServer::RunOnPool<ZMJSON>(
-        [this, token, pwd, ip, ua]() -> ZMJSON
+    // 提取码比对的落点(非 0 = 本次确实比对了,需要在协程侧补一条访问日志;
+    // 未设提取码 / 分享不可用 / 冷却拦截等分支没有"校验"可言,不记)
+    int64_t logShareId = 0;
+    int     logResult  = 0;
+    ZMJSON  out        = co_await ZmHttpServer::RunOnPool<ZMJSON>(
+        [this, token, pwd, ip, ua, &logShareId, &logResult]() -> ZMJSON
         {
             ZMJSON row = m_db->QueryRowSync("SELECT * FROM shares WHERE token = ?1", {token});
             if (row.empty())
@@ -538,7 +544,9 @@ drogon::Task<ZMJSON> ZmFileShareModule::Verify(const std::string& token,
                                        std::to_string((remain + 59) / 60) + " 分钟后再试");
             }
 
-            bool pass = (HashPwd(token, pwd) == stored);
+            bool pass  = (HashPwd(token, pwd) == stored);
+            logShareId = shareId;
+            logResult  = pass ? 1 : 2;   // 1=成功 2=失败(与其它分享日志同一口径)
             if (!pass)
             {
                 m_db->WithTxSync(
@@ -565,10 +573,13 @@ drogon::Task<ZMJSON> ZmFileShareModule::Verify(const std::string& token,
                 }
                 out["cred"] = cred;
             }
-            // 日志(成功/失败都记)
-            (void)shareId;
             return out;
         });
+    // 记提取码校验(成功/失败都记):只读行为走独立异步写,失败不影响校验结果
+    if (logShareId != 0)
+        co_await m_audit->RecordShareAccess(logShareId, token, zm_file::kShareLogVerify,
+                                            logResult, 0, ip, ua, "");
+    co_return out;
 }
 
 // ============================================================================

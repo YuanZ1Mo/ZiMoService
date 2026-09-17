@@ -19,6 +19,7 @@
 #include <string>
 
 class ZmFileDbModule;
+struct ZmOpCtx;
 
 /// 审计日志查询条件(空值表示不过滤)
 struct ZmFileLogQuery
@@ -69,6 +70,22 @@ class ZmFileAuditModule
                           const std::string& action, int64_t space, int64_t nodeId,
                           const std::string& nodeName, const std::string& detail,
                           const std::string& ip, int result);
+
+    /// @brief 记一条失败审计(自带独立事务,result 固定为 2)
+    ///
+    /// 供"被拒绝的请求"使用:这类路径没有业务改库,不需要与业务同事务。
+    /// 必须在工作线程调用(内部走同步 DB 接口)。
+    ///
+    /// @param ctx      操作者(uid/account/ip 快照)
+    /// @param action   动作码(zm_file::kAct*)
+    /// @param space    条目所属空间
+    /// @param nodeId   相关条目 id(无 = 0)
+    /// @param nodeName 名称快照
+    /// @param code     错误码(写进 detail 的 error 字段)
+    /// @return true 写入成功
+    bool RecordFailSync(const ZmOpCtx& ctx, const std::string& action, int64_t space,
+                        int64_t nodeId, const std::string& nodeName,
+                        const std::string& code);
 
     /**
  * @brief 批量操作记一条审计(删除这类"一批一条"的场景)

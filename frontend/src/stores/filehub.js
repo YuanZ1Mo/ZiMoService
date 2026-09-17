@@ -74,7 +74,7 @@ export const useFilehubStore = defineStore('filehub', {
       const jobs = files.map(f => ({
         key: 'up_' + Math.random().toString(36).slice(2, 10),
         type: 'upload', name: f.name, size: f.size, done: 0,
-        status: 'wait', batch: batch, error: '',
+        status: 'wait', batch: batch, error: '', conflicts: [],
         ctrl: new AbortController(), session: '', file: f,
         space, dirId: dirOf ? dirOf(f) : dirId, conflict, onDone
       }))
@@ -106,7 +106,13 @@ export const useFilehubStore = defineStore('filehub', {
         this._notifyChange()
       } catch (e) {
         if (e && e.name === 'AbortError') { u.status = 'stop'; u.error = '已取消' }
-        else { u.status = 'fail'; u.error = (e && e.message) || '上传失败' }
+        else {
+          u.status = 'fail'
+          u.error = (e && e.message) || '上传失败'
+          // 同名冲突:服务端带回了冲突清单,须由用户选策略后按该策略重发;
+          // 直接"重试"仍是 conflict=ask,会再次 409 —— 死循环
+          u.conflicts = (e && e.code === 'NAME_EXISTS' && e.data && e.data.conflicts) || []
+        }
       } finally {
         this._pump()
         // 全部结束后 4s 清理已完成项(避免面板堆积)
@@ -124,9 +130,11 @@ export const useFilehubStore = defineStore('filehub', {
       if (u.session) filehubApi.uploadCancel(u.session).catch(() => {})
       this._notifyChange()
     },
-    async retryUpload(key) {
+    // 重试:带 conflict 时按所选策略重发(同名冲突的出口),不带则沿用原策略
+    async retryUpload(key, conflict) {
       const u = this.uploads.find(x => x.key === key)
       if (!u || u.status !== 'fail') return
+      if (conflict) { u.conflict = conflict; u.conflicts = [] }
       u.status = 'wait'; u.done = 0; u.error = ''
       this._pump(); this.ensurePolling()
     },

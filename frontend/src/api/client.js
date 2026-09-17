@@ -13,7 +13,9 @@ function goLogin(redirect) {
 
 async function request(path, { method = 'GET', body, timeout = 15000 } = {}) {
   const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null
-  const timer = ctrl ? setTimeout(() => ctrl.abort(), timeout) : null
+  // timeout <= 0 = 不设超时:服务端少数接口是同步完成的(合并分片、批量复制、批量建目录),
+  // 耗时随数据量走,固定 15 秒会在服务端已成功的情况下报"网络异常",诱发重复提交
+  const timer = ctrl && timeout > 0 ? setTimeout(() => ctrl.abort(), timeout) : null
   let resp
   try {
     resp = await fetch(API_BASE + path, {
@@ -64,9 +66,9 @@ async function request(path, { method = 'GET', body, timeout = 15000 } = {}) {
 }
 
 export const api = {
-  get: (path) => request(path),
-  post: (path, body) => request(path, { method: 'POST', body }),
-  patch: (path, body) => request(path, { method: 'PATCH', body }),
-  del: (path) => request(path, { method: 'DELETE' }),
+  get: (path, opts) => request(path, opts),
+  post: (path, body, opts) => request(path, { method: 'POST', body, ...opts }),
+  patch: (path, body, opts) => request(path, { method: 'PATCH', body, ...opts }),
+  del: (path, opts) => request(path, { method: 'DELETE', ...opts }),
   request
 }

@@ -43,6 +43,7 @@ inline constexpr int64_t kShareCredTtlSec = 2LL * 3600;  ///< 分享访问凭证
 inline constexpr int64_t kSharePwdFailMax = 5;           ///< 提取码连续失败上限
 inline constexpr int64_t kSharePwdCoolSec = 600;         ///< 提取码失败冷却时长
 inline constexpr int64_t kUploadMaxRunning = 3;          ///< 单用户并发上传任务上限
+inline constexpr int64_t kPackMaxRunning  = 2;           ///< 单用户进行中打包任务上限
 
 // ── 条目类型 ──
 inline constexpr int kTypeDir  = 1; ///< 目录
@@ -129,6 +130,7 @@ inline constexpr const char* kTokenExpired      = "TOKEN_EXPIRED";
 inline constexpr const char* kFileTooLarge      = "FILE_TOO_LARGE";
 inline constexpr const char* kTooManyUploads    = "TOO_MANY_UPLOADS";
 inline constexpr const char* kTooManyShares     = "TOO_MANY_SHARES";
+inline constexpr const char* kTooManyPacks      = "TOO_MANY_PACKS";
 inline constexpr const char* kShareLocked       = "SHARE_LOCKED";
 inline constexpr const char* kInternal          = "INTERNAL";
 } // namespace zm_file_err

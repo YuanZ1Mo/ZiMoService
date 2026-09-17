@@ -653,11 +653,13 @@ bool ZmFileNodeModule::DepthOkSync(int64_t parentId, int64_t addLevels, std::str
     int64_t depth = 0; // 父目录自身所在层级(0 = 空间根)
     if (parentId != 0)
     {
+        // 逐级向上找父节点:n.id 对上的是当前行的 parent_id(写成 n.id = n.parent_id
+        // 是自比较,递归项恒为空,深度会恒为 1)
         ZMJSON row = m_db->QueryRowSync("WITH RECURSIVE up(id, parent_id, depth) AS ("
                                         " SELECT id, parent_id, 0 FROM nodes WHERE id = ?1"
                                         " UNION ALL"
                                         " SELECT n.id, n.parent_id, up.depth + 1 FROM nodes n "
-                                        "JOIN up ON n.id = n.parent_id"
+                                        "JOIN up ON n.id = up.parent_id"
                                         " WHERE up.depth < 64)"
                                         " SELECT MAX(depth) AS d FROM up;",
                                         {std::to_string(parentId)});

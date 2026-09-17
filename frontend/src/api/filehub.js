@@ -16,6 +16,34 @@ function qs(params = {}) {
 // 真实实现要点:元数据走请求头、体为原始字节(非 multipart,§6.5)
 const CHUNK_SIZE = 8 * 1024 * 1024
 
+// 同步型慢接口的超时(毫秒;服务端在这些接口里把活干完才回响应,给 15 秒会在
+// 服务端已成功时报"网络异常",用户重试就会重复复制/重复建目录)
+const TIMEOUT_MERGE = 10 * 60 * 1000    // 分片合并:20GB 上限,按磁盘速度走
+const TIMEOUT_COPY = 5 * 60 * 1000      // 同步复制:≤500 项且 ≤1GB 才走同步分支
+const TIMEOUT_ENSURE = 2 * 60 * 1000    // 批量建目录:单批 ≤2000 条路径
+
+// 秒传/校验用整文件哈希的上限:Web Crypto 没有流式接口,要整份读进内存,
+// 超过这个体积就放弃算哈希(不上传秒传,服务端也不做校验,上传照常)
+const HASH_MAX_BYTES = 256 * 1024 * 1024
+
+/**
+ * 算整文件的 SHA-256(小写十六进制,与服务端 ToHex 口径一致)
+ *
+ * 拿不到哈希(浏览器不支持 / 超过体积上限 / 读取失败)一律返回空串 —— 服务端把空
+ * hash 当作"不校验、不比秒传",不影响上传本身。
+ *
+ * @param file  待上传的文件
+ * @return 64 字符十六进制摘要;空串 = 本次不做哈希
+ */
+async function fileSha256(file) {
+  if (!file || file.size > HASH_MAX_BYTES) return ''
+  if (!globalThis.crypto || !globalThis.crypto.subtle) return ''
+  try {
+    const md = await globalThis.crypto.subtle.digest('SHA-256', await file.arrayBuffer())
+    return [...new Uint8Array(md)].map(b => b.toString(16).padStart(2, '0')).join('')
+  } catch { return '' }
+}
+
 async function uploadFile(file, { space, dirId, conflict, signal, onProgress, onSession }) {
   // 单请求:POST /filehub/upload/simple(头传元数据,体为原始字节)
   if (file.size <= CHUNK_SIZE) {
@@ -29,7 +57,18 @@ async function uploadFile(file, { space, dirId, conflict, signal, onProgress, on
     return r
   }
   // 分片:init → 逐片(并发 3,可断点续传)→ complete
-  const init = await api.post('/filehub/upload/init', { space, dir_id: dirId, name: file.name, size: file.size, conflict })
+  // 带整文件哈希:服务端据此判秒传(同空间同 hash+size 直接入位),并在合并后校验一致
+  const hash = await fileSha256(file)
+  const initBody = { space, dir_id: dirId, name: file.name, size: file.size, conflict }
+  if (hash) initBody.hash = hash
+  const init = await api.post('/filehub/upload/init', initBody)
+  // init 的同名预检:ask 时提前失败,让用户先选策略,而不是把整个文件传完再撞 409
+  if (init.conflicts && init.conflicts.length && conflict === 'ask') {
+    const err = new Error('同名文件已存在,请选择处理方式')
+    err.code = 'NAME_EXISTS'
+    err.data = { code: 'NAME_EXISTS', conflicts: init.conflicts }
+    throw err
+  }
   if (init.instant) { onProgress(file.size); return { node_id: init.node_id, task_no: init.task_no } }
   if (onSession) onSession(init.upload_id)
   const uploaded = new Set(init.uploaded || [])
@@ -55,7 +94,8 @@ async function uploadFile(file, { space, dirId, conflict, signal, onProgress, on
     }
   }
   await Promise.all([worker(), worker(), worker()])
-  return api.post('/filehub/upload/complete', { upload_id: init.upload_id })
+  return api.post('/filehub/upload/complete', { upload_id: init.upload_id },
+                  { timeout: TIMEOUT_MERGE })
 }
 
 // 原始请求(上传专用:非 JSON 体;401 仍走统一跳登录逻辑 —— 复用 client 语义的精简版)
@@ -90,10 +130,12 @@ export const filehubApi = {
   // 目录与文件
   createDir: (space, parent_id, name) => api.post('/filehub/dirs', { space, parent_id, name }),
   // 批量建目录树(文件夹上传先建层级,响应 map: "a/b" → 目录 id)
-  ensureBatch: (space, parent_id, paths) => api.post('/filehub/dirs/ensure_batch', { space, parent_id, paths }),
+  ensureBatch: (space, parent_id, paths) => api.post('/filehub/dirs/ensure_batch',
+                                                     { space, parent_id, paths },
+                                                     { timeout: TIMEOUT_ENSURE }),
   rename: (id, name) => api.patch(`/filehub/nodes/${id}`, { name }),
   move: (body) => api.post('/filehub/nodes/move', body),
-  copy: (body) => api.post('/filehub/nodes/copy', body),
+  copy: (body) => api.post('/filehub/nodes/copy', body, { timeout: TIMEOUT_COPY }),
   remove: (ids) => api.post('/filehub/nodes/delete', { ids }),
   // 回收站
   trash: (p) => api.get('/filehub/trash' + qs(p)),
