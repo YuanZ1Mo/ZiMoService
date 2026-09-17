@@ -130,10 +130,11 @@ ZmFileAuditModule::RecordShareAccess(int64_t shareId, const std::string& token, 
                                      int result, int64_t uid, const std::string& ip,
                                      const std::string& ua, const std::string& detail)
 {
+    // node_id 取分享当前指向的条目(标量子查询,不额外查库):缺了它日志只能靠 share_id 反查
     bool ok = co_await m_db->Exec(
         "INSERT INTO "
         "share_logs(share_id,token,action,result,uid,node_id,ip,ua,detail,create_time) "
-        "VALUES(?1,?2,?3,?4,?5,0,?6,?7,?8,?9)",
+        "VALUES(?1,?2,?3,?4,?5,(SELECT node_id FROM shares WHERE id = ?1),?6,?7,?8,?9)",
         {std::to_string(shareId), token, std::to_string(action), std::to_string(result),
          std::to_string(uid), Clip(ip, 64), Clip(ua, 255), Clip(detail, 512),
          std::to_string(ZmSqliteDb::Now())});

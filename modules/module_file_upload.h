@@ -117,11 +117,12 @@ class ZmFileUploadModule
     ///
     /// @param tmpPath 已写好的临时文件
     /// @param taskNo 关联任务号(可为空)
+    /// @param instant 是否秒传命中(仅影响审计 detail 的 instant 标记)
     /// @return {node_id, task_no};失败 → {"error":{...}}
     ZMJSON FinalizeSync(const ZmOpCtx& ctx, int64_t space, int64_t dirId,
                         const std::string& name, const std::string& conflict,
                         const std::string& tmpPath, int64_t size, const std::string& hash,
-                        const std::string& taskNo);
+                        const std::string& taskNo, bool instant = false);
 
     /// @brief 临时文件目录(space_cache\<space>\tmp)
     std::string TmpDir(int64_t space) const;

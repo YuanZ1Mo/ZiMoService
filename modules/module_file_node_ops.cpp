@@ -1345,6 +1345,15 @@ ZMJSON ZmFileNodeModule::SoftDeleteSync(const std::vector<int64_t>& idsIn, const
                 item["type"] = n.type;
                 item["size"] = n.size;
                 item["path"] = ToSlash(RelPathSync(n.id));
+                // 目录额外记子树规模:彻底删除的耗时/占用预估要靠它(需求 §3.7.1)
+                if (n.type == zm_file::kTypeDir)
+                {
+                    int64_t subItems = 0;
+                    int64_t subBytes = 0;
+                    SubtreeStat(m_db, n.id, subItems, subBytes);
+                    item["items"] = subItems;
+                    item["bytes"] = subBytes;
+                }
                 auditItems.push_back(std::move(item));
             }
             // 删除一批一条(与「有操作必有记录」一致);回收站占配额,用量不动
@@ -1604,6 +1613,20 @@ ZMJSON ZmFileNodeModule::PurgeSync(const std::vector<int64_t>& idsIn, const ZmOp
     ZMJSON  success    = ZMJSON::array();
     ZMJSON  failed     = ZMJSON::array();
     ZMJSON  auditItems = ZMJSON::array();
+
+    // 锁各条目的原父目录(与软删除/新建/改名/移动同一把锁;LockAll 内部按桶号排序防死锁):
+    // 否则"正被彻底删除的目录里又被塞进新条目"会留下无对应文件的库行
+    std::vector<std::pair<int64_t, int64_t>> purgeLockKeys;
+    for (int64_t id : ids)
+    {
+        ZMJSON row = m_db->NodeRowSync(id);
+        if (row.empty() || zm_file_row_int(row, "deleted", 0) != 1)
+            continue;
+        purgeLockKeys.emplace_back(zm_file_row_int(row, "space", 0),
+                                   zm_file_row_int(row, "parent_id", 0));
+    }
+    auto purgeGuards = m_lock->LockAll(purgeLockKeys);
+
     int64_t totalBytes = 0;
     for (int64_t id : ids)
     {

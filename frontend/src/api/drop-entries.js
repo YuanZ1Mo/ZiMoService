@@ -59,7 +59,8 @@ export async function collectDropItems(dataTransfer) {
   const items = dataTransfer && dataTransfer.items
   const entries = []
   if (items && items.length) {
-    for (const it of items) {
+    // DataTransferItemList 规范只保证 length + 索引取值,不保证可迭代
+    for (const it of Array.from(items)) {
       const en = it.webkitGetAsEntry ? it.webkitGetAsEntry() : null
       if (en) entries.push(en)
     }

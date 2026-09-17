@@ -103,9 +103,20 @@ async function rawRequest(path, { method, headers, body, signal }) {
   const resp = await fetch(`${location.protocol}//${location.hostname}:39441/zimo/api${path}`, {
     method, credentials: 'include', headers, body, signal
   })
-  if (resp.status === 401) { location.href = '/login?redirect=' + encodeURIComponent(location.pathname); throw new Error('会话已失效') }
+  // 与 client.js 同一套会话语义:401 带查询串回跳、403 强制改密跳转
+  if (resp.status === 401) {
+    const back = location.pathname + location.search
+    location.href = '/login?redirect=' + encodeURIComponent(back)
+    throw new Error('会话已失效')
+  }
   let data = null
   try { data = await resp.json() } catch { /* 空响应 */ }
+  if (resp.status === 403 && data && data.code === 'FORCE_CHANGE_REQUIRED') {
+    location.href = '/force-reset'
+    const err = new Error(data.message || '需要强制重置密码')
+    err.status = 403; err.code = data.code
+    throw err
+  }
   if (!resp.ok) {
     const err = new Error((data && data.message) || `请求失败(${resp.status})`)
     err.status = resp.status; err.code = data && data.code; err.data = data
@@ -213,6 +224,37 @@ export function kindOf(node) {
 /// @brief 取条目的类型中文名(列表"类型"列用)
 export function kindLabel(node) {
   return FILE_KINDS[kindOf(node)].label
+}
+
+/**
+ * @brief 计算点击某条目后的新选中集
+ *
+ * 语义按点击方式区分:
+ *   · 复选框(alwaysToggle)= 只增删自身,不动其它选中项;
+ *   · Ctrl/Cmd = 增删自身;
+ *   · Shift = 从上次落点连选到本次;
+ *   · 其余(单击行)= 单选并清空其它。
+ *
+ * @param ids      当前列表的全部 id(按显示顺序,Shift 连选要用)
+ * @param selected 当前选中集
+ * @param id       本次点击的条目 id
+ * @param opts     { ctrl, shift, alwaysToggle, lastIdx }
+ * @return { selected: 新选中集, lastIdx: 新落点下标 }
+ */
+export function nextSelection(ids, selected, id, opts = {}) {
+  const s = new Set(selected)
+  const idx = ids.indexOf(id)
+  if (opts.alwaysToggle || opts.ctrl) {
+    s.has(id) ? s.delete(id) : s.add(id)
+    return { selected: s, lastIdx: idx }
+  }
+  if (opts.shift && opts.lastIdx >= 0 && idx >= 0) {
+    const a = Math.min(opts.lastIdx, idx)
+    const b = Math.max(opts.lastIdx, idx)
+    for (let i = a; i <= b; i++) s.add(ids[i])
+    return { selected: s, lastIdx: opts.lastIdx }
+  }
+  return { selected: new Set([id]), lastIdx: idx }
 }
 
 /**

@@ -39,10 +39,12 @@ export const useFilehubStore = defineStore('filehub', {
       } catch { /* 网络抖动静默,下轮重试 */ }
       if (!this.polling) return
       const busy = this.serverTasks.length > 0 || this.uploads.some(u => u.status === 'run' || u.status === 'wait')
-      if (busy || this.panelOpen) {
+      // 无进行中任务即停轮询(设计 §8.3);面板打开时由 togglePanel 补一次 refreshActive,
+      // 不复用面板开合状态续期 —— 否则面板常开会变成常驻请求
+      if (busy) {
         this._timer = setTimeout(() => this._tick(), 1500)
       } else {
-        this.polling = false   // 无任务且面板未开 → 停轮询
+        this.polling = false
       }
     },
     stopPolling() {
@@ -105,7 +107,7 @@ export const useFilehubStore = defineStore('filehub', {
         if (u.onDone) u.onDone(r)
         this._notifyChange()
       } catch (e) {
-        if (e && e.name === 'AbortError') { u.status = 'stop'; u.error = '已取消' }
+        if (u.canceled || (e && e.name === 'AbortError')) { u.status = 'stop'; u.error = '已取消' }
         else {
           u.status = 'fail'
           u.error = (e && e.message) || '上传失败'
@@ -124,6 +126,8 @@ export const useFilehubStore = defineStore('filehub', {
     cancelUpload(key) {
       const u = this.uploads.find(x => x.key === key)
       if (!u) return
+      u.canceled = true   // 先标记:中止后 worker 抛的可能不是 AbortError(如分片 404),
+                          // 没有这个标记就会把"已取消"显示成"失败"
       if (u.status === 'run') u.ctrl.abort()
       else if (u.status === 'wait') { u.status = 'stop'; u.error = '已取消' }
       // 分片上传已有会话:通知服务端删分片、置任务取消(否则任务会挂到会话过期)
@@ -143,7 +147,15 @@ export const useFilehubStore = defineStore('filehub', {
       this.serverTasks = []
     },
     // 列表变更通知(上传完成/移动删除等 → 主页刷新当前目录)
-    onChange(cb) { this._changeCbs = this._changeCbs || []; this._changeCbs.push(cb) },
+    // 订阅上传队列变化;返回注销函数(页面卸载时务必调用,否则回调会随重挂累积)
+    onChange(cb) {
+      this._changeCbs = this._changeCbs || []
+      this._changeCbs.push(cb)
+      return () => {
+        const i = (this._changeCbs || []).indexOf(cb)
+        if (i >= 0) this._changeCbs.splice(i, 1)
+      }
+    },
     _notifyChange() { (this._changeCbs || []).forEach(cb => { try { cb() } catch { /* 忽略 */ } }) },
     // ── 下载/打包便捷封装 ──
     async download(ids) {

@@ -531,6 +531,9 @@ ZMJSON ZmFileAdminModule::SyncDirSync(int64_t space, int64_t dirId, bool dryRun,
     {
         if (handle && handle->Cancelled())
             return report;
+        // 复制过程的临时文件(进程崩溃残留)不补建:它是半成品,不是用户文件
+        if (ZmFileStoreModule::IsCopyTempName(d.name))
+            continue;
         bool found = false;
         for (const auto& r : dbRows)
         {

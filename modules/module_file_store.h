@@ -126,7 +126,14 @@ class ZmFileStoreModule
     /// @brief 改名/移动(文件或目录;目标已存在时先删目标文件)
     ZmStoreResult MovePath(const std::string& src, const std::string& dst);
     /// @brief 复制(文件复制;目录递归复制整棵子树)
+    ///
+    /// 文件先写到目标同目录的临时名再原子替换:覆盖已有文件时不会出现"半截内容"的可见窗口。
     ZmStoreResult CopyTreeSync(const std::string& src, const std::string& dst);
+
+    /// @brief 是否为复制过程的临时文件名(一致性同步据此跳过,避免把残留临时文件补建成条目)
+    /// @param name 文件名(不含路径)
+    /// @return true 是临时名
+    static bool IsCopyTempName(const std::string& name);
     /// @brief 递归删除(文件或目录;只读属性先清除)
     ZmStoreResult RemoveTreeSync(const std::string& path);
     /// @brief 删除单个文件(不存在视为成功)

@@ -17,6 +17,9 @@ using namespace drogon;
 
 namespace
 {
+/// 复制过程中的临时文件后缀(同目录原子替换用;一致性同步按它跳过残留文件)
+constexpr const char* kCopyTempSuffix = ".zmtmp";
+
 /// FILETIME → unix 秒(1601-01-01 到 1970-01-01 的 100ns 数)
 int64_t FileTimeToUnix(const FILETIME& ft)
 {
@@ -286,12 +289,24 @@ ZmStoreResult ZmFileStoreModule::CopyTreeImpl(const std::string& src, const std:
 
     if ((attr & FILE_ATTRIBUTE_DIRECTORY) == 0)
     {
-        // 文件:目标已存在时覆盖(CopyFileW 默认覆盖)
-        if (CopyFileW(ws.c_str(), wd.c_str(), FALSE))
-            return ZmStoreResult::Good();
-        unsigned long err = GetLastError();
-        return ZmStoreResult::Fail(MapWin32Error(err),
-                                   "复制文件失败(错误码 " + std::to_string(err) + ")");
+        // 写到同目录的临时名再原子替换:直接覆盖会让并发读方看到"半截内容"
+        // (临时名带进程号与时间戳,避免与用户文件重名;残留文件由一致性同步跳过)
+        std::wstring wt = wd + Utf8ToWide(kCopyTempSuffix + std::to_string(GetCurrentProcessId()) +
+                                          "." + std::to_string(GetTickCount64()));
+        if (!CopyFileW(ws.c_str(), wt.c_str(), FALSE))
+        {
+            unsigned long err = GetLastError();
+            return ZmStoreResult::Fail(MapWin32Error(err),
+                                       "复制文件失败(错误码 " + std::to_string(err) + ")");
+        }
+        if (!MoveFileExW(wt.c_str(), wd.c_str(), MOVEFILE_REPLACE_EXISTING))
+        {
+            unsigned long err = GetLastError();
+            DeleteFileW(wt.c_str());
+            return ZmStoreResult::Fail(MapWin32Error(err),
+                                       "复制入位失败(错误码 " + std::to_string(err) + ")");
+        }
+        return ZmStoreResult::Good();
     }
 
     // 目录:先建自身再递归子项(空目录同样保留)
@@ -318,6 +333,11 @@ ZmStoreResult ZmFileStoreModule::CopyTreeImpl(const std::string& src, const std:
 ZmStoreResult ZmFileStoreModule::CopyTreeSync(const std::string& src, const std::string& dst)
 {
     return CopyTreeImpl(src, dst);
+}
+
+bool ZmFileStoreModule::IsCopyTempName(const std::string& name)
+{
+    return name.find(kCopyTempSuffix) != std::string::npos;
 }
 
 ZmStoreResult ZmFileStoreModule::RemoveTreeImpl(const std::string& path)

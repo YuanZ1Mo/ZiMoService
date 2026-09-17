@@ -2,10 +2,10 @@
 // 文件中心主页面 /portal/filehub(模块 code=filehub,index=2)
 // 工具条 + 侧栏(空间树/我的分享/回收站)+ 面包屑 + 列表(虚拟滚动)+ 右键菜单 + 任务面板
 // 选中:单击/Ctrl 加选/Shift 连选/Ctrl+A 全选/Esc 取消;批量条替换工具条(§7.2)
-import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, onActivated, onDeactivated, inject } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onMounted, onBeforeUnmount, onActivated, onDeactivated, inject } from 'vue'
 import { useSessionStore } from '../../stores/session'
 import { useFilehubStore } from '../../stores/filehub'
-import { filehubApi, fmtSize, fmtTime, kindOf, FILE_KINDS } from '../../api/filehub'
+import { filehubApi, fmtSize, fmtTime, kindOf, FILE_KINDS, nextSelection } from '../../api/filehub'
 import FileList from './FileList.vue'
 import TrashView from './TrashView.vue'
 import TaskPanel from './TaskPanel.vue'
@@ -64,6 +64,9 @@ const loading = ref(false)
 const sortKey = ref('name')
 const sortOrder = ref('asc')
 const pageSize = 200
+const SEARCH_KW_MAX = 64     // 服务端关键词上限(超出直接返回空结果,故前端先拦)
+const UPLOAD_MAX_FILES = 5000   // 文件夹上传单批上限:文件数(需求 §3.8.6)
+const UPLOAD_MAX_DIRS = 1000    // 文件夹上传单批上限:目录数(同上)
 const query = reactive({ keyword: '', searching: false, truncated: false })
 
 async function load(append = false) {
@@ -80,7 +83,14 @@ async function load(append = false) {
     })
     if (seq !== loadSeq) return
     items.value = append ? items.value.concat(d.list || []) : (d.list || [])
-    if (!append) listEpoch.value++   // 整表替换:通知列表把滚动位置复位
+    if (!append) {
+      listEpoch.value++   // 整表替换:通知列表把滚动位置复位
+      // 顺带清理选中集与连选基准:旧条目可能已不在本页,留着会出现
+      // "批量条显示已选 N 项、实际操作 0 项"的错位
+      if (selected.value.size)
+        selected.value = new Set([...selected.value].filter(id => items.value.some(x => x.id === id)))
+      lastIdx = -1
+    }
     total.value = d.total || 0
     breadcrumb.value = d.breadcrumb || []
   } catch (e) {
@@ -108,6 +118,11 @@ const searchInput = ref('')
 async function doSearch() {
   const kw = searchInput.value.trim()
   if (!kw) { exitSearch(); return }
+  // 服务端关键词上限 64 字符:超了会静默返回 0 条,这里先拦下并说明原因
+  if (kw.length > SEARCH_KW_MAX) {
+    toast(`关键词最多 ${SEARCH_KW_MAX} 个字符(当前 ${kw.length} 个)`, 'warn')
+    return
+  }
   query.searching = true
   loading.value = true
   try {
@@ -127,20 +142,25 @@ watch(() => query.searching, () => { selected.value = new Set() })
 // ── 选中管理 ──
 const selected = ref(new Set())
 let lastIdx = -1
-function toggleSel(n, e) {
-  const s = new Set(selected.value)
-  if (e && (e.ctrlKey || e.metaKey)) {
-    s.has(n.id) ? s.delete(n.id) : s.add(n.id)
-    lastIdx = items.value.findIndex(x => x.id === n.id)
-  } else if (e && e.shiftKey && lastIdx >= 0) {
-    const a = Math.min(lastIdx, items.value.findIndex(x => x.id === n.id))
-    const b = Math.max(lastIdx, items.value.findIndex(x => x.id === n.id))
-    items.value.slice(a, b + 1).forEach(x => s.add(x.id))
-  } else {
-    s.clear(); s.add(n.id)
-    lastIdx = items.value.findIndex(x => x.id === n.id)
-  }
-  selected.value = s
+/**
+ * 选中/取消选中一个条目
+ *
+ * 语义按点击方式区分:复选框(alwaysToggle)= 纯增删;Ctrl/Cmd 点击 = 增删;
+ * Shift 点击 = 从上次落点连选;其余(单击行)= 单选并清空其它。
+ *
+ * @param n            条目
+ * @param e            鼠标事件(带修饰键;缺省按单击处理)
+ * @param alwaysToggle true = 只增删自身,不动其它选中项
+ */
+function toggleSel(n, e, alwaysToggle) {
+  const r = nextSelection(items.value.map(x => x.id), selected.value, n.id, {
+    ctrl: !!(e && (e.ctrlKey || e.metaKey)),
+    shift: !!(e && e.shiftKey),
+    alwaysToggle: !!alwaysToggle,
+    lastIdx
+  })
+  selected.value = r.selected
+  lastIdx = r.lastIdx
 }
 function selectAll() { selected.value = new Set(items.value.map(x => x.id)) }
 function clearSel() { selected.value = new Set(); lastIdx = -1 }
@@ -150,22 +170,28 @@ function onKeydown(e) {
   const t = e.target
   // 输入框/可编辑区里不劫持快捷键:否则 Ctrl+A 无法全选输入内容
   const typing = !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
-  if (e.key === 'Escape') { clearSel(); ctxMenu.show = false }
+  if (e.key === 'Escape') { clearSel(); ctxMenu.show = false; closeUpMenu() }
   if (!typing && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a' && view.value === 'files' && !query.searching) { e.preventDefault(); selectAll() }
 }
 // keep-alive 下组件不卸载、只失活:监听须随激活状态挂摘,否则隐藏页仍会吃掉 Ctrl+A
 onMounted(() => document.addEventListener('keydown', onKeydown))
-onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
+onBeforeUnmount(() => {
+  document.removeEventListener('keydown', onKeydown)
+  if (offChange) { offChange(); offChange = null }
+})
 
 // ── 打开(双击):目录进入,文件直接下载(本期无预览) ──
 function openNode(n) {
   if (Number(n.type) === 1) {
-    if (query.searching) exitSearch()
+    // 只重置搜索态(不能调 exitSearch:它内部会按旧目录先 load 一次,白跑一个请求)
+    if (query.searching) { query.searching = false; query.truncated = false; searchInput.value = '' }
     dirId.value = n.id
     selected.value = new Set()
+    lastIdx = -1
     load()
   } else {
-    store.download([n.id])
+    // 下载失败要说一声(文件可能已被他人删除 / 令牌过期)
+    store.download([n.id]).catch(e => toast(e.message || '下载失败', 'err'))
   }
 }
 
@@ -175,15 +201,21 @@ function openCtx(e, node) {
   if (!selected.value.has(node.id)) toggleSel(node, null)
   ctxMenu.node = node
   ctxMenu.show = true
-  const mw = 200, mh = 330
+  // mh 按实际条目估(8 项×38px + 2 条分隔 + 内边距):贴到视口底部时改为向上弹,
+  // 否则菜单底部会被窗口裁掉(原先只做了 y 方向钳制,钳完仍在视口外)
+  const mw = 200, mh = 350
   ctxMenu.x = Math.min(e.clientX, window.innerWidth - mw - 8)
-  ctxMenu.y = Math.min(e.clientY, window.innerHeight - mh - 8)
+  ctxMenu.y = (e.clientY + mh + 8 > window.innerHeight) ? Math.max(8, e.clientY - mh)
+                                                       : e.clientY
 }
 function closeCtx() { ctxMenu.show = false }
 function ctxAct(act) {
   const n = ctxMenu.node
   closeCtx()
-  if (act === 'download') store.download([n.id])
+  // 与"打包下载/删除"同一口径:多选时作用于整个选中集(多条目由服务端转打包任务)
+  if (act === 'download')
+    store.download((selTargets.value.length > 1 ? selTargets.value : [n]).map(x => x.id))
+         .catch(e => toast(e.message || '下载失败', 'err'))
   else if (act === 'pack') doPack(selTargets.value.length > 1 ? selTargets.value : [n])
   else if (act === 'rename') openRename(n)
   else if (act === 'move') openMove([n])
@@ -194,11 +226,19 @@ function ctxAct(act) {
 }
 
 // ── 操作:新建/重命名/删除/打包 ──
-const nameDlg = reactive({ show: false, kind: 'mkdir', id: 0, name: '', busy: false, err: '' })
+const nameDlg = reactive({
+  show: false, kind: 'mkdir', id: 0, name: '', busy: false, err: '',
+  isDir: false, extChanged: false, oldExt: ''
+})
 function openMkdir() { nameDlg.kind = 'mkdir'; nameDlg.name = ''; nameDlg.err = ''; nameDlg.show = true }
-function openRename(n) { nameDlg.kind = 'rename'; nameDlg.id = n.id; nameDlg.extChanged = false; nameDlg.oldExt = (n.ext || '').toLowerCase(); nameDlg.name = n.name; nameDlg.err = ''; nameDlg.show = true }
+function openRename(n) {
+  nameDlg.kind = 'rename'; nameDlg.id = n.id; nameDlg.extChanged = false
+  nameDlg.isDir = Number(n.type) === 1        // 目录没有扩展名概念,不参与该项警告
+  nameDlg.oldExt = (n.ext || '').toLowerCase(); nameDlg.name = n.name
+  nameDlg.err = ''; nameDlg.show = true
+}
 watch(() => nameDlg.name, (v) => {
-  if (nameDlg.kind !== 'rename') return
+  if (nameDlg.kind !== 'rename' || nameDlg.isDir) return
   const e = (v || '').split('.').pop().toLowerCase()
   nameDlg.extChanged = v.includes('.') && e !== nameDlg.oldExt
 })
@@ -257,10 +297,17 @@ function openMove(targets) { if (!targets.length) return; mcDlg.mode = 'move'; m
 function openCopy(targets) { if (!targets.length) return; mcDlg.mode = 'copy'; mcDlg.targets = targets; mcDlg.show = true }
 function onMcDone(r) {
   mcDlg.show = false
+  const what = mcDlg.mode === 'move' ? '移动' : '复制'
   if (r && r.__error) { toast(r.__error.message || '操作失败', 'err'); return }
-  const ok = (r.moved || r.copied || []).length
-  const skip = (r.skipped || []).length
-  toast(`${mcDlg.mode === 'move' ? '移动' : '复制'}完成:${ok} 项成功${skip ? `,${skip} 项跳过` : ''}`, 'ok')
+  // 超阈值时服务端转异步任务,响应里只有 task_no:此时报"0 项成功"会误导用户
+  if (r && r.task_no) {
+    toast(`${what}已转后台任务,进度见任务面板`, 'ok')
+    store.togglePanel(true)
+  } else {
+    const ok = (r.moved || r.copied || []).length
+    const skip = (r.skipped || []).length
+    toast(`${what}完成:${ok} 项成功${skip ? `,${skip} 项跳过` : ''}`, 'ok')
+  }
   clearSel(); load(); loadSpaces()
 }
 
@@ -280,17 +327,44 @@ const fileInput = ref(null)
 const dirInput = ref(null)
 function pickFiles() { fileInput.value && fileInput.value.click() }
 function pickFolder() { dirInput.value && dirInput.value.click() }
+
+// 上传下拉:「上传」一键两用会让用户猜哪里点哪个,改成下拉由用户明确选(§7.1)
+const upMenu = reactive({ show: false, x: 0, y: 0 })
+/// 展开/收起上传下拉(锚在按钮左下角)
+function toggleUpMenu(e) {
+  const r = e.currentTarget.getBoundingClientRect()
+  upMenu.x = r.left
+  upMenu.y = r.bottom + 6
+  upMenu.show = !upMenu.show
+}
+function closeUpMenu() { upMenu.show = false }
+/**
+ * 选定上传方式:关菜单并打开对应的系统选择器
+ * @param kind  'file' = 上传文件;'dir' = 上传文件夹
+ */
+function chooseUpload(kind) {
+  closeUpMenu()
+  if (kind === 'dir') pickFolder()
+  else pickFiles()
+}
 // 上传入队(文件夹/拖入共用):先按相对路径批量建目录(幂等),再按映射把文件派到各自目录
 // rels[i] = files[i] 所在目录的相对路径(含顶层文件夹名);dirs = 途中遇到的全部目录(空目录也要建)
 async function enqueueWithDirs(files, base, { rels = [], dirs = [] } = {}) {
   const list = [...files]
   if (!list.length && !dirs.length) return
-  if (list.length > 5000) { toast('单批最多 5000 个文件,请分批上传', 'warn'); return }
+  if (list.length > UPLOAD_MAX_FILES) {
+    toast(`单批最多 ${UPLOAD_MAX_FILES} 个文件,请分批上传`, 'warn'); return
+  }
   const relOf = (f, i) => rels[i] !== undefined ? rels[i] : (f.webkitRelativePath || '')
   const dirPaths = [...new Set([
     ...dirs,
     ...list.map((f, i) => { const r = relOf(f, i); const k = r.lastIndexOf('/'); return k > 0 ? r.slice(0, k) : '' })
   ].filter(Boolean))]
+  // 目录数也要单批校验:服务端 ensure_batch 上限是 2000 条路径,超出会整批 400,
+  // 前面的文件一个都传不上去(需求 §3.8.6 单批 ≤1000 个目录)
+  if (dirPaths.length > UPLOAD_MAX_DIRS) {
+    toast(`单个文件夹最多 ${UPLOAD_MAX_DIRS} 个目录,请分批上传`, 'warn'); return
+  }
   let dirMap = {}
   if (dirPaths.length) {
     try {
@@ -343,6 +417,7 @@ async function onDragTo({ dirId: toDir, ids }) {
 const shares = ref([])
 const sharesLoading = ref(false)
 const qr = reactive({ show: false, url: '', name: '' })
+const qrCanvas = ref(null)   // 二维码画布(模板引用,替代按 id 取 DOM)
 async function loadShares() {
   sharesLoading.value = true
   try {
@@ -369,9 +444,12 @@ async function showQr(s) {
   qr.name = s.name
   qr.url = s.url
   qr.show = true
-  await new Promise(r => setTimeout(r, 50))
-  const c = document.getElementById('fh-share-qr')
-  if (c) QRCode.toCanvas(c, s.url, { width: 200, margin: 1 }, () => {})
+  // 等弹窗渲染完再取画布(用 nextTick,别靠固定 50ms 猜);画不出来要说一声,不要静默
+  await nextTick()
+  if (!qrCanvas.value) return
+  QRCode.toCanvas(qrCanvas.value, s.url, { width: 200, margin: 1 }, (err) => {
+    if (err) toast('二维码生成失败,可直接复制链接', 'warn')
+  })
 }
 
 // ── 排序 ──
@@ -382,22 +460,27 @@ function onSort(k) {
 }
 
 // ── keep-alive 钩子:回前台立即刷新;切走停轮询(§8.3) ──
+let firstActivate = true   // 首访由 onMounted 拉数据,避免同一份数据拉两次
+let offChange = null       // onChange 的注销函数
 onActivated(() => {
   store.onActivated()
+  document.addEventListener('keydown', onKeydown)   // 与 onDeactivated 成对(同函数重复注册无副作用)
+  if (firstActivate) { firstActivate = false; return }
   if (view.value === 'files') load()
   loadSpaces()
-  document.addEventListener('keydown', onKeydown)   // 与 onDeactivated 成对(同函数重复注册无副作用)
 })
 onDeactivated(() => {
   store.onDeactivated()
   closeCtx()
+  closeUpMenu()   // 悬浮菜单须随页面失活关闭(它们被传送到 body,不会自己消失)
   document.removeEventListener('keydown', onKeydown)
   if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null }
 })
 onMounted(() => {
   loadSpaces()
   load()
-  store.onChange(() => { if (view.value === 'files') scheduleRefresh() })
+  loadShares()   // 侧栏「我的分享」的计数:不进该标签页也要有值
+  offChange = store.onChange(() => { if (view.value === 'files') scheduleRefresh() })
 })
 </script>
 
@@ -466,14 +549,14 @@ onMounted(() => {
                 <span class="input-prefix" aria-hidden="true">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
                 </span>
-                <input v-model.trim="searchInput" class="input" style="height:38px" placeholder="搜索当前目录及子目录…" @keyup.enter="doSearch" />
+                <input v-model.trim="searchInput" class="input" style="height:38px" :maxlength="SEARCH_KW_MAX"
+                       placeholder="搜索当前目录及子目录…" @keyup.enter="doSearch" />
               </div>
-              <button class="btn btn-grad" type="button" @click="pickFiles">
+              <button class="btn btn-grad" type="button" @click="toggleUpMenu"
+                      aria-haspopup="menu" :aria-expanded="upMenu.show">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 16V4m0 0-5 5m5-5 5 5"/><path d="M4 17v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1"/></svg>
                 上传
-                <span style="display:inline-flex;flex-direction:column;margin-left:2px" @click.stop="pickFolder" title="上传文件夹">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>
-                </span>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" style="margin-left:3px"><path d="m6 9 6 6 6-6"/></svg>
               </button>
               <button class="btn btn-secondary" type="button" @click="openMkdir">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M12 10v6M9 13h6"/></svg>
@@ -603,8 +686,24 @@ onMounted(() => {
       </div>
     </template>
 
-    <!-- 右键菜单 -->
+    <!-- 悬浮菜单(上传下拉 / 右键菜单):传送到 body 以免被容器裁剪;
+         两者都必须在离开本页时关闭(onDeactivated),否则会随 keep-alive 缓存残留到其它页面 -->
     <Teleport to="body">
+      <!-- 上传下拉:全屏透明层负责"点外面关闭" -->
+      <div v-if="upMenu.show" style="position:fixed;inset:0;z-index:880"
+           @click="closeUpMenu" @contextmenu.prevent="closeUpMenu"></div>
+      <div v-if="upMenu.show" class="menu" style="position:fixed;z-index:881;min-width:170px"
+           :style="{ left: upMenu.x + 'px', top: upMenu.y + 'px' }" role="menu">
+        <button class="menu-item" type="button" role="menuitem" @click="chooseUpload('file')">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5"/></svg>
+          上传文件
+        </button>
+        <button class="menu-item" type="button" role="menuitem" @click="chooseUpload('dir')">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>
+          上传文件夹
+        </button>
+      </div>
+
       <div v-if="ctxMenu.show" style="position:fixed;inset:0;z-index:890" @click="closeCtx" @contextmenu.prevent="closeCtx"></div>
       <div v-if="ctxMenu.show" class="menu" style="position:fixed;z-index:891;min-width:200px" :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }">
         <button class="menu-item" type="button" @click="ctxAct('download')">
@@ -687,7 +786,7 @@ onMounted(() => {
     <!-- 分享二维码 -->
     <Modal :show="qr.show" :title="`扫码访问「${qr.name}」`" @close="qr.show = false">
       <div style="display:flex;flex-direction:column;align-items:center;gap:12px">
-        <div class="qr-box" style="width:216px;height:216px;padding:8px"><canvas id="fh-share-qr" width="200" height="200"></canvas></div>
+        <div class="qr-box" style="width:216px;height:216px;padding:8px"><canvas ref="qrCanvas" width="200" height="200"></canvas></div>
         <span class="share-url" style="max-width:280px">{{ qr.url }}</span>
         <button class="btn btn-secondary btn-sm" type="button" @click="copyText(qr.url, '链接已复制')">复制链接</button>
       </div>

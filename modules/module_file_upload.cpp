@@ -175,7 +175,8 @@ std::string ZmFileUploadModule::FindInstantSource(int64_t space, const std::stri
 ZMJSON ZmFileUploadModule::FinalizeSync(const ZmOpCtx& ctx, int64_t space, int64_t dirId,
                                         const std::string& name, const std::string& conflict,
                                         const std::string& tmpPath, int64_t size,
-                                        const std::string& hash, const std::string& taskNo)
+                                        const std::string& hash, const std::string& taskNo,
+                                        bool instant)
 {
     std::string msg;
     if (!ZmFileNodeModule::ValidateName(name, msg))
@@ -301,7 +302,7 @@ ZMJSON ZmFileUploadModule::FinalizeSync(const ZmOpCtx& ctx, int64_t space, int64
             ZMJSON detail     = ZMJSON::object();
             detail["path"]    = ToSlashPath(rel);
             detail["bytes"]   = size;
-            detail["instant"] = false;
+            detail["instant"] = instant;   // 秒传与真正上传在审计里要能区分
             return m_audit->RecordFileOpSync(db, ctx.uid, ctx.account, zm_file::kActUpload,
                                                        space, newId, finalName, detail.dump(), ctx.ip,
                                                        1);
@@ -452,7 +453,7 @@ drogon::Task<ZMJSON> ZmFileUploadModule::Init(const ZmOpCtx& ctx, int64_t space,
                                            size, 1, "", taskNo);
                         m_task->SetStatusSync(taskNo, zm_file::kTaskRunning);
                         ZMJSON fin = FinalizeSync(ctx, space, dirId, name, conflict, tmp, size,
-                                                  hash, taskNo);
+                                                  hash, taskNo, /*instant=*/true);
                         if (ZmFileHasError(fin))
                             return fin;
                         ZMJSON out         = ZMJSON::object();

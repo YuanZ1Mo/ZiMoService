@@ -1,8 +1,8 @@
 <script setup>
 // 文件列表(列表/网格双视图)
-// 虚拟滚动:定高行 57px + 窗口裁剪(>300 行场景,§7.6 硬约束);目录恒在文件前(服务端排序保证)
+// 虚拟滚动:窗口裁剪(行数超 300 才启用,行高按实际渲染量取);目录恒在文件前(服务端排序保证)
 // 交互:单击选中 / 双击进目录或下载 / 行尾 ⋯ 菜单 / 行拖拽到文件夹移动 / 系统文件拖入上传
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import FileIcon from './FileIcon.vue'
 import { fmtSize, fmtTime, kindLabel, highlightText } from '../../api/filehub'
 import { collectDropItems } from '../../api/drop-entries'
@@ -27,7 +27,11 @@ const emit = defineEmits(['toggle', 'open', 'ctx', 'drag-to', 'files', 'sort', '
 const SORTS = [['name', '名称'], ['type', '类型'], ['size', '大小'], ['mtime', '修改时间']]
 
 // ── 虚拟滚动(定高窗口裁剪,约 40 行核心) ──
-const ROW_H = 57
+// 行高:先用兜底值,挂载/数据变化后按实际渲染的行量一次
+// (此前写死 57,而 CSS 实际约 55 —— 长列表会累积出可观的偏移)
+const ROW_H_FALLBACK = 55
+const rowH = ref(ROW_H_FALLBACK)
+const VIRTUAL_MIN = 300      // 超过这个行数才启用窗口裁剪(§7.6)
 const scroller = ref(null)
 const scrollTop = ref(0)
 const viewH = ref(600)
@@ -46,19 +50,35 @@ function resetScroll() {
 }
 watch(() => props.view, resetScroll)
 watch(() => props.epoch, resetScroll)
-const vStart = computed(() => props.view !== 'list' ? 0 : Math.max(0, Math.floor(scrollTop.value / ROW_H) - 5))
-const vEnd = computed(() => props.view !== 'list' ? props.items.length : Math.min(props.items.length, vStart.value + Math.ceil(viewH.value / ROW_H) + 10))
-const padTop = computed(() => props.view !== 'list' ? 0 : vStart.value * ROW_H)
-const padBottom = computed(() => props.view !== 'list' ? 0 : (props.items.length - vEnd.value) * ROW_H)
-const vItems = computed(() => props.items.slice(vStart.value, vEnd.value))
+/// 是否走窗口裁剪:仅列表视图、且行数超过阈值
+const virtualOn = computed(() => props.view === 'list' && props.items.length > VIRTUAL_MIN)
+const vStart = computed(() => !virtualOn.value ? 0 : Math.max(0, Math.floor(scrollTop.value / rowH.value) - 5))
+const vEnd = computed(() => !virtualOn.value ? props.items.length
+                                             : Math.min(props.items.length,
+                                                        vStart.value + Math.ceil(viewH.value / rowH.value) + 10))
+const padTop = computed(() => !virtualOn.value ? 0 : vStart.value * rowH.value)
+const padBottom = computed(() => !virtualOn.value ? 0 : (props.items.length - vEnd.value) * rowH.value)
+const vItems = computed(() => virtualOn.value ? props.items.slice(vStart.value, vEnd.value) : props.items)
+/**
+ * 量一次可视高度与真实行高
+ *
+ * 行高按首行实测(CSS 改字号/图标尺寸时不必同步改常量),量不到就沿用兜底值。
+ *
+ * @param el  滚动容器
+ */
 function measure(el) {
   if (el) viewH.value = el.clientHeight || 600
+  const row = scroller.value && scroller.value.querySelector('tbody tr')
+  const h = row && row.getBoundingClientRect().height
+  if (h) rowH.value = h
 }
 onMounted(() => {
   measure(scroller.value)
   window.addEventListener('resize', onResize)
 })
 function onResize() { measure(scroller.value) }
+// 首帧可能还没有行(空目录/加载中):数据到了再量
+watch(() => props.items, () => nextTick(() => measure(scroller.value)))
 onBeforeUnmount(() => window.removeEventListener('resize', onResize))
 
 // ── 拖拽(内部:拖条目 → 悬停文件夹行移动) ──
@@ -117,7 +137,7 @@ async function onDropFiles(e) {
           <tr v-for="n in vItems" :key="n.id"
               :class="{ sel: selected.has(n.id), 'drop-to': dragOverId === n.id }"
               draggable="true"
-              @click="emit('toggle', n)"
+              @click="emit('toggle', n, $event)"
               @dblclick="emit('open', n)"
               @contextmenu.prevent="emit('ctx', $event, n)"
               @dragstart="onDragStart($event, n)"
@@ -125,7 +145,9 @@ async function onDropFiles(e) {
               @dragleave="onDragLeaveRow(n)"
               @drop.prevent="onDropRow($event, n)">
             <td class="col-cb" @click.stop>
-              <input type="checkbox" class="fcheck" :checked="selected.has(n.id)" @change="emit('toggle', n)" :aria-label="`选择 ${n.name}`" />
+              <!-- 复选框是"纯开关":点它就增删自己,不清空别的(Tab 键切换不受影响) -->
+              <input type="checkbox" class="fcheck" :checked="selected.has(n.id)"
+                     @click.stop="emit('toggle', n, $event, true)" :aria-label="`选择 ${n.name}`" />
             </td>
             <td>
               <div class="fcell">
@@ -166,7 +188,7 @@ async function onDropFiles(e) {
     <!-- 网格视图 -->
     <div v-if="view === 'grid'" class="fgrid">
       <div v-for="n in items" :key="n.id" class="gcell" :class="{ sel: selected.has(n.id) }" draggable="true"
-           @click="emit('toggle', n)" @dblclick="emit('open', n)" @contextmenu.prevent="emit('ctx', $event, n)"
+           @click="emit('toggle', n, $event)" @dblclick="emit('open', n)" @contextmenu.prevent="emit('ctx', $event, n)"
            @dragstart="onDragStart($event, n)"
            @dragover="onDragOverRow($event, n)" @dragleave="onDragLeaveRow(n)" @drop.prevent="onDropRow($event, n)">
         <FileIcon :node="n" />

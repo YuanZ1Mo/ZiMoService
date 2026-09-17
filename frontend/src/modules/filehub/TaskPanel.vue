@@ -1,11 +1,12 @@
 <script setup>
 // 右下角传输任务面板:进行中(服务端 tasks/active + 客户端上传队列)/ 历史
 // 轮询契约在 stores/filehub.js;本组件只负责展示与操作(取消/重试/下载/清理)
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, inject } from 'vue'
 import { useFilehubStore } from '../../stores/filehub'
 import { filehubApi, fmtSize, fmtTime } from '../../api/filehub'
 
 const store = useFilehubStore()
+const toast = inject('toast')
 const tab = ref('active')
 const loadingHistory = ref(false)
 
@@ -43,23 +44,36 @@ const isEmpty = computed(() =>
     ? !store.serverTasks.length && !store.uploads.length
     : !historyItems.value.length && !loadingHistory.value)
 
+/**
+ * 下载打包产物
+ *
+ * 产物在缓存区,可能已被清理(默认空闲 30 分钟回收),失败要说一声,不能静默。
+ *
+ * @param t  任务对象(取 task_no)
+ */
+async function downloadZip(t) {
+  try { await store.downloadZip(t.task_no) }
+  catch (e) { toast(e.message || '下载失败,压缩包可能已被清理', 'err') }
+}
 async function cancelTask(t) {
-  try { await filehubApi.taskCancel(t.task_no); store.refreshActive() } catch { /* 静默 */ }
+  try { await filehubApi.taskCancel(t.task_no); store.refreshActive() }
+  catch (e) { toast(e.message || '取消失败', 'err') }
 }
 async function retryTask(t) {
-  try { await filehubApi.taskRetry(t.task_no); store.refreshActive() } catch { /* 静默 */ }
+  try { await filehubApi.taskRetry(t.task_no); store.refreshActive() }
+  catch (e) { toast(e.message || '重试失败', 'err') }
 }
 async function clearHistory() {
   try {
     await filehubApi.tasksClear()
     store.history = []; store.historyTotal = 0; store.clearFinished()
-  } catch { /* 静默 */ }
+  } catch (e) { toast(e.message || '清除历史失败', 'err') }
 }
 async function cleanPack(t) {
   try {
     await filehubApi.packClean(t.task_no)
     store.history = store.history.filter(x => x.task_no !== t.task_no)
-  } catch { /* 静默 */ }
+  } catch (e) { toast(e.message || '清理失败', 'err') }
 }
 </script>
 
@@ -145,7 +159,7 @@ async function cleanPack(t) {
             <span class="t-ops">
               <!-- 打包完成:下载 + 清理(空闲 30 分钟自动删) -->
               <template v-if="Number(t.type) === 3 && Number(t.status) === 3">
-                <button class="btn btn-secondary btn-sm" type="button" @click="store.downloadZip(t.task_no)">下载</button>
+                <button class="btn btn-secondary btn-sm" type="button" @click="downloadZip(t)">下载</button>
                 <button class="btn btn-ghost btn-sm" type="button" @click="cleanPack(t)">清理</button>
               </template>
               <button v-if="Number(t.status) === 4 || Number(t.status) === 6" class="btn btn-secondary btn-sm" type="button" @click="retryTask(t)">重试</button>

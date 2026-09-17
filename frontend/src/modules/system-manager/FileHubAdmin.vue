@@ -1,7 +1,7 @@
 <script setup>
 // 文件中心管理(/portal/system-manager/filehub-admin,权限点 filehubAdmin)
 // 四区块:①概览 ②一致性同步(手动触发/进度/取消) ③缓存与任务(缓存区/全量回收站/全量任务) ④审计日志(业务日志+分享访问日志)
-import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, inject } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, onActivated, onDeactivated, inject } from 'vue'
 import { useSessionStore } from '../../stores/session'
 import { filehubApi, fmtSize, fmtTime } from '../../api/filehub'
 import { useFilehubStore } from '../../stores/filehub'
@@ -59,7 +59,7 @@ async function startSync(dryRun) {
   } catch (e) { toast(e.message || '触发失败', 'err') } finally { sync.starting = false }
 }
 async function cancelSync() {
-  try { await filehubApi.admin.syncCancel(); toast('已取消(已完成部分保留)', 'warn'); loadSync() } catch { /* 静默 */ }
+  try { await filehubApi.admin.syncCancel(); toast('已取消(已完成部分保留)', 'warn'); loadSync() } catch (e) { toast(e.message || '取消失败', 'err') }
 }
 const dryRun = ref(true)
 
@@ -103,7 +103,7 @@ async function cleanCache(names) {
   try {
     const r = await filehubApi.admin.cacheClean(names)
     toast(`已清理 ${r.deleted} 项,释放 ${fmtSize(r.bytes)}`, 'ok')
-    loadCache()
+    loadCache(); loadStats()
   } catch (e) { toast(e.message || '清理失败', 'err') }
 }
 const cacheConfirm = reactive({ show: false, name: '' })
@@ -121,8 +121,18 @@ async function loadAdminTrash() {
     }
   } catch { /* 静默 */ }
 }
-const dangerConfirm = reactive({ show: false, title: '', html: '', fn: null })
-function askDanger(title, html, fn) { dangerConfirm.title = title; dangerConfirm.html = html; dangerConfirm.fn = fn; dangerConfirm.show = true }
+const dangerConfirm = reactive({ show: false, title: '', html: '', fn: null, danger: true })
+/**
+ * 打开确认框
+ * @param title   标题
+ * @param html    正文(允许内联标签)
+ * @param fn      确认后的动作
+ * @param danger  是否破坏性操作:决定确认按钮的样式(恢复这类非破坏操作用主色)
+ */
+function askDanger(title, html, fn, danger = true) {
+  dangerConfirm.title = title; dangerConfirm.html = html; dangerConfirm.fn = fn
+  dangerConfirm.danger = danger; dangerConfirm.show = true
+}
 function cleanAllTrash() {
   // 清空是全库动作:数字必须取服务端的全量口径(当前页只有 50 条,拿它推算会严重少报)
   const n = trashUsed.items || trashTotal.value
@@ -147,13 +157,14 @@ function cleanExpiredTrash() {
 }
 function adminPurge(row) {
   askDanger('彻底删除该条目?', `「${row.name}」将<b style="color:var(--color-err)">物理删除</b>,不可撤销。`, async () => {
-    try { await filehubApi.admin.trashPurge([row.id]); toast('已删除', 'ok'); loadAdminTrash() } catch (e) { toast(e.message || '失败', 'err') }
+    try { await filehubApi.admin.trashPurge([row.id]); toast('已删除', 'ok'); loadAdminTrash(); loadStats() } catch (e) { toast(e.message || '失败', 'err') }
   })
 }
 function adminRestore(row) {
+  // 恢复不是破坏性操作:确认按钮用主色,不用危险红
   askDanger('恢复该条目?', `「${row.name}」将恢复到原位置(管理端操作不受归属限制,记审计 admin_ 前缀)。`, async () => {
-    try { await filehubApi.admin.trashRestore([row.id]); toast('已恢复', 'ok'); loadAdminTrash() } catch (e) { toast(e.message || '失败', 'err') }
-  })
+    try { await filehubApi.admin.trashRestore([row.id]); toast('已恢复', 'ok'); loadAdminTrash(); loadStats() } catch (e) { toast(e.message || '失败', 'err') }
+  }, false)
 }
 async function loadAdminTasks() {
   try {
@@ -163,7 +174,7 @@ async function loadAdminTasks() {
   } catch { /* 静默 */ }
 }
 async function forceCancel(t) {
-  try { await filehubApi.admin.taskCancel(t.task_no); toast('已强制取消', 'warn'); loadAdminTasks() } catch { /* 静默 */ }
+  try { await filehubApi.admin.taskCancel(t.task_no); toast('已强制取消', 'warn'); loadAdminTasks(); loadStats() } catch (e) { toast(e.message || '取消失败', 'err') }
 }
 
 // ── ④ 审计日志 ──
@@ -246,7 +257,11 @@ async function saveQuota(s) {
 onMounted(() => {
   loadStats(); loadSync(); loadCache(); loadAdminTrash(); loadAdminTasks(); loadQuota(); loadLogs()
 })
-onBeforeUnmount(() => { if (syncTimer) clearInterval(syncTimer) })
+onBeforeUnmount(() => { if (syncTimer) { clearInterval(syncTimer); syncTimer = null } })
+// keep-alive 缓存期间不会走 onBeforeUnmount:轮询必须随失活停止,否则切到别的模块后
+// 仍会每 1.5 秒打一次 /filehub/admin/sync
+onDeactivated(() => { if (syncTimer) { clearInterval(syncTimer); syncTimer = null } })
+onActivated(() => { loadSync() })   // 回前台补一次:期间状态可能已变
 </script>
 
 <template>
@@ -558,7 +573,8 @@ onBeforeUnmount(() => { if (syncTimer) clearInterval(syncTimer) })
       <p style="line-height:24px;margin:0" v-html="dangerConfirm.html"></p>
       <template #foot>
         <button class="btn btn-ghost" type="button" @click="dangerConfirm.show = false">取消</button>
-        <button class="btn btn-danger" type="button" @click="dangerConfirm.show = false; dangerConfirm.fn && dangerConfirm.fn()">确认执行</button>
+        <button class="btn" :class="dangerConfirm.danger ? 'btn-danger' : 'btn-primary'" type="button"
+                @click="dangerConfirm.show = false; dangerConfirm.fn && dangerConfirm.fn()">确认执行</button>
       </template>
     </Modal>
   </div>

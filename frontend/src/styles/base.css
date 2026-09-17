@@ -323,6 +323,12 @@ select.input{cursor:pointer;appearance:auto}
 .menu-item.danger:hover{background:var(--color-err-bg)}
 .menu-sep{height:1px;background:var(--color-border-soft);margin:6px 4px}
 
+/* ---------- 11.5 布局/排版小工具(多处复用,勿在组件里重复定义) ---------- */
+.row{display:flex;align-items:center;gap:8px}
+.row.between{justify-content:space-between}
+.cap{font-size:var(--fs-cap)}
+.underline-tabs{display:flex;gap:8px;border-bottom:1px solid var(--color-border)}
+
 /* ---------- 12. 分段控件 ---------- */
 .seg{display:flex;gap:4px;padding:4px;background:var(--color-border-soft);border-radius:var(--r-md)}
 .seg-item{

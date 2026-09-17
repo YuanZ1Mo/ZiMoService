@@ -204,7 +204,8 @@ drogon::Task<ZMJSON> ZmFileShareModule::Create(const ZmOpCtx& ctx, int64_t space
         [this, ctx, space, nodeId, pwdEnabled, expireDays, expireTime, maxDownloads,
          loginOnly]() -> ZMJSON
         {
-            (void)space;
+            // 公共空间不提供"仅登录可见"(§3.12.2):前端已隐藏开关,这里兜住直接调接口的情况
+            bool effectiveLoginOnly = (space == 0) ? false : loginOnly;
             ZMJSON row;
             if (!m_node->VisibleSync(nodeId, row))
                 return ZmFileError(zm_file_err::kNodeNotFound, 404, "条目不存在");
@@ -247,7 +248,7 @@ drogon::Task<ZMJSON> ZmFileShareModule::Create(const ZmOpCtx& ctx, int64_t space
                                          "VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,0,0,1,?11,?11)",
                             {token, std::to_string(ctx.uid), std::to_string(realSpace),
                              std::to_string(nodeId), std::to_string(nodeType), name, pwdHash,
-                             std::to_string(loginOnly ? 1 : 0), std::to_string(expire),
+                             std::to_string(effectiveLoginOnly ? 1 : 0), std::to_string(expire),
                              std::to_string(maxDownloads), std::to_string(now)}))
                         return false;
                     shareId = zm_file_row_int(
