@@ -612,6 +612,7 @@ onMounted(() => {
               <FileList :items="items" :selected="selected" :keyword="query.searching ? searchInput : ''"
                         :show-path="query.searching" :sort="sortKey" :order="sortOrder"
                         :loading="loading" :has-more="items.length < total" :epoch="listEpoch"
+                        :dir-id="dirId" :space="space"
                         @toggle="toggleSel" @open="openNode" @ctx="openCtx" @sort="onSort"
                         @drag-to="onDragTo" @files="onListFiles" @load-more="loadMore" />
             </div>
@@ -753,6 +754,7 @@ onMounted(() => {
 
     <!-- 移动 / 复制 -->
     <MoveCopyDialog :show="mcDlg.show" :mode="mcDlg.mode" :targets="mcDlg.targets" :me-space="meSpace"
+                    :space="space"
                     @close="mcDlg.show = false" @done="onMcDone" />
 
     <!-- 分享 -->

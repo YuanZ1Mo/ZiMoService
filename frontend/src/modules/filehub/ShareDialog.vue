@@ -12,6 +12,7 @@ const props = defineProps({
   isPublic: { type: Boolean, default: true }  // 公共空间分享不提供"仅登录可见"开关(§3.12.2)
 })
 const emit = defineEmits(['close', 'created'])
+const toast = inject('toast')
 
 const form = reactive({ pwd_enabled: false, expire_days: 7, max_downloads: 0, login_only: false })
 const busy = ref(false)
@@ -38,6 +39,9 @@ async function create() {
     done.value = r
     emit('created', r)
     nextTick(drawQr)
+  } catch (e) {
+    // 达到分享数上限 / 无权限 / 条目已被删除等:此前只有 finally,失败时弹窗毫无反应
+    toast(e.message || '创建分享失败', 'err')
   } finally { busy.value = false }
 }
 function drawQr() {

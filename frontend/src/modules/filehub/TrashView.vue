@@ -5,6 +5,7 @@ import { ref, reactive, computed, onMounted, watch, inject } from 'vue'
 import Modal from '../../components/Modal.vue'
 import FileIcon from './FileIcon.vue'
 import { filehubApi, fmtSize, fmtTime } from '../../api/filehub'
+import { useFilehubStore } from '../../stores/filehub'
 
 const props = defineProps({
   space: { type: Number, required: true },
@@ -12,6 +13,7 @@ const props = defineProps({
 })
 const emit = defineEmits(['changed'])
 const toast = inject('toast')
+const store = useFilehubStore()
 
 const rows = ref([])
 const total = ref(0)
@@ -81,8 +83,12 @@ function restore(items) {
       const r = await filehubApi.trashRestore(items.map(x => x.id))
       const okN = (r.restored || []).length
       const failN = (r.failed || []).length
+      // 是否被自动重命名:按服务端返回的最终名与原名比对
+      // (原判定 `/ \(\d+\)$/` 要求序号在末尾,而实际是插在扩展名之前,对带扩展名的文件永不成立)
+      const origin = new Map(items.map(x => [x.id, x.name]))
+      const renamed = (r.restored || []).some(x => x.name && x.name !== origin.get(x.id))
       // 部分失败要说清数量,否则用户以为全都恢复了
-      toast(`已恢复 ${okN} 项${(r.restored || []).some(x => / \(\d+\)$/.test(x.name)) ? '(部分自动重命名)' : ''}` +
+      toast(`已恢复 ${okN} 项${renamed ? '(部分自动重命名)' : ''}` +
             (failN ? `,${failN} 项失败(可能已被彻底删除)` : ''), failN ? 'warn' : 'ok')
       reload()
     } catch (e) { toast(e.message || '恢复失败', 'err') }
@@ -110,6 +116,7 @@ function clearAll() {
       try {
         await filehubApi.trashClear(props.space)
         toast('已创建清空任务,进度见任务面板', 'ok')
+        store.togglePanel(true)   // 打开任务面板并起轮询(清空是后台任务,列表此时还没变)
         reload()
       } catch (e) { toast(e.message || '操作失败', 'err') }
     })
@@ -166,8 +173,11 @@ function clearAll() {
                 </span>
               </td>
               <td>
-                <span style="font-size:var(--fs-cap)" :style="!n.path ? 'color:var(--color-warn)' : 'color:var(--color-text-2)'">
-                  {{ n.path || '原目录已删除(恢复到空间根)' }}
+                <!-- path 为空有两种情形:条目本来就在空间根,或原父目录已被删除
+                     (服务端 origin_parent_id=0 即前者),不能一律说成"原目录已删除" -->
+                <span style="font-size:var(--fs-cap)"
+                      :style="n.path || !Number(n.origin_parent_id) ? 'color:var(--color-text-2)' : 'color:var(--color-warn)'">
+                  {{ n.path || (Number(n.origin_parent_id) ? '原目录已删除(恢复到空间根)' : '空间根') }}
                 </span>
               </td>
               <td><span class="num">{{ fmtTime(n.delete_time) }}</span></td>

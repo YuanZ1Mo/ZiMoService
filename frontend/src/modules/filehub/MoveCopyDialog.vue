@@ -10,7 +10,8 @@ const props = defineProps({
   show: { type: Boolean, default: false },
   mode: { type: String, default: 'move' },      // move | copy
   targets: { type: Array, default: () => [] },  // 待操作条目 [{id,name,type,size}]
-  meSpace: { type: Number, default: 0 }         // 我的空间 space=uid(会话注入)
+  meSpace: { type: Number, default: 0 },         // 我的空间 space=uid(会话注入)
+  space: { type: Number, default: 0 }            // 当前所在空间(0=公共;对话框默认目标跟随它)
 })
 const emit = defineEmits(['close', 'done'])
 
@@ -26,6 +27,8 @@ const busy = ref(false)
 watch(() => props.show, async (v) => {
   if (!v) return
   conflict.value = 'ask'; conflicts.value = []
+  // 默认目标跟随当前所在空间:在"我的空间"里操作时,默认落在公共空间会一步搬错地方
+  spaceSel.value = props.space === 0 ? 0 : 'me'
   await loadRoots()
 })
 

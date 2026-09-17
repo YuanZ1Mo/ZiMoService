@@ -4,14 +4,12 @@
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, onActivated, onDeactivated, inject } from 'vue'
 import { useSessionStore } from '../../stores/session'
 import { filehubApi, fmtSize, fmtTime } from '../../api/filehub'
-import { useFilehubStore } from '../../stores/filehub'
 import Modal from '../../components/Modal.vue'
 import FileIcon from '../filehub/FileIcon.vue'
 import '../filehub/filehub.css'
 
 const toast = inject('toast')
 const session = useSessionStore()
-const store = useFilehubStore()
 
 const denied403 = ref(false)
 function hasPerm(code) {
@@ -162,7 +160,7 @@ function adminPurge(row) {
 }
 function adminRestore(row) {
   // 恢复不是破坏性操作:确认按钮用主色,不用危险红
-  askDanger('恢复该条目?', `「${row.name}」将恢复到原位置(管理端操作不受归属限制,记审计 admin_ 前缀)。`, async () => {
+  askDanger('恢复该条目?', `「${row.name}」将恢复到原位置(管理端不受归属限制,可恢复他人删除的条目)。`, async () => {
     try { await filehubApi.admin.trashRestore([row.id]); toast('已恢复', 'ok'); loadAdminTrash(); loadStats() } catch (e) { toast(e.message || '失败', 'err') }
   }, false)
 }
@@ -209,7 +207,7 @@ watch(auditTab, (v) => { v === 'file' ? loadLogs() : loadShareLogs() })
 const ACTION_NAME = {
   upload: '上传', download: '下载', pack: '打包', mkdir: '新建', rename: '重命名', move: '移动',
   copy: '复制', delete: '删除', restore: '恢复', purge: '彻底删除', trash_clear: '清空回收站',
-  share_create: '分享创建', share_cancel: '分享取消', share_access: '分享访问',
+  share_create: '分享创建', share_cancel: '分享取消',
   admin_sync: '一致性同步', admin_cache_clean: '缓存清理'
 }
 // 任务字段本地映射(服务端只下发需求 §5.6 的字段,不依赖冗余展示字段)

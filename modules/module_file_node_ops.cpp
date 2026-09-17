@@ -1439,6 +1439,8 @@ ZMJSON ZmFileNodeModule::TrashListSync(int64_t space, const ZmListQuery& q, int6
         item["items"]         = n.items;
         item["delete_time"]   = n.deleteTime;
         item["del_owner_uid"] = n.delOwnerUid;
+        // 原父目录 id:0 = 本来就删在空间根(前端据此区分"空间根"与"原目录已删除")
+        item["origin_parent_id"] = n.originParentId;
         // 原路径 = 原父目录的路径;原父目录已删除(或原本就在空间根)时给空串
         std::string path;
         if (n.originParentId != 0 && VisibleSync(n.originParentId))

@@ -18,7 +18,9 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
   hasMore: { type: Boolean, default: false },
   /// 整表替换标记:调用方每次替换 items(刷新/换目录/搜索)自增,列表据此复位滚动
-  epoch: { type: Number, default: 0 }
+  epoch: { type: Number, default: 0 },
+  dirId: { type: Number, default: 0 },   /// 当前目录 id(拖入上传要明确目标,不再靠假值兜底)
+  space: { type: Number, default: 0 }    /// 当前空间(0=公共;个人空间不展示"创建者"列)
 })
 const emit = defineEmits(['toggle', 'open', 'ctx', 'drag-to', 'files', 'sort', 'load-more'])
 
@@ -109,7 +111,8 @@ async function onDropRow(e, node) {
 async function onDropFiles(e) {
   dragOverId.value = 0
   const drop = await collectDropItems(e.dataTransfer)
-  if (drop.files.length || drop.dirs.length) emit('files', { ...drop, dirId: 0 })
+  // 显式传当前目录 id(此前传 0 靠调用方的假值兜底才落到当前目录,是隐性约定)
+  if (drop.files.length || drop.dirs.length) emit('files', { ...drop, dirId: props.dirId })
 }
 
 </script>
@@ -128,7 +131,7 @@ async function onDropFiles(e) {
                 :style="k === 'name' ? 'min-width:200px' : ''" @click="emit('sort', k)">
               {{ label }}{{ sort === k ? (order === 'asc' ? ' ↑' : ' ↓') : '' }}
             </th>
-            <th style="min-width:70px">创建者</th>
+            <th v-if="Number(space) === 0" style="min-width:70px">创建者</th>
             <th v-if="showPath" style="min-width:180px">位置</th>
             <th style="width:60px"></th>
           </tr>
@@ -166,7 +169,7 @@ async function onDropFiles(e) {
               </span>
             </td>
             <td style="min-width:110px"><span class="num">{{ fmtTime(n.update_time) }}</span></td>
-            <td style="min-width:70px">{{ n.owner_name || '—' }}</td>
+            <td v-if="Number(space) === 0" style="min-width:70px">{{ n.owner_name || '—' }}</td>
             <td v-if="showPath"><span style="font-size:var(--fs-cap);color:var(--color-text-2)">{{ n.path || '(空间根)' }}</span></td>
             <td>
               <span class="row-ops">
