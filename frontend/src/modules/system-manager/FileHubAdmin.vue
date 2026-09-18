@@ -53,8 +53,19 @@ async function startSync(dryRun) {
   try {
     await filehubApi.admin.syncStart(dryRun)
     toast('一致性同步已启动', 'ok')
+    // 乐观进入运行态:触发后立刻给出反馈(取消按钮随即可用),否则小库同步 <1s 时
+    // 界面从头到尾停在"空闲",用户会以为没生效
+    sync.running = true
     loadSync()
-  } catch (e) { toast(e.message || '触发失败', 'err') } finally { sync.starting = false }
+    // 收尾补一次:同步常在 1.5s 轮询间隔内跑完,补刷任务表与审计日志让"这次同步"
+    // 立刻出现在全量任务/日志里(轮询结束只刷新了统计)
+    setTimeout(async () => {
+      await loadSync()
+      loadAdminTasks()
+      loadLogs()
+      if (!sync.running) toast('一致性同步已完成', 'ok')
+    }, 2500)
+  } catch (e) { toast(e.message || '触发失败', 'err'); sync.running = false } finally { sync.starting = false }
 }
 async function cancelSync() {
   try { await filehubApi.admin.syncCancel(); toast('已取消(已完成部分保留)', 'warn'); loadSync() } catch (e) { toast(e.message || '取消失败', 'err') }
@@ -184,8 +195,14 @@ const shareLogsTotal = ref(0)
 const SHARE_LOG_SIZE = 20
 const shareLogPage = ref(1)
 const auditTab = ref('file')
-/// 业务日志翻页(带筛选条件,改页只需换页码)
-function gotoLogs(p) { gotoPage(logQuery, logsTotal.value, logQuery.size, p, loadLogs) }
+// 业务日志翻页:页码存在 reactive 查询对象里(不是 ref),故不走 gotoPage
+// (gotoPage 按 ref 语义写 cur.value,对 reactive 只会多挂一个 value 键、页码不动)
+function gotoLogs(p) {
+  const max = pages(logsTotal.value, logQuery.size)
+  if (p < 1 || p > max || p === logQuery.page) return
+  logQuery.page = p
+  loadLogs()
+}
 /// 分享日志翻页
 function gotoShareLogs(p) {
   gotoPage(shareLogPage, shareLogsTotal.value, SHARE_LOG_SIZE, p, loadShareLogs)
@@ -401,7 +418,7 @@ onActivated(() => { loadSync() })   // 回前台补一次:期间状态可能已�
                   <td><b>{{ r.name }}</b></td>
                   <td>{{ r.space_name }}</td>
                   <td>{{ Number(r.type) === 1 ? '文件夹' : '文件' }}</td>
-                  <td class="num">{{ Number(r.type) === 1 ? `${r.items} 项 · ${fmtSize(r.size)}` : fmtSize(r.size) }}</td>
+                  <td class="num">{{ Number(r.type) === 1 ? `${r.items} 项 · ${fmtSize(r.bytes ?? r.size)}` : fmtSize(r.size) }}</td>
                   <td>{{ r.del_owner_name }}</td>
                   <td class="num">{{ fmtTime(r.delete_time) }}</td>
                   <td>

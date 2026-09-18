@@ -65,8 +65,11 @@ function toggleSel(n) {
   s.has(n.id) ? s.delete(n.id) : s.add(n.id)
   selected.value = s
 }
+/// 回收站条目的占用字节:目录取服务端下发的子树字节(bytes),文件取自身 size
+/// (目录在 nodes 里 size 恒为 0,直接累加 size 会把整块目录占用算成 0)
+const entryBytes = (n) => Number(n.bytes ?? n.size ?? 0)
 function selSize() {
-  return rows.value.filter(r => selected.value.has(r.id)).reduce((a, r) => a + Number(r.size || 0), 0)
+  return rows.value.filter(r => selected.value.has(r.id)).reduce((a, r) => a + entryBytes(r), 0)
 }
 function selItems() {
   return rows.value.filter(r => selected.value.has(r.id))
@@ -96,7 +99,7 @@ function restore(items) {
 }
 function purge(items) {
   if (!items.length) return
-  const bytes = items.reduce((a, x) => a + Number(x.size || 0), 0)
+  const bytes = items.reduce((a, x) => a + entryBytes(x), 0)
   askConfirm(`彻底删除 ${items.length} 项?`,
     `将连同全部子项<b style="color:var(--color-err)">物理删除</b>,共 ${fmtSize(bytes)},<b style="color:var(--color-err)">不可撤销</b>。`,
     async () => {
@@ -169,7 +172,7 @@ function clearAll() {
               <td><span class="ftype">{{ Number(n.type) === 1 ? '文件夹' : '文件' }}</span></td>
               <td>
                 <span class="num" :class="{ 'items-num': Number(n.type) === 1 }">
-                  {{ Number(n.type) === 1 ? `${n.items} 项 · ${fmtSize(n.size)}` : fmtSize(n.size) }}
+                  {{ Number(n.type) === 1 ? `${n.items} 项 · ${fmtSize(n.bytes ?? n.size)}` : fmtSize(n.size) }}
                 </span>
               </td>
               <td>

@@ -63,6 +63,7 @@ let loadSeq = 0              // 列表请求序号(丢弃过期响应)
 const loading = ref(false)
 const sortKey = ref('name')
 const sortOrder = ref('asc')
+const layout = ref('list')    // 列表/网格视图(list | grid),持久化在会话内
 const pageSize = 200
 const SEARCH_KW_MAX = 64     // 服务端关键词上限(超出直接返回空结果,故前端先拦)
 const UPLOAD_MAX_FILES = 5000   // 文件夹上传单批上限:文件数(需求 §3.8.6)
@@ -164,8 +165,21 @@ function toggleSel(n, e, alwaysToggle) {
 }
 function selectAll() { selected.value = new Set(items.value.map(x => x.id)) }
 function clearSel() { selected.value = new Set(); lastIdx = -1 }
+// 表头全选框(FileList 抛出):勾选=全选当前已加载条目,取消=清空
+function onToggleAll(checked) { checked ? selectAll() : clearSel() }
 const selTargets = computed(() => items.value.filter(x => selected.value.has(x.id)))
-const selBytes = computed(() => selTargets.value.reduce((a, x) => a + Number(x.size || 0), 0))
+// 选中项的体积只累加"文件":目录在 nodes 里 size 恒为 0(目录不占字节),
+// 其子树体积需服务端递归统计、列表接口不下发 —— 把 0 混进来会显示成"共 0 B"的假体积
+const selBytes = computed(() => selTargets.value.filter(x => Number(x.type) === 2)
+  .reduce((a, x) => a + Number(x.size || 0), 0))
+const selDirCount = computed(() => selTargets.value.filter(x => Number(x.type) === 1).length)
+// 批量条上的构成说明:精确文件体积 + 文件夹个数(文件夹内容大小以服务端统计为准,不在此虚报)
+const selSummary = computed(() => {
+  const parts = []
+  if (selBytes.value) parts.push(fmtSize(selBytes.value))
+  if (selDirCount.value) parts.push(`${selDirCount.value} 个文件夹`)
+  return parts.join(' · ')
+})
 function onKeydown(e) {
   const t = e.target
   // 输入框/可编辑区里不劫持快捷键:否则 Ctrl+A 无法全选输入内容
@@ -260,9 +274,16 @@ function askConfirm(title, html, fn) { confirmBox.title = title; confirmBox.html
 function doDelete(targets) {
   if (!targets.length) return
   const dirCount = targets.filter(t => Number(t.type) === 1).length
-  const bytes = targets.reduce((a, t) => a + Number(t.size || 0), 0)
-  askConfirm(`删除 ${targets.length} 项?`,
-    `将移入回收站并保留 30 天${dirCount ? `,其中 ${dirCount} 个文件夹将连同全部子项一并删除` : ''};共 ${fmtSize(bytes)}。`,
+  const fileBytes = targets.filter(t => Number(t.type) === 2).reduce((a, t) => a + Number(t.size || 0), 0)
+  // 体积只对"纯文件"报:含目录时目录的 size 恒为 0,报"共 0 B"是假信息;
+  // 且删除是软删除(进回收站、不释放空间),体积本非关键,条目数与子项数才是
+  const body = `将移入回收站并保留 30 天`
+    + (dirCount
+      ? `,其中 ${dirCount} 个文件夹将连同其全部子项一并删除`
+        + (fileBytes ? `(文件共 ${fmtSize(fileBytes)})` : '')
+      : `;共 ${fmtSize(fileBytes)}`)
+    + '。'
+  askConfirm(`删除 ${targets.length} 项?`, body,
     async () => {
       try {
         const r = await filehubApi.remove(targets.map(t => t.id))
@@ -273,16 +294,20 @@ function doDelete(targets) {
 }
 async function doPack(targets) {
   if (!targets.length) return
-  // 打包前预估:目录按"1 项 + 子树"粗估,超限由服务端 400 PACK_TOO_LARGE 兜底(§3.10.1)
-  let items = 0, bytes = 0
+  // 打包前预估:文件体积精确;目录的子树体积需服务端递归统计(列表接口不下发),
+  // 故含目录时只报条目数并说明"文件夹内容一并打包",不把目录的 0 当体积报出去
+  // (真正的条目数/体积上限由服务端 400 PACK_TOO_LARGE 兜底,§3.10.1)
+  const dirCount = targets.filter(t => Number(t.type) === 1).length
+  let items = 0, fileBytes = 0
   for (const t of targets) {
-    if (Number(t.type) === 1) {
-      items += 1 + Number(t.items || 0)
-    } else { items++ }
-    bytes += Number(t.size || 0)
+    if (Number(t.type) === 1) items += 1 + Number(t.items || 0)
+    else { items++; fileBytes += Number(t.size || 0) }
   }
+  const sizePart = dirCount
+    ? (fileBytes ? `,其中文件共 ${fmtSize(fileBytes)},文件夹内容一并打包` : ',文件夹内容一并打包')
+    : `,共 ${fmtSize(fileBytes)}`
   askConfirm('打包下载?',
-    `将打包 <b>${targets.length}</b> 个条目(约 ${items} 个文件,共 ${fmtSize(bytes)})为 zip 并转入任务面板,完成后可下载。`,
+    `将打包 <b>${targets.length}</b> 个条目(约 ${items} 项${sizePart})为 zip 并转入任务面板,完成后可下载。`,
     async () => {
       try {
         await filehubApi.pack(space.value, targets.map(t => t.id))
@@ -425,7 +450,14 @@ async function loadShares() {
     shares.value = d.list || []
   } catch (e) { toast(e.message || '加载分享失败', 'err') } finally { sharesLoading.value = false }
 }
-watch(view, (v) => { if (v === 'shares') loadShares() })
+// 视图切换:进入"我的分享"拉列表;回到"文件浏览"时重取当前目录与空间计数
+// (回收站里的恢复/彻底删除会改变可见列表与配额,不重取会看到过期列表)
+watch(view, (v) => {
+  if (v === 'shares') loadShares()
+  else if (v === 'files') { load(); loadSpaces() }
+})
+// 回收站内任一写操作完成后的回调:同步刷新空间卡片计数与文件列表
+function onTrashChanged() { loadSpaces(); load() }
 async function copyText(t, msg) {
   try { await navigator.clipboard.writeText(t); toast(msg || '已复制', 'ok') } catch { /* 剪贴板不可用 */ }
 }
@@ -563,10 +595,10 @@ onMounted(() => {
                 新建
               </button>
               <div class="vseg">
-                <button type="button" class="on" title="列表视图" aria-label="列表视图">
+                <button type="button" :class="{ on: layout === 'list' }" title="列表视图" aria-label="列表视图" @click="layout = 'list'">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
                 </button>
-                <button type="button" title="网格视图" aria-label="网格视图" @click="toast('网格视图:在列表工具条右上切换(开发提示:视图状态当前由 FileList 属性驱动)', 'info')">
+                <button type="button" :class="{ on: layout === 'grid' }" title="网格视图" aria-label="网格视图" @click="layout = 'grid'">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg>
                 </button>
               </div>
@@ -579,7 +611,7 @@ onMounted(() => {
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
               </button>
               <span class="sel-num num">已选 {{ selected.size }} 项</span>
-              <span class="cap num" style="color:var(--color-text-3)">{{ fmtSize(selBytes) }}</span>
+              <span v-if="selSummary" class="cap num" style="color:var(--color-text-3)">{{ selSummary }}</span>
               <span style="flex:1"></span>
               <button class="btn btn-secondary btn-sm" type="button" @click="doPack(selTargets)">打包下载</button>
               <button class="btn btn-secondary btn-sm" type="button" @click="openMove(selTargets)">移动</button>
@@ -610,16 +642,17 @@ onMounted(() => {
                 <span class="cap num" style="color:var(--color-text-3)">共 {{ total }} 项</span>
               </div>
               <FileList :items="items" :selected="selected" :keyword="query.searching ? searchInput : ''"
-                        :show-path="query.searching" :sort="sortKey" :order="sortOrder"
+                        :show-path="query.searching" :sort="sortKey" :order="sortOrder" :view="layout"
                         :loading="loading" :has-more="items.length < total" :epoch="listEpoch"
                         :dir-id="dirId" :space="space"
                         @toggle="toggleSel" @open="openNode" @ctx="openCtx" @sort="onSort"
-                        @drag-to="onDragTo" @files="onListFiles" @load-more="loadMore" />
+                        @drag-to="onDragTo" @files="onListFiles" @load-more="loadMore"
+                        @toggle-all="onToggleAll" />
             </div>
           </template>
 
           <!-- 回收站 -->
-          <TrashView v-else-if="view === 'trash'" :space="space" :me-space="meSpace" @changed="loadSpaces" />
+          <TrashView v-else-if="view === 'trash'" :space="space" :me-space="meSpace" @changed="onTrashChanged" />
 
           <!-- 我的分享 -->
           <template v-else-if="view === 'shares'">

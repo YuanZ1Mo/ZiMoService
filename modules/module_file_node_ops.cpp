@@ -1437,6 +1437,18 @@ ZMJSON ZmFileNodeModule::TrashListSync(int64_t space, const ZmListQuery& q, int6
         item["type"]          = n.type;
         item["size"]          = n.size;
         item["items"]         = n.items;
+        // 目录的 size 恒为 0(nodes 表语义:目录不占字节),但回收站视图的"大小"列
+        // 要给"子树条目数与字节数"(需求 §3.7.2) —— 否则用户看到"1 项 · 0 B",
+        // 既估不出彻底删除的耗时,也看不出这块占用有多大
+        if (n.type == zm_file::kTypeDir)
+        {
+            int64_t subItems = 0;
+            int64_t subBytes = 0;
+            SubtreeStat(m_db, n.id, subItems, subBytes);
+            // SubtreeStat 含自身,展示口径与列表视图一致 → 减去自身得到"内容物数量"
+            item["items"] = subItems > 0 ? subItems - 1 : 0;
+            item["bytes"] = subBytes;
+        }
         item["delete_time"]   = n.deleteTime;
         item["del_owner_uid"] = n.delOwnerUid;
         // 原父目录 id:0 = 本来就删在空间根(前端据此区分"空间根"与"原目录已删除")
@@ -1465,10 +1477,26 @@ ZMJSON ZmFileNodeModule::TrashListSync(int64_t space, const ZmListQuery& q, int6
             uwhere += " AND del_owner_uid = ?" + std::to_string(up.size() + 1);
             up.push_back(std::to_string(uid));
         }
-        ZMJSON urow = m_db->QueryRowSync(
-            "SELECT COUNT(*) AS n, COALESCE(SUM(size),0) AS bytes FROM nodes" + uwhere, up);
-        usedItems = zm_file_row_int(urow, "n", 0);
-        usedSize  = zm_file_row_int(urow, "bytes", 0);
+        // 目录的 size 为 0:占用必须按子树字节累加,否则"回收站占用"会漏掉被删目录
+        // 里的全部文件(用户会看到"删了 1.6 GB 却显示占用 0")
+        ZMJSON urows = m_db->QueryRowsSync("SELECT id, type, size FROM nodes" + uwhere, up);
+        for (const auto& r : urows)
+        {
+            const int64_t id   = zm_file_row_int(r, "id", 0);
+            const int64_t type = zm_file_row_int(r, "type", 0);
+            ++usedItems;
+            if (type == zm_file::kTypeDir)
+            {
+                int64_t si = 0;
+                int64_t sb = 0;
+                SubtreeStat(m_db, id, si, sb);
+                usedSize += sb;
+            }
+            else
+            {
+                usedSize += zm_file_row_int(r, "size", 0);
+            }
+        }
     }
 
     ZMJSON out         = ZMJSON::object();

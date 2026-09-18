@@ -408,9 +408,17 @@ void ZmAuthGateModule::AuthorizeFrontend(const HttpRequestPtr& req, AdviceCallba
         return ZmHttpServer::RedirectResponse(url);
     };
 
-    // 白名单页面(/login /register /reset /404)
+    // 白名单页面(/login /register /reset /404 /s/*)
     if (IsWhitelistPagePath(path))
     {
+        // /s/* 是分享页:链接本身即凭证,登录态也照常渲染页壳(前端 ShareView 独立解析,
+        // 不进门户壳;业务登录要求由 /filehub/share/* 接口细判)。借 login_only 分享时
+        // 未登录前端会引导去 /login?redirect=/s/<token>,登录后带回本页。
+        if (path.rfind("/s/", 0) == 0)
+        {
+            cb(ServeIndex(req, fe));
+            return;
+        }
         // 已登录访问 /login /register /reset → 跳 /portal;/404 恒渲染
         if (!cookie.empty() && path != "/404")
         {

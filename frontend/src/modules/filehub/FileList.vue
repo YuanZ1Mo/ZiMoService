@@ -22,7 +22,7 @@ const props = defineProps({
   dirId: { type: Number, default: 0 },   /// 当前目录 id(拖入上传要明确目标,不再靠假值兜底)
   space: { type: Number, default: 0 }    /// 当前空间(0=公共;个人空间不展示"创建者"列)
 })
-const emit = defineEmits(['toggle', 'open', 'ctx', 'drag-to', 'files', 'sort', 'load-more'])
+const emit = defineEmits(['toggle', 'open', 'ctx', 'drag-to', 'files', 'sort', 'load-more', 'toggle-all'])
 
 // 可排序列表头:键必须落在服务端支持的范围(name|size|mtime|type,见 ListOrderClause)
 // "创建者"列不参与排序(服务端无该排序键),故单独成列、不写在本表内
@@ -61,6 +61,9 @@ const vEnd = computed(() => !virtualOn.value ? props.items.length
 const padTop = computed(() => !virtualOn.value ? 0 : vStart.value * rowH.value)
 const padBottom = computed(() => !virtualOn.value ? 0 : (props.items.length - vEnd.value) * rowH.value)
 const vItems = computed(() => virtualOn.value ? props.items.slice(vStart.value, vEnd.value) : props.items)
+// 表头全选态:全部已加载条目都在选中集里=全选;部分选中=半选(indeterminate)
+const allChecked = computed(() => props.items.length > 0 && props.items.every(n => props.selected.has(n.id)))
+const someChecked = computed(() => !allChecked.value && props.items.some(n => props.selected.has(n.id)))
 /**
  * 量一次可视高度与真实行高
  *
@@ -126,7 +129,11 @@ async function onDropFiles(e) {
       <table class="ftbl">
         <thead>
           <tr>
-            <th class="col-cb"></th>
+            <th class="col-cb">
+              <!-- 全选:勾选=选中当前已加载的全部条目;部分选中时显示半选态 -->
+              <input type="checkbox" class="fcheck" :checked="allChecked" :indeterminate="someChecked"
+                     :aria-label="allChecked ? '取消全选' : '全选'" @change="emit('toggle-all', $event.target.checked)" />
+            </th>
             <th v-for="[k, label] in SORTS" :key="k" class="sortable" :class="{ sorted: sort === k }"
                 :style="k === 'name' ? 'min-width:200px' : ''" @click="emit('sort', k)">
               {{ label }}{{ sort === k ? (order === 'asc' ? ' ↑' : ' ↓') : '' }}

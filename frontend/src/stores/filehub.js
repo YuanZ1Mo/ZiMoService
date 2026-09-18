@@ -104,6 +104,10 @@ export const useFilehubStore = defineStore('filehub', {
           onSession: (uploadId) => { u.session = uploadId }
         })
         u.status = 'ok'; u.done = u.size
+        // 服务端在 skip 策略下返回 {skipped:true}(文件未入位),秒传返回 {instant:true};
+        // 两者都不是"真的传了字节",文案要区分,否则用户会以为文件已上传
+        u.skipped = !!(r && r.skipped)
+        u.instant = !!(r && r.instant)
         if (u.onDone) u.onDone(r)
         this._notifyChange()
       } catch (e) {

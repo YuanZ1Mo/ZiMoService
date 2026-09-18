@@ -1,7 +1,7 @@
 <script setup>
 // 分享设置弹窗(§3.12):提取码/有效期/次数上限/仅登录可见 → 创建成功态(链接+二维码)
 // 二维码前端本地生成(qrcode 库),不上传链接到第三方服务
-import { ref, reactive, watch, nextTick } from 'vue'
+import { ref, reactive, watch, nextTick, inject } from 'vue'
 import Modal from '../../components/Modal.vue'
 import QRCode from 'qrcode'
 import { filehubApi, fmtSize } from '../../api/filehub'

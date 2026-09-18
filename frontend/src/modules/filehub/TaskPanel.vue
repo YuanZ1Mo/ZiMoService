@@ -129,7 +129,7 @@ async function cleanPack(t) {
                 与「{{ u.conflicts.map(c => c.name).join('、') }}」同名,请选择处理方式
               </template>
               <template v-else-if="u.status === 'fail'">{{ u.error }}</template>
-              <template v-else-if="u.status === 'ok'">秒传/入位完成</template>
+              <template v-else-if="u.status === 'ok'">{{ u.skipped ? '已跳过(同名)' : (u.instant ? '秒传完成' : '上传完成') }}</template>
               <template v-else><span class="num">{{ fmtSize(u.done) }} / {{ fmtSize(u.size) }}</span></template>
             </div>
           </div>

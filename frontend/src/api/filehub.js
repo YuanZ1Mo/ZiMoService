@@ -69,7 +69,7 @@ async function uploadFile(file, { space, dirId, conflict, signal, onProgress, on
     err.data = { code: 'NAME_EXISTS', conflicts: init.conflicts }
     throw err
   }
-  if (init.instant) { onProgress(file.size); return { node_id: init.node_id, task_no: init.task_no } }
+  if (init.instant) { onProgress(file.size); return { node_id: init.node_id, task_no: init.task_no, instant: true } }
   if (onSession) onSession(init.upload_id)
   const uploaded = new Set(init.uploaded || [])
   let doneBytes = uploaded.size * init.chunk_size
@@ -288,11 +288,14 @@ export function highlightText(name, keyword) {
 }
 
 // 人性化字节(需求 §3.1)
+// 0 字节按 "0 B" 展示(空文件是合法条目);目录场景由调用方传 items 走"N 项"
 export function fmtSize(bytes, items) {
   if (items !== undefined && items > 0 && !bytes) return `${items} 项`
-  if (!bytes) return '—'
+  if (bytes === undefined || bytes === null || bytes === '') return '—'
+  const n = Number(bytes)
+  if (!Number.isFinite(n)) return '—'
   const u = ['B', 'KB', 'MB', 'GB', 'TB']
-  let i = 0, v = Number(bytes)
+  let i = 0, v = n
   while (v >= 1024 && i < u.length - 1) { v /= 1024; i++ }
   return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)} ${u[i]}`
 }

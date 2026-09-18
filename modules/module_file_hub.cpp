@@ -142,7 +142,7 @@ ZmListQuery ListQueryOf(const HttpRequestPtr& req, int defSize)
     return q;
 }
 
-/// @brief 站点基址(下载直链与分享链接用)
+/// @brief 站点基址(下载直链用:REST 端口)
 std::string SiteBase(const HttpRequestPtr& req, ZmHttpRestfulServer* rest)
 {
     std::string host  = req->getHeader("Host");
@@ -152,6 +152,22 @@ std::string SiteBase(const HttpRequestPtr& req, ZmHttpRestfulServer* rest)
     std::string scheme = (rest && rest->IsHttps()) ? "https" : "http";
     uint16_t    port   = rest ? rest->GetPort() : 39441;
     return scheme + "://" + host + ":" + std::to_string(port);
+}
+
+/// @brief 站点页面基址(分享链接用:页面端口 80/443,标准端口在 URL 中省略)
+///
+/// 分享链接是给人复制粘贴、印二维码的,必须落在**页面端口**上(需求 §3.12.1);
+/// 用 REST 端口(39441)拼出来的链接浏览器直接 404 —— 页面服务只在 80/443 监听。
+/// 页面走标准端口故此处不带端口号,与下载直链的 SiteBase(REST 端口)刻意分开:
+/// 直链要 39441,分享链接要 80/443,两者不是同一个基址。
+std::string SitePageBase(const HttpRequestPtr& req, ZmHttpRestfulServer* rest)
+{
+    std::string host  = req->getHeader("Host");
+    size_t      colon = host.rfind(':');
+    if (colon != std::string::npos && host.find(']') == std::string::npos)
+        host = host.substr(0, colon);
+    std::string scheme = (rest && rest->IsHttps()) ? "https" : "http";
+    return scheme + "://" + host;
 }
 } // namespace
 
@@ -1350,7 +1366,7 @@ drogon::Task<HttpResponsePtr> ZmFileHubModule::HandleShareCreate(HttpRequestPtr 
     ZMJSON  out = co_await m_share->Create(OpOf(gate.ctx, req), space, nodeId, pwdEnabled,
                                            expireDays, expireTime, maxDl, loginOnly);
     if (!ZmFileHasError(out))
-        out["url"] = ZmFileShareModule::BuildShareUrl(SiteBase(req, m_rest),
+        out["url"] = ZmFileShareModule::BuildShareUrl(SitePageBase(req, m_rest),
                                                       zm_file_row_str(out, "token"));
     co_return Respond(out);
 }
@@ -1366,7 +1382,8 @@ drogon::Task<HttpResponsePtr> ZmFileHubModule::HandleShareList(HttpRequestPtr re
     ZMJSON out    = co_await m_share->List(gate.ctx.uid, status, page, size);
     if (!ZmFileHasError(out))
     {
-        std::string base = SiteBase(req, m_rest);
+        // 分享链接用页面基址(80/443),不能用 REST 端口;详见 SitePageBase 注释
+        std::string base = SitePageBase(req, m_rest);
         for (auto& s : out["list"])
             s["url"] = ZmFileShareModule::BuildShareUrl(base, zm_file_row_str(s, "token"));
     }
