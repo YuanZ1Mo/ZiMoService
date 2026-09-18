@@ -68,7 +68,7 @@ const EXPIRES = [{ v: 0, n: '永久' }, { v: 1, n: '1 天' }, { v: 7, n: '7 天'
           <span style="font-size:var(--fs-cap);color:var(--color-text-2)">需要提取码才能访问</span>
           <button type="button" class="switch" :class="{ on: form.pwd_enabled }" aria-label="提取码开关" @click="form.pwd_enabled = !form.pwd_enabled"></button>
         </div>
-        <span class="form-hint">明文仅创建后展示一次,可在「我的分享」中重置</span>
+        <span class="form-hint">提取码仅创建后展示一次,可在「我的分享」中重置</span>
       </div>
       <div class="row" style="gap:12px;flex-wrap:wrap">
         <div class="form-item" style="flex:1;min-width:170px">

@@ -305,11 +305,15 @@ drogon::Task<ZMJSON> ZmFileShareModule::List(int64_t uid, int status, int page, 
 {
     std::string              where = " WHERE uid = ?1";
     std::vector<std::string> p     = {std::to_string(uid)};
+    // 有效状态(status=1)但已过期/达下载上限的行,展示上算"已失效"(见下方 status_name)。
+    // 落库要等每日清理,若筛选直接比 status 会出现"有效筛选里混着已失效、已失效筛选里反而没有"
+    // 的矛盾,故筛选统一按"有效状态"计算
+    int64_t     nowSql = ZmSqliteDb::Now();
+    std::string effStatus =
+        "(CASE WHEN status = 1 AND ((expire_time > 0 AND expire_time < " + std::to_string(nowSql) +
+        ") OR (max_downloads > 0 AND download_count >= max_downloads)) THEN 3 ELSE status END)";
     if (status > 0)
-    {
-        where += " AND status = ?2";
-        p.push_back(std::to_string(status));
-    }
+        where += " AND " + effStatus + " = " + std::to_string(status);
     ZMJSON  totalRow = co_await m_db->QueryRow("SELECT COUNT(*) AS n FROM shares" + where, p);
     int64_t total    = zm_file_row_int(totalRow, "n", 0);
     std::vector<std::string> lp = p;
@@ -410,6 +414,118 @@ drogon::Task<ZMJSON> ZmFileShareModule::Cancel(int64_t uid, int64_t shareId,
     if (!ok)
         co_return ZmFileError(zm_file_err::kInternal, 500, "取消分享失败");
     co_return ZMJSON::object();
+}
+
+drogon::Task<ZMJSON> ZmFileShareModule::Resume(int64_t uid, int64_t shareId, const ZmOpCtx& ctx)
+{
+    ZMJSON row = co_await m_db->QueryRow("SELECT * FROM shares WHERE id = ?1 AND uid = ?2",
+                                         {std::to_string(shareId), std::to_string(uid)});
+    if (row.empty())
+        co_return ZmFileError(zm_file_err::kShareNotFound, 404, "分享不存在");
+    if (zm_file_row_int(row, "status", 0) != zm_file::kShareCanceled)
+        co_return ZmFileError(zm_file_err::kBadRequest, 400, "只有已取消的分享才能恢复");
+
+    // 恢复即重新生效:过期/达下载上限的无法恢复(它已无意义,只能删除)
+    int64_t now  = ZmSqliteDb::Now();
+    int64_t exp  = zm_file_row_int(row, "expire_time", 0);
+    int64_t maxD = zm_file_row_int(row, "max_downloads", 0);
+    int64_t done = zm_file_row_int(row, "download_count", 0);
+    if ((exp > 0 && exp < now) || (maxD > 0 && done >= maxD))
+        co_return ZmFileError(zm_file_err::kShareExpired, 410,
+                              "该分享已过期或达下载上限,无法恢复,可删除");
+
+    // 恢复会重新占用一个有效分享名额,按创建上限校验
+    ZMJSON cnt = co_await m_db->QueryRow(
+        "SELECT COUNT(*) AS n FROM shares WHERE uid = ?1 AND status = 1",
+        {std::to_string(uid)});
+    if (zm_file_row_int(cnt, "n", 0) >= zm_file::kShareMaxPerUser)
+        co_return ZmFileError(zm_file_err::kTooManyShares, 429,
+                              "有效分享数已达上限(200),请先取消或删除部分分享");
+
+    int64_t     space  = zm_file_row_int(row, "space", 0);
+    int64_t     nodeId = zm_file_row_int(row, "node_id", 0);
+    std::string name   = zm_file_row_str(row, "name");
+    bool        ok     = co_await m_db->WithTx(
+        [&](ZmSqliteDb& db) -> bool
+        {
+            if (!db.ExecSync("UPDATE shares SET status = ?1, update_time = ?2 WHERE id = ?3",
+                                        {std::to_string(zm_file::kShareActive), std::to_string(now),
+                            std::to_string(shareId)}))
+                return false;
+            ZMJSON detail   = ZMJSON::object();
+            detail["token"] = zm_file_row_str(row, "token");
+            return m_audit->RecordFileOpSync(db, ctx.uid, ctx.account,
+                                                        zm_file::kActShareResume, space, nodeId, name,
+                                                        detail.dump(), ctx.ip, 1);
+        });
+    if (!ok)
+        co_return ZmFileError(zm_file_err::kInternal, 500, "恢复分享失败");
+    co_return ZMJSON::object();
+}
+
+drogon::Task<ZMJSON> ZmFileShareModule::Purge(int64_t uid, const std::vector<int64_t>& ids,
+                                              bool inactiveOnly, const ZmOpCtx& ctx)
+{
+    // 删除 = 彻底移除记录(任意状态都可删)。inactiveOnly 用于"清空非有效记录",
+    // 只清已取消 + 已失效,避免一次误伤还在用的有效分享
+    if (!inactiveOnly && ids.empty())
+        co_return ZmFileError(zm_file_err::kBadRequest, 400, "未指定要删除的分享");
+
+    std::string              where  = "uid = ?1";
+    std::vector<std::string> params = {std::to_string(uid)};
+    if (inactiveOnly)
+        where += " AND status <> 1";
+    if (!inactiveOnly)
+    {
+        std::string ph;
+        for (size_t i = 0; i < ids.size(); ++i)
+        {
+            if (i)
+                ph += ",";
+            ph += "?" + std::to_string(params.size() + 1);
+            params.push_back(std::to_string(ids[i]));
+        }
+        where += " AND id IN (" + ph + ")";
+    }
+
+    // 先取待删行:审计明细要 token/名称,且删完就查不到了
+    ZMJSON rows = co_await m_db->QueryRows(
+        "SELECT id, token, name, space, node_id FROM shares WHERE " + where, params);
+    if (rows.empty())
+    {
+        ZMJSON out     = ZMJSON::object();
+        out["purged"]  = 0;
+        co_return out;
+    }
+    bool ok = co_await m_db->WithTx(
+        [&](ZmSqliteDb& db) -> bool
+        {
+            for (const auto& r : rows)
+            {
+                int64_t     id     = zm_file_row_int(r, "id", 0);
+                int64_t     space  = zm_file_row_int(r, "space", 0);
+                int64_t     nodeId = zm_file_row_int(r, "node_id", 0);
+                std::string name   = zm_file_row_str(r, "name");
+                if (!db.ExecSync("DELETE FROM shares WHERE id = ?1 AND uid = ?2",
+                                 {std::to_string(id), std::to_string(uid)}))
+                    return false;
+                if (m_audit)
+                {
+                    ZMJSON detail   = ZMJSON::object();
+                    detail["token"] = zm_file_row_str(r, "token");
+                    if (!m_audit->RecordFileOpSync(db, ctx.uid, ctx.account,
+                                                   zm_file::kActSharePurge, space, nodeId, name,
+                                                   detail.dump(), ctx.ip, 1))
+                        return false;
+                }
+            }
+            return true;
+        });
+    if (!ok)
+        co_return ZmFileError(zm_file_err::kInternal, 500, "删除分享记录失败");
+    ZMJSON out    = ZMJSON::object();
+    out["purged"] = static_cast<int64_t>(rows.size());
+    co_return out;
 }
 
 drogon::Task<ZMJSON> ZmFileShareModule::Logs(int64_t uid, int64_t shareId, int page, int size)
@@ -675,6 +791,14 @@ drogon::Task<ZMJSON> ZmFileShareModule::ListDir(const std::string& token, int64_
                 if (zm_file_row_int(r, "id", 0) == rootId)
                     afterRoot = true;
             }
+            // 当前目录本身作为最后一级(path 上 depth>=1 已把它排除,需补上;否则
+            // 进入子目录后面包屑仍只有根,既显示不出当前位置也回不到这一级)
+            ZMJSON curRow  = co_await m_db->QueryRow("SELECT id, name FROM nodes WHERE id = ?1",
+                                                     {std::to_string(baseId)});
+            ZMJSON curItem = ZMJSON::object();
+            curItem["id"]   = zm_file_row_int(curRow, "id", 0);
+            curItem["name"] = zm_file_row_str(curRow, "name");
+            bc.push_back(std::move(curItem));
         }
     }
     if (!list.is_object())

@@ -141,6 +141,11 @@ class ZmFileHubModule
                                                            std::string            idStr);
     drogon::Task<drogon::HttpResponsePtr> HandleShareCancel(drogon::HttpRequestPtr req,
                                                             std::string            idStr);
+    /// 恢复被取消的分享
+    drogon::Task<drogon::HttpResponsePtr> HandleShareResume(drogon::HttpRequestPtr req,
+                                                            std::string            idStr);
+    /// 彻底删除分享记录(任意状态;{ids:[...]} 或 {inactive:true})
+    drogon::Task<drogon::HttpResponsePtr> HandleSharePurge(drogon::HttpRequestPtr req);
     drogon::Task<drogon::HttpResponsePtr> HandleShareLogs(drogon::HttpRequestPtr req,
                                                           std::string            idStr);
     // ── 分享(公开面,免会话) ──

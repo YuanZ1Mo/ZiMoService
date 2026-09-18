@@ -541,11 +541,12 @@ void ZmFileDbModule::CleanupOnce()
          "((expire_time > 0 AND expire_time < ?1) OR (max_downloads > 0 AND "
          "download_count >= max_downloads));",
          now},
-        // 分享:失效超过 30 天的行删除(其访问日志一并删除)
-        {"DELETE FROM share_logs WHERE share_id IN (SELECT id FROM shares WHERE status = 3 "
+        // 分享:已取消(status=2)与已失效(status=3)超过 30 天的行删除(其访问日志一并删除)。
+        // 已取消的行过去不会被清理,取消多了会一直堆在"我的分享"里
+        {"DELETE FROM share_logs WHERE share_id IN (SELECT id FROM shares WHERE status IN (2,3) "
          "AND update_time < ?1);",
          days30},
-        {"DELETE FROM shares WHERE status = 3 AND update_time < ?1;", days30},
+        {"DELETE FROM shares WHERE status IN (2,3) AND update_time < ?1;", days30},
         // 分享访问日志保留 90 天
         {"DELETE FROM share_logs WHERE create_time < ?1;", days90},
         // 业务审计日志保留 90 天

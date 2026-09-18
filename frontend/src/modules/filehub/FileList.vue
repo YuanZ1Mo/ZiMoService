@@ -154,7 +154,8 @@ async function onDropFiles(e) {
               @dragover="onDragOverRow($event, n)"
               @dragleave="onDragLeaveRow(n)"
               @drop.prevent="onDropRow($event, n)">
-            <td class="col-cb" @click.stop>
+            <!-- dblclick.stop:复选框双击不能冒泡到行,否则会被当成双击"打开"(点复选框进目录) -->
+            <td class="col-cb" @click.stop @dblclick.stop>
               <!-- 复选框是"纯开关":点它就增删自己,不清空别的(Tab 键切换不受影响) -->
               <input type="checkbox" class="fcheck" :checked="selected.has(n.id)"
                      @click.stop="emit('toggle', n, $event, true)" :aria-label="`选择 ${n.name}`" />

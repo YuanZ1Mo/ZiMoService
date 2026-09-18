@@ -116,7 +116,9 @@ bool AddPathToZip(PackCtx& c, const std::string& physPath, const std::string& en
         info.flag               = MZ_ZIP_FLAG_UTF8;
         info.filename           = dirName.c_str();
         info.external_fa        = 0x41FF0010; // 目录属性(与 Windows 资源管理器一致)
-        if (mz_zip_writer_add_buffer(c.zip, nullptr, 0, &info) != MZ_OK)
+        // 目录条目无数据体:必须走 add_info(stream=nullptr);add_buffer 在
+        // minizip-ng 4.x 里对 nullptr buf 直接返回 MZ_PARAM_ERROR,会让整个打包失败
+        if (mz_zip_writer_add_info(c.zip, nullptr, nullptr, &info) != MZ_OK)
         {
             c.error = "写入空目录失败: " + dirName;
             return false;

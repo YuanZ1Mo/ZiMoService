@@ -66,8 +66,25 @@ class ZmFileShareModule
     /// @return {pwd?}(重置时一次性返回新明文)
     drogon::Task<ZMJSON> Patch(int64_t uid, int64_t shareId, const ZMJSON& body);
 
-    /// @brief 取消分享(置已取消,立即不可访问)
+    /// @brief 取消分享(置已取消,立即不可访问;记录保留,可恢复)
     drogon::Task<ZMJSON> Cancel(int64_t uid, int64_t shareId, const ZmOpCtx& ctx);
+
+    /// @brief 恢复被取消的分享(仅已取消状态;过期/达下载上限的不可恢复)
+    drogon::Task<ZMJSON> Resume(int64_t uid, int64_t shareId, const ZmOpCtx& ctx);
+
+    /**
+     * @brief 彻底删除分享记录(任意状态均可删;记录从列表移除,链接立即失效)
+     *
+     * 与 Cancel 的区别:Cancel 只改状态、记录留在列表里且可恢复;本接口把行从库里删掉、
+     * 不可恢复。访问日志(share_logs)保留,由 90 天保留期统一清理(§5.8)。
+     *
+     * @param uid          调用者(只能删自己的分享)
+     * @param ids          指定要删的记录 id(空 = 配合 inactiveOnly 清空)
+     * @param inactiveOnly true = 只清空该用户全部非有效记录(已取消 + 已失效)
+     * @return {purged: 实际删除条数}
+     */
+    drogon::Task<ZMJSON> Purge(int64_t uid, const std::vector<int64_t>& ids, bool inactiveOnly,
+                               const ZmOpCtx& ctx);
 
     /// @brief 分享访问日志(创建者视角;IP/UA 脱敏由审计模块完成)
     drogon::Task<ZMJSON> Logs(int64_t uid, int64_t shareId, int page, int size);

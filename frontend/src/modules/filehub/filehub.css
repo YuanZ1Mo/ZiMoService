@@ -32,7 +32,10 @@
 .side-entry.active .cnt{background:var(--color-primary);color:#fff}
 
 /* ---------- 工具条 ---------- */
-.fh-toolbar{display:flex;align-items:center;gap:8px;padding:8px;flex-wrap:wrap}
+/* 工具条 / 批量条 / 搜索提示条三者互斥渲染(v-if/v-else),高度必须对齐:
+   实测工具条(内含 38px 搜索框)为 60px,而批量条只有 54px —— 不锁最小高度时,
+   选中或取消选中会让下方列表上下跳动 6px。窄屏换行时高度自然增长,不受此限 */
+.fh-toolbar{display:flex;align-items:center;gap:8px;padding:8px;flex-wrap:wrap;min-height:60px}
 .fh-toolbar .grow{flex:1;min-width:0}
 .fh-search{width:250px}
 @media (max-width:768px){.fh-search{width:150px}}
@@ -43,6 +46,9 @@
 .vseg button.on{background:var(--color-card);color:var(--color-primary);box-shadow:var(--shadow-sm)}
 
 /* ---------- 批量选中条 ---------- */
+/* 注意:文件中心的批量条是"替换"工具条的,故它额外带 .fh-toolbar 类以继承同一
+   最小高度(见上方注释);本类自身供回收站使用 —— 那里的批量条追加在列表下方,
+   不参与替换,故不锁高度 */
 .batch-bar{display:flex;align-items:center;gap:8px;padding:8px;flex-wrap:wrap}
 .sel-num{font-weight:800;color:var(--color-primary);white-space:nowrap;padding:0 4px}
 

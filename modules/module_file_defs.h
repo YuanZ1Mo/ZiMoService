@@ -90,6 +90,8 @@ inline constexpr const char* kActPurge       = "purge";
 inline constexpr const char* kActTrashClear  = "trash_clear";
 inline constexpr const char* kActShareCreate = "share_create";
 inline constexpr const char* kActShareCancel = "share_cancel";
+inline constexpr const char* kActShareResume = "share_resume";
+inline constexpr const char* kActSharePurge  = "share_purge";
 inline constexpr const char* kActAdminSync   = "admin_sync";
 inline constexpr const char* kActAdminCache  = "admin_cache_clean";
 

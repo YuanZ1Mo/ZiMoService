@@ -173,6 +173,9 @@ export const filehubApi = {
   shareList: (p) => api.get('/filehub/shares' + qs(p)),
   sharePatch: (id, body) => api.patch(`/filehub/shares/${id}`, body),
   shareCancel: (id) => api.del(`/filehub/shares/${id}`),
+  shareResume: (id) => api.post(`/filehub/shares/${id}/resume`),
+  // 彻底删除分享记录:{ids:[id]} 删指定(任意状态);{inactive:true} 清空全部非有效
+  sharePurge: (body) => api.post('/filehub/shares/purge', body),
   shareLogs: (id, p) => api.get(`/filehub/shares/${id}/logs` + qs(p)),
   // 分享(公开面,免会话;提取码通过后由服务端下发 zm_share 凭证 Cookie)
   shareInfo: (token) => api.get(`/filehub/share/${token}`),

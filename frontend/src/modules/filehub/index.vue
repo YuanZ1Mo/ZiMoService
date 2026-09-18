@@ -443,12 +443,60 @@ const shares = ref([])
 const sharesLoading = ref(false)
 const qr = reactive({ show: false, url: '', name: '' })
 const qrCanvas = ref(null)   // 二维码画布(模板引用,替代按 id 取 DOM)
+// 重置提取码结果弹窗:明文仅此一次,展示 + 一键复制(并自动写入剪贴板)
+const pwdBox = reactive({ show: false, name: '', pwd: '' })
+// 状态筛选:0=全部 1=有效 2=已取消 3=已失效(服务端按 status 过滤,≤0 不过滤)
+// 默认只看"有效":取消/失效的记录会离开列表,避免历史记录把列表撑满
+const shareFilter = ref(1)
+const SHARE_FILTERS = [[1, '有效'], [2, '已取消'], [3, '已失效'], [0, '全部']]
 async function loadShares() {
   sharesLoading.value = true
   try {
-    const d = await filehubApi.shareList({ page: 1, size: 200 })
+    const d = await filehubApi.shareList({ status: shareFilter.value || undefined, page: 1, size: 200 })
     shares.value = d.list || []
   } catch (e) { toast(e.message || '加载分享失败', 'err') } finally { sharesLoading.value = false }
+}
+function setShareFilter(v) {
+  if (shareFilter.value === v) return
+  shareFilter.value = v
+  loadShares()
+}
+// 恢复被取消的分享:重新生效,原链接与提取码继续可用
+function resumeShare(s) {
+  askConfirm('恢复这条分享?',
+    `「${s.name}」将重新变为有效,原链接与提取码继续可用。若它已过期或达下载上限,则无法恢复。`,
+    async () => {
+      try {
+        await filehubApi.shareResume(s.id)
+        toast('已恢复分享', 'ok'); loadShares()
+      } catch (e) { toast(e.message || '恢复失败', 'err') }
+    })
+}
+// 彻底删除记录(任意状态均可;有效分享删除即链接失效)
+function purgeShare(s) {
+  const live = Number(s.status) === 1
+  askConfirm('删除这条分享记录?',
+    live
+      ? `「${s.name}」当前<b>仍是有效分享</b>,删除后链接会<b>立即失效</b>,且记录不可恢复(访问日志仍保留)。只想临时停用请改用「取消」。`
+      : `「${s.name}」的记录将从「我的分享」中移除,不可恢复(访问日志仍保留)。`,
+    async () => {
+      try {
+        const r = await filehubApi.sharePurge({ ids: [s.id] })
+        toast(`已删除 ${(r && r.purged) || 0} 条记录`, 'ok'); loadShares()
+      } catch (e) { toast(e.message || '删除失败', 'err') }
+    })
+}
+function purgeInactive() {
+  askConfirm('清空非有效分享记录?',
+    '将删除全部「已取消」「已失效」的分享记录,不可恢复(访问日志仍保留)。',
+    async () => {
+      try {
+        const r = await filehubApi.sharePurge({ inactive: true })
+        const n = (r && r.purged) || 0
+        toast(n ? `已清空 ${n} 条记录` : '没有可清理的记录', n ? 'ok' : 'warn')
+        loadShares()
+      } catch (e) { toast(e.message || '清空失败', 'err') }
+    })
 }
 // 视图切换:进入"我的分享"拉列表;回到"文件浏览"时重取当前目录与空间计数
 // (回收站里的恢复/彻底删除会改变可见列表与配额,不重取会看到过期列表)
@@ -464,11 +512,16 @@ async function copyText(t, msg) {
 async function resetPwd(s) {
   try {
     const r = await filehubApi.sharePatch(s.id, { reset_pwd: true })
-    if (r && r.pwd) { toast(`新提取码:${r.pwd}(仅本次展示)`, 'ok', 6000); loadShares() }
+    if (!r || !r.pwd) { toast('重置失败:服务端未返回新提取码', 'err'); return }
+    pwdBox.name = s.name
+    pwdBox.pwd = r.pwd
+    pwdBox.show = true
+    copyText(r.pwd, '新提取码已复制到剪贴板')   // 顺手复制,省一次手动操作
+    loadShares()
   } catch (e) { toast(e.message || '重置失败', 'err') }
 }
 function cancelShare(s) {
-  askConfirm('取消分享?', `取消后「${s.name}」的分享链接立即失效,且不可恢复。`, async () => {
+  askConfirm('取消分享?', `取消后「${s.name}」的分享链接立即失效。记录会保留,之后可以随时恢复。`, async () => {
     try { await filehubApi.shareCancel(s.id); toast('已取消分享', 'ok'); loadShares() } catch (e) { toast(e.message || '操作失败', 'err') }
   })
 }
@@ -606,7 +659,8 @@ onMounted(() => {
                 <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.6-6.3M21 3v6h-6"/></svg>
               </button>
             </div>
-            <div v-else class="card batch-bar">
+            <!-- 批量条:复用 .fh-toolbar 的最小高度,避免替换工具条时下方列表跳动 -->
+            <div v-else class="card fh-toolbar batch-bar">
               <button class="icon-btn" type="button" aria-label="取消选择" @click="clearSel">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
               </button>
@@ -656,6 +710,15 @@ onMounted(() => {
 
           <!-- 我的分享 -->
           <template v-else-if="view === 'shares'">
+            <!-- 筛选条:默认只看有效,取消/失效的记录不再挤占列表 -->
+            <div class="card fh-toolbar" style="padding:10px 16px">
+              <div class="seg" style="width:300px">
+                <button v-for="[v, n] in SHARE_FILTERS" :key="v" type="button" class="seg-item"
+                        :class="{ active: shareFilter === v }" @click="setShareFilter(v)">{{ n }}</button>
+              </div>
+              <span style="flex:1"></span>
+              <button class="btn btn-secondary btn-sm" type="button" @click="purgeInactive">清空非有效记录</button>
+            </div>
             <div class="card" style="padding:0;overflow:hidden">
               <div style="overflow-x:auto">
                 <table class="ftbl">
@@ -669,7 +732,7 @@ onMounted(() => {
                       <th style="width:66px">浏览</th>
                       <th style="width:80px">下载</th>
                       <th style="width:80px">状态</th>
-                      <th style="width:190px">操作</th>
+                      <th style="width:280px">操作</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -683,7 +746,12 @@ onMounted(() => {
                         <td><span class="fname" style="font-weight:600">{{ s.name }}</span></td>
                         <td><span class="ftype">{{ Number(s.node_type) === 1 ? '文件夹' : '文件' }}</span></td>
                         <td><span class="share-url-cell">{{ s.url.replace(/^https?:\/\//, '') }}</span></td>
-                        <td><span class="badge badge-dim">{{ s.has_pwd ? '已设置' : '未设置' }}</span></td>
+                        <td>
+                          <span class="badge badge-dim"
+                                :title="s.has_pwd ? '出于安全考虑,原提取码无法查看;可点「重置并复制」生成新的提取码' : '该分享无需提取码'">
+                            {{ s.has_pwd ? '已设置' : '未设置' }}
+                          </span>
+                        </td>
                         <td><span class="num">{{ s.expire_time ? fmtTime(s.expire_time) : '永久' }}</span></td>
                         <td><span class="num">{{ s.view_count }}</span></td>
                         <td><span class="num">{{ s.download_count }}{{ s.max_downloads ? '/' + s.max_downloads : '' }}</span></td>
@@ -693,11 +761,19 @@ onMounted(() => {
                           </span>
                         </td>
                         <td>
+                          <!-- 动作按状态区分:
+                               有效   → 复制/二维码/重置 + 取消(临时停用,可恢复) + 删除
+                               已取消 → 恢复 + 删除
+                               已失效 → 只能删除 -->
                           <span class="row-ops">
-                            <button class="btn btn-ghost btn-sm" type="button" @click="copyText(s.url, '链接已复制')">复制</button>
-                            <button class="btn btn-ghost btn-sm" type="button" @click="showQr(s)">二维码</button>
-                            <button v-if="s.has_pwd && Number(s.status) === 1" class="btn btn-ghost btn-sm" type="button" @click="resetPwd(s)">重置提取码</button>
-                            <button v-if="Number(s.status) === 1" class="btn btn-danger-soft btn-sm" type="button" @click="cancelShare(s)">取消</button>
+                            <template v-if="Number(s.status) === 1">
+                              <button class="btn btn-ghost btn-sm" type="button" @click="copyText(s.url, '链接已复制')">复制</button>
+                              <button class="btn btn-ghost btn-sm" type="button" @click="showQr(s)">二维码</button>
+                              <button v-if="s.has_pwd" class="btn btn-ghost btn-sm" type="button" @click="resetPwd(s)">重置并复制</button>
+                              <button class="btn btn-secondary btn-sm" type="button" @click="cancelShare(s)">取消</button>
+                            </template>
+                            <button v-else-if="Number(s.status) === 2" class="btn btn-secondary btn-sm" type="button" @click="resumeShare(s)">恢复</button>
+                            <button class="btn btn-danger-soft btn-sm" type="button" @click="purgeShare(s)">删除</button>
                           </span>
                         </td>
                       </tr>
@@ -705,8 +781,8 @@ onMounted(() => {
                         <td :colspan="9">
                           <div class="empty">
                             <div class="empty-icon">🔗</div>
-                            <div class="empty-title">暂无分享</div>
-                            <div class="empty-sub">在文件上右键选择"分享"即可创建</div>
+                            <div class="empty-title">{{ shareFilter === 1 ? '暂无有效分享' : '没有符合条件的记录' }}</div>
+                            <div class="empty-sub">{{ shareFilter === 1 ? '在文件上右键选择"分享"即可创建' : '切换上方筛选查看其它状态的分享' }}</div>
                           </div>
                         </td>
                       </tr>
@@ -825,6 +901,21 @@ onMounted(() => {
         <span class="share-url" style="max-width:280px">{{ qr.url }}</span>
         <button class="btn btn-secondary btn-sm" type="button" @click="copyText(qr.url, '链接已复制')">复制链接</button>
       </div>
+    </Modal>
+
+    <!-- 重置提取码结果(明文只此一次):展示 + 复制 -->
+    <Modal :show="pwdBox.show" title="提取码已重置" @close="pwdBox.show = false">
+      <p style="margin:0 0 12px;line-height:22px;color:var(--color-text-2)">
+        「{{ pwdBox.name }}」的新提取码如下,<b>旧提取码已立即失效</b>:
+      </p>
+      <div class="row" style="gap:10px;align-items:center">
+        <span class="share-url num" style="flex:1;text-align:center;font-size:22px;letter-spacing:6px;font-weight:700;padding:12px">{{ pwdBox.pwd }}</span>
+        <button class="btn btn-primary" type="button" @click="copyText(pwdBox.pwd, '提取码已复制')">复制</button>
+      </div>
+      <p class="form-hint" style="margin-top:10px">已自动复制到剪贴板。提取码仅本次展示,请及时保存,关闭后无法再次查看。</p>
+      <template #foot>
+        <button class="btn btn-grad" type="button" @click="pwdBox.show = false">完成</button>
+      </template>
     </Modal>
 
     <!-- 任务面板(右下角) -->

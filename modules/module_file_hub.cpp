@@ -461,6 +461,10 @@ void ZmFileHubModule::RegisterRoutes()
     m_rest->RegisterCoro(std::string(k) + "/shares", HttpMethod::Get,
                          [this](HttpRequestPtr req) -> Task<HttpResponsePtr>
                          { return HandleShareList(std::move(req)); });
+    // 字面量路由先注册,避免被 /shares/{1} 形态抢匹配
+    m_rest->RegisterCoro(std::string(k) + "/shares/purge", HttpMethod::Post,
+                         [this](HttpRequestPtr req) -> Task<HttpResponsePtr>
+                         { return HandleSharePurge(std::move(req)); });
     m_rest->RegisterCoroWithPathParams(
         std::string(k) + "/shares/{1}", HttpMethod::Patch,
         [this](HttpRequestPtr req, std::string idStr) -> Task<HttpResponsePtr>
@@ -469,6 +473,10 @@ void ZmFileHubModule::RegisterRoutes()
         std::string(k) + "/shares/{1}", HttpMethod::Delete,
         [this](HttpRequestPtr req, std::string idStr) -> Task<HttpResponsePtr>
         { return HandleShareCancel(std::move(req), std::move(idStr)); });
+    m_rest->RegisterCoroWithPathParams(
+        std::string(k) + "/shares/{1}/resume", HttpMethod::Post,
+        [this](HttpRequestPtr req, std::string idStr) -> Task<HttpResponsePtr>
+        { return HandleShareResume(std::move(req), std::move(idStr)); });
     m_rest->RegisterCoroWithPathParams(
         std::string(k) + "/shares/{1}/logs", HttpMethod::Get,
         [this](HttpRequestPtr req, std::string idStr) -> Task<HttpResponsePtr>
@@ -1425,6 +1433,38 @@ drogon::Task<HttpResponsePtr> ZmFileHubModule::HandleShareCancel(HttpRequestPtr 
         co_return ZmAuthGateModule::ApiError(400, zm_file_err::kBadRequest, "分享 id 非法");
     }
     ZMJSON out = co_await m_share->Cancel(gate.ctx.uid, id, OpOf(gate.ctx, req));
+    co_return Respond(out);
+}
+
+drogon::Task<HttpResponsePtr> ZmFileHubModule::HandleShareResume(HttpRequestPtr req,
+                                                                std::string    idStr)
+{
+    auto gate = co_await Authorize(req);
+    if (!gate.ok)
+        co_return ZmAuthGateModule::ApiError(gate.status, gate.code, gate.message);
+    int64_t id = 0;
+    try
+    {
+        id = std::stoll(idStr);
+    }
+    catch (...)
+    {
+        co_return ZmAuthGateModule::ApiError(400, zm_file_err::kBadRequest, "分享 id 非法");
+    }
+    ZMJSON out = co_await m_share->Resume(gate.ctx.uid, id, OpOf(gate.ctx, req));
+    co_return Respond(out);
+}
+
+drogon::Task<HttpResponsePtr> ZmFileHubModule::HandleSharePurge(HttpRequestPtr req)
+{
+    auto gate = co_await Authorize(req);
+    if (!gate.ok)
+        co_return ZmAuthGateModule::ApiError(gate.status, gate.code, gate.message);
+    ZMJSON body = ParseBody(req);
+    // 两种用法:{ids:[...]} 删指定记录;{inactive:true} 清空全部非有效记录
+    bool                 inactiveOnly = zm_json_get_bool(body, "inactive", false);
+    std::vector<int64_t> ids          = BodyIds(body);
+    ZMJSON out = co_await m_share->Purge(gate.ctx.uid, ids, inactiveOnly, OpOf(gate.ctx, req));
     co_return Respond(out);
 }
 

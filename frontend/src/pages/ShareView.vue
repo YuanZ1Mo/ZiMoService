@@ -34,7 +34,8 @@ async function loadInfo() {
     Object.assign(info, d)
     if (d.need_pwd) { state.value = 'pwd'; return }
     state.value = 'browse'
-    loadList()
+    // 目录分享才需要列列表;单文件分享没有子条目,直接按分享目标本身下载(§3.12.3)
+    if (Number(info.node_type) === 1) loadList()
   } catch (e) {
     if (e.status === 401 || e.code === 'NEED_LOGIN') { state.value = 'need_login'; return }
     if (e.code === 'SHARE_EXPIRED') { state.value = 'expired'; return }
@@ -50,7 +51,7 @@ async function verify() {
   pwdBusy.value = true; pwdErr.value = ''
   try {
     const r = await filehubApi.shareVerify(token.value, { pwd: pwd.value })
-    if (r.pass) { state.value = 'browse'; loadList() }
+    if (r.pass) { state.value = 'browse'; if (Number(info.node_type) === 1) loadList() }
     else pwdErr.value = '提取码不正确,请重试'
   } catch (e) {
     if (e.code === 'SHARE_LOCKED') pwdErr.value = '错误次数过多,请 10 分钟后再试'
@@ -79,10 +80,17 @@ function toggleSel(n) {
   s.has(n.id) ? s.delete(n.id) : s.add(n.id)
   selected.value = s
 }
+// 表头全选态:当前目录条目全在选中集=全选,部分选中=半选(indeterminate)
+const allChecked = computed(() => items.value.length > 0 && items.value.every(n => selected.value.has(n.id)))
+const someChecked = computed(() => !allChecked.value && items.value.some(n => selected.value.has(n.id)))
+function toggleAll(checked) { selected.value = checked ? new Set(items.value.map(n => n.id)) : new Set() }
 function downloadOne(n) {
   if (Number(n.type) === 1) { dirId.value = n.id; loadList(); return }
-  filehubApi.shareDownload(token.value, { ids: [n.id] })
-    .then(r => { if (r && r.url) downloadByUrl(r.url) })
+  // 单文件分享的条目不在列表里,下载目标就是分享绑定的条目本身(info.node_id)
+  const id = Number(n.id) || Number(info.node_id) || 0
+  if (!id) { toastErr('分享目标无效,无法下载'); return }
+  filehubApi.shareDownload(token.value, { ids: [id] })
+    .then(r => { if (r && r.url) downloadByUrl(r.url); else toastErr('下载地址获取失败,请重试') })
     .catch(e => toastErr(e.message || '下载失败'))
 }
 /** 停掉打包轮询定时器(就绪、失败、超时、离开页面都要停,否则离开后仍在后台反复请求) */
@@ -91,7 +99,7 @@ function stopPackRetry() {
 }
 function downloadAll() {
   const ids = selected.value.size ? [...selected.value] : items.value.map(x => x.id)
-  if (!ids.length) return
+  if (!ids.length) { toastErr('当前目录没有可下载的内容'); return }
   packing.value = true
   packTries = 0
   const attempt = async () => {
@@ -182,11 +190,21 @@ watch(token, loadInfo)
             <button v-if="Number(info.node_type) === 1" class="btn btn-grad" type="button" :disabled="packing" @click="downloadAll">
               {{ packing ? '打包中…' : (selected.size ? `下载所选(${selected.size})` : '下载全部(zip)') }}
             </button>
-            <button v-else class="btn btn-grad" type="button" @click="downloadOne(items[0] || { id: 0, type: 2, name: info.name })">下载</button>
+            <button v-else class="btn btn-grad" type="button" @click="downloadOne({ id: info.node_id, type: 2, name: info.name })">下载</button>
           </div>
         </div>
-        <div class="card" style="width:760px;max-width:100%;margin-top:16px;overflow:hidden">
-          <div v-if="Number(info.node_type) === 1" class="crumbs">
+        <!-- 单文件分享:没有子条目,直接给一个文件条目(不渲染空列表) -->
+        <div v-if="Number(info.node_type) !== 1" class="card"
+             style="width:760px;max-width:100%;margin-top:16px;padding:20px">
+          <div class="fcell">
+            <FileIcon :node="{ type: 2, name: info.name }" />
+            <span class="fname">{{ info.name }}</span>
+            <span style="flex:1"></span>
+            <button class="btn btn-secondary btn-sm" type="button" @click="downloadOne({ id: info.node_id, type: 2, name: info.name })">下载</button>
+          </div>
+        </div>
+        <div v-if="Number(info.node_type) === 1" class="card" style="width:760px;max-width:100%;margin-top:16px;overflow:hidden">
+          <div class="crumbs">
             <template v-for="(bc, i) in breadcrumb" :key="bc.id">
               <button type="button" :class="{ here: i === breadcrumb.length - 1 }" @click="gotoCrumb(i === 0 ? null : bc)">{{ bc.name }}</button>
               <svg v-if="i < breadcrumb.length - 1" class="sep" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg>
@@ -196,7 +214,11 @@ watch(token, loadInfo)
             <table class="ftbl">
               <thead>
                 <tr>
-                  <th v-if="Number(info.node_type) === 1" class="col-cb"></th>
+                  <th class="col-cb">
+                    <!-- 全选:勾选=选中当前目录全部条目;部分选中显示半选态 -->
+                    <input type="checkbox" class="fcheck" :checked="allChecked" :indeterminate="someChecked"
+                           :aria-label="allChecked ? '取消全选' : '全选'" @change="toggleAll($event.target.checked)" />
+                  </th>
                   <th style="min-width:200px">名称</th>
                   <th style="width:84px">类型</th>
                   <th style="width:96px">大小</th>
@@ -212,8 +234,9 @@ watch(token, loadInfo)
                 </tr>
                 <template v-else>
                   <tr v-for="n in items" :key="n.id" :class="{ sel: selected.has(n.id) }"
-                      @click="Number(info.node_type) === 1 && toggleSel(n)" @dblclick="downloadOne(n)">
-                    <td v-if="Number(info.node_type) === 1" class="col-cb" @click.stop>
+                      @click="toggleSel(n)" @dblclick="downloadOne(n)">
+                    <!-- dblclick.stop:复选框双击不能冒泡到行,否则会被当成"打开/下载" -->
+                    <td class="col-cb" @click.stop @dblclick.stop>
                       <input type="checkbox" class="fcheck" :checked="selected.has(n.id)" @change="toggleSel(n)" :aria-label="`选择 ${n.name}`" />
                     </td>
                     <td>
@@ -233,7 +256,7 @@ watch(token, loadInfo)
                       </span>
                     </td>
                   </tr>
-                  <tr v-if="!items.length && Number(info.node_type) === 1">
+                  <tr v-if="!items.length">
                     <td :colspan="6"><div class="empty"><div class="empty-icon">📁</div><div class="empty-title">此目录为空</div></div></td>
                   </tr>
                 </template>
