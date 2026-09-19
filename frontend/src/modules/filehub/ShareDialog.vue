@@ -1,14 +1,15 @@
 <script setup>
 // 分享设置弹窗(§3.12):提取码/有效期/次数上限/仅登录可见 → 创建成功态(链接+二维码)
+// 单选传 1 个目标、多选传选中集(一条分享绑定多个条目,分享页顶层平铺 N 项)
 // 二维码前端本地生成(qrcode 库),不上传链接到第三方服务
-import { ref, reactive, watch, nextTick, inject } from 'vue'
+import { computed, ref, reactive, watch, nextTick, inject } from 'vue'
 import Modal from '../../components/Modal.vue'
 import QRCode from 'qrcode'
 import { filehubApi, fmtSize } from '../../api/filehub'
 
 const props = defineProps({
   show: { type: Boolean, default: false },
-  node: { type: Object, default: null },      // 分享目标
+  nodes: { type: Array, default: () => [] },  // 分享目标(1~N 条)
   isPublic: { type: Boolean, default: true }  // 公共空间分享不提供"仅登录可见"开关(§3.12.2)
 })
 const emit = defineEmits(['close', 'created'])
@@ -17,6 +18,14 @@ const toast = inject('toast')
 const form = reactive({ pwd_enabled: false, expire_days: 7, max_downloads: 0, login_only: false })
 const busy = ref(false)
 const done = ref(null)   // 创建成功结果 {url, pwd, expire_time}
+
+const multi = computed(() => props.nodes.length > 1)
+const dirCount = computed(() => props.nodes.filter(n => Number(n.type) === 1).length)
+/// 多选时的条目摘要:显示前 3 个名称,其余折叠计数
+const names = computed(() => {
+  const shown = props.nodes.slice(0, 3).map(n => n.name).join('、')
+  return props.nodes.length > 3 ? `${shown} 等 ${props.nodes.length} 项` : shown
+})
 
 watch(() => props.show, (v) => {
   if (v) {
@@ -28,11 +37,11 @@ watch(() => props.show, (v) => {
 })
 
 async function create() {
-  if (!props.node) return
+  if (!props.nodes.length) return
   busy.value = true
   try {
     const r = await filehubApi.shareCreate({
-      space: props.node.space, node_id: props.node.id,
+      space: props.nodes[0].space, node_ids: props.nodes.map(n => n.id),
       pwd_enabled: form.pwd_enabled, expire_days: Number(form.expire_days),
       max_downloads: Number(form.max_downloads), login_only: form.login_only
     })
@@ -40,7 +49,7 @@ async function create() {
     emit('created', r)
     nextTick(drawQr)
   } catch (e) {
-    // 达到分享数上限 / 无权限 / 条目已被删除等:此前只有 finally,失败时弹窗毫无反应
+    // 达到分享数上限 / 超出条目上限 / 无权限 / 条目已被删除等:此前只有 finally,失败时弹窗毫无反应
     toast(e.message || '创建分享失败', 'err')
   } finally { busy.value = false }
 }
@@ -59,9 +68,17 @@ const EXPIRES = [{ v: 0, n: '永久' }, { v: 1, n: '1 天' }, { v: 7, n: '7 天'
 </script>
 
 <template>
-  <Modal :show="show" :title="done ? '分享已创建' : `分享「${node ? node.name : ''}」`" @close="emit('close')">
+  <Modal :show="show" :title="done ? '分享已创建' : (multi ? `分享 ${nodes.length} 项` : `分享「${nodes.length ? nodes[0].name : ''}」`)" @close="emit('close')">
     <!-- 设置态 -->
     <template v-if="!done">
+      <!-- 多选:列出一条分享实际绑定的条目(避免"分享了什么"不清楚) -->
+      <div v-if="multi" class="form-item" style="margin-bottom:12px">
+        <label class="form-label">分享内容 <span class="opt">共 {{ nodes.length }} 项{{ dirCount ? `,含 ${dirCount} 个文件夹` : '' }}</span></label>
+        <div style="background:var(--color-bg);border:1px solid var(--color-border-soft);border-radius:var(--r-md);padding:10px 14px;font-size:var(--fs-cap);color:var(--color-text-2)">
+          {{ names }}
+        </div>
+        <span class="form-hint">文件夹会一并分享其中的内容,访问者可进入文件夹继续浏览</span>
+      </div>
       <div class="form-item">
         <label class="form-label">提取码 <span class="opt">开启后访问需输入 4 位码</span></label>
         <div class="row between" style="background:var(--color-bg);border:1px solid var(--color-border-soft);border-radius:var(--r-md);padding:10px 14px">
@@ -101,7 +118,7 @@ const EXPIRES = [{ v: 0, n: '永久' }, { v: 1, n: '1 天' }, { v: 7, n: '7 天'
             <button class="btn btn-primary btn-sm" type="button" @click="copy(done.url, $event)">复制链接</button>
             <button v-if="done.pwd" class="btn btn-secondary btn-sm" type="button" @click="copy(done.pwd, $event)">复制提取码 {{ done.pwd }}</button>
           </div>
-          <span class="form-hint">有效期 {{ form.expire_days > 0 ? form.expire_days + ' 天' : '永久' }} · {{ form.max_downloads ? `限 ${form.max_downloads} 次下载` : '下载不限次' }}{{ form.pwd_enabled ? ' · 需提取码' : '' }}</span>
+          <span class="form-hint">{{ multi ? `共 ${nodes.length} 项 · ` : '' }}有效期 {{ form.expire_days > 0 ? form.expire_days + ' 天' : '永久' }} · {{ form.max_downloads ? `限 ${form.max_downloads} 次下载` : '下载不限次' }}{{ form.pwd_enabled ? ' · 需提取码' : '' }}</span>
         </div>
         <div class="qr-box"><canvas id="fh-qr" width="104" height="104"></canvas></div>
       </div>

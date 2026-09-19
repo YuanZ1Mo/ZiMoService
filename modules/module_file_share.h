@@ -6,7 +6,10 @@
 // 职责:分享创建/修改/取消、提取码哈希与失败冷却、公开面访问(信息/提取码校验/
 // 列目录/下载)、分享访问日志写入。
 // token 为 32 字符高熵随机串:不承载任何 id、不参与可逆变换、校验时精确查库。
-// 子树校验用递归 CTE(dir_id 必须能沿 parent_id 上溯到分享目标),不做路径前缀比较。
+// 一条分享可绑定多个条目(share_nodes;单条分享也写一行,读路径统一):列表里
+// 多根时按"任一根命中"校验子树,公开面顶层以虚拟根平铺各条目(见 ListDir)。
+// 子树校验用递归 CTE(dir_id 必须能沿 parent_id 上溯到某个分享根),不做路径前缀比较。
+// 部分条目被删除/进回收站时跳过该条,其余照常可用;全部不可用才判分享不可用。
 // 提取码只存 HMAC-SHA256 哈希(ZM_FILE_HUB_HMAC_KEY),明文仅创建时下发一次。
 // 失败冷却按 (IP, token) 二维计数,落在 write_limits 表 —— 只按 token 计会被人
 // 连打 5 次错码锁死分享,构成拒绝服务。
@@ -42,11 +45,11 @@ class ZmFileShareModule
 
     // ── 登录侧 ──
     /**
- * @brief 创建分享
+ * @brief 创建分享(单条或多选)
  *
  * @param ctx 操作者
- * @param space 目标条目所在空间(服务端按 node_id 实际空间覆盖)
- * @param nodeId 分享目标(文件或目录)
+ * @param space 目标条目所在空间(服务端按 node_ids 实际空间覆盖)
+ * @param nodeIds 分享目标(文件/目录;去重后须同一空间;无分享专属条数上限,仅受批量操作安全阈值约束)
  * @param pwdEnabled 是否设置提取码(服务端生成 4 位随机码)
  * @param expireDays 有效期天数(0 = 永久)
  * @param expireTime 自定义到期时刻(优先于 expireDays;0 = 不指定)
@@ -54,9 +57,10 @@ class ZmFileShareModule
  * @param loginOnly 是否仅登录可见
  * @return {share_id, token, pwd?, expire_time};失败 → {"error":{...}}
  */
-    drogon::Task<ZMJSON> Create(const ZmOpCtx& ctx, int64_t space, int64_t nodeId,
-                                bool pwdEnabled, int64_t expireDays, int64_t expireTime,
-                                int64_t maxDownloads, bool loginOnly);
+    drogon::Task<ZMJSON> Create(const ZmOpCtx& ctx, int64_t space,
+                                const std::vector<int64_t>& nodeIds, bool pwdEnabled,
+                                int64_t expireDays, int64_t expireTime, int64_t maxDownloads,
+                                bool loginOnly);
 
     /// @brief 我的分享列表(status ≤0 不过滤)
     /// @return {total, page, size, list}
@@ -96,9 +100,9 @@ class ZmFileShareModule
  * @param token 分享标识
  * @param viewerUid 访问者登录 uid(0 = 免登录)
  * @param ip 客户端 IP;ua 客户端 UA
- * @return {name, node_type, need_pwd, expired, expire_time, owner_uid, owner_name?,
- * login_only, need_login, max_downloads, download_count}
- * 需要登录而未登录 → 401 + need_login=true
+ * @return {name, node_type, multi, node_count, nodes[], hidden_count, need_pwd, expired,
+ * expire_time, owner_uid, owner_name?, login_only, need_login, max_downloads, download_count}
+ * nodes 只含当前可见的条目(取实时名称);需登录而未登录 → 401 + need_login=true
  */
     drogon::Task<ZMJSON> Info(const std::string& token, int64_t viewerUid,
                               const std::string& ip, const std::string& ua);
@@ -115,8 +119,11 @@ class ZmFileShareModule
     /**
  * @brief 列分享目录
  *
+ * 多条目分享:dir_id=0 返回虚拟根(平铺各条目),面包屑只有分享名一级;
+ * 单条目分享:dir_id=0 即分享目标本身,行为与既往一致。
+ *
  * @param token 分享标识
- * @param dirId 分享子树内的目录 id(0 = 分享目标本身)
+ * @param dirId 分享子树内的目录 id(0 = 分享目标本身 / 多条目虚拟根)
  * @param q 排序/分页
  * @param credOk 访问凭证是否有效(调用方校验 Cookie 后传入)
  * @return {total, page, size, list, breadcrumb};分享/目标不可用 → {"error":{...}}
@@ -128,7 +135,7 @@ class ZmFileShareModule
     /**
  * @brief 分享下载(单文件换令牌 / 多条目打包)
  *
- * @param token 分享标识;ids 待下载条目(须在分享子树内)
+ * @param token 分享标识;ids 待下载条目(须在任一分享根的子树内)
  * @param credOk 访问凭证是否有效
  * @param ctx 操作者(免登录时 uid=0)
  * @return 单文件 {url, expire_time};打包 {task_no}(幂等,就绪后返回 url)
@@ -152,11 +159,14 @@ class ZmFileShareModule
   private:
     /// @brief 读取分享行(不存在返回空对象)
     ZMJSON LoadShareSync(int64_t shareId);
-    /// @brief 判定分享当前可用性
+    /// @brief 分享绑定的根条目(实时读 nodes,附 visible 标记;旧行无关联时按 shares.node_id 兜底)
+    /// @return [{id,type,name,size,ext,items,update_time,visible}]
+    ZMJSON ShareRootsSync(const ZMJSON& share);
+    /// @brief 判定分享当前可用性(全部根条目不可见才判不可用)
     /// @return 0 = 可用;否则 HTTP 状态码
     int CheckUsableSync(const ZMJSON& share, std::string& code, std::string& message);
-    /// @brief dir_id 是否位于分享子树内(递归 CTE 上溯)
-    bool InShareTreeSync(int64_t dirId, int64_t shareRootId);
+    /// @brief dir_id 是否位于任一根的子树内(递归 CTE 上溯;单根时行为不变)
+    bool InShareTreeSync(int64_t dirId, const std::vector<int64_t>& roots);
 
     ZmFileDbModule*    m_db    = nullptr;
     ZmFileNodeModule*  m_node  = nullptr;

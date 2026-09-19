@@ -217,6 +217,18 @@ bool ZmFileDbModule::BuildSchema()
         R"(CREATE INDEX IF NOT EXISTS idx_share_uid ON shares(uid, status);)",
         R"(CREATE INDEX IF NOT EXISTS idx_share_node ON shares(node_id, status);)",
         R"(CREATE INDEX IF NOT EXISTS idx_share_expire ON shares(status, expire_time);)",
+        // 5.7.1 share_nodes(分享绑定的条目;单条分享也写一行,读路径统一为多根)
+        R"(CREATE TABLE IF NOT EXISTS share_nodes(
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ share_id BIGINT NOT NULL,
+ node_id BIGINT NOT NULL,
+ node_type TINYINT NOT NULL,
+ name VARCHAR(255) NOT NULL DEFAULT '',
+ sort INTEGER NOT NULL DEFAULT 0,
+ create_time INTEGER NOT NULL
+);)",
+        R"(CREATE UNIQUE INDEX IF NOT EXISTS idx_sharenode_uniq ON share_nodes(share_id, node_id);)",
+        R"(CREATE INDEX IF NOT EXISTS idx_sharenode_share ON share_nodes(share_id, sort);)",
         // 5.8 share_logs
         R"(CREATE TABLE IF NOT EXISTS share_logs(
  id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -417,9 +429,16 @@ bool ZmFileDbModule::InvalidateSharesByNodesSync(ZmSqliteDb& db,
             in += ",";
         in += std::to_string(nodeIds[i]);
     }
-    return db.ExecSync("UPDATE shares SET status = 3, update_time = ?1 "
-                       "WHERE status = 1 AND node_id IN (" + in + ")",
-                       {std::to_string(ZmSqliteDb::Now())});
+    return db.ExecSync(
+        "UPDATE shares SET status = 3, update_time = ?1 WHERE status = 1 AND CASE"
+        // 多选分享:所有绑定条目都即将消失(在本次删除集合里,或此前已被彻底删除)才置失效;
+        // 只删到一部分时分享保持有效(该条在分享页跳过、其余照常)
+        " WHEN EXISTS (SELECT 1 FROM share_nodes sn WHERE sn.share_id = shares.id)"
+        " THEN NOT EXISTS (SELECT 1 FROM share_nodes sn JOIN nodes n ON n.id = sn.node_id"
+        "                  WHERE sn.share_id = shares.id AND sn.node_id NOT IN (" + in + "))"
+        // 旧行(改造前创建,无关联行):按主条目判
+        " ELSE node_id IN (" + in + ") END",
+        {std::to_string(ZmSqliteDb::Now())});
 }
 
 bool ZmFileDbModule::RecountUsageSync(ZmSqliteDb& db, int64_t space)
@@ -544,6 +563,10 @@ void ZmFileDbModule::CleanupOnce()
         // 分享:已取消(status=2)与已失效(status=3)超过 30 天的行删除(其访问日志一并删除)。
         // 已取消的行过去不会被清理,取消多了会一直堆在"我的分享"里
         {"DELETE FROM share_logs WHERE share_id IN (SELECT id FROM shares WHERE status IN (2,3) "
+         "AND update_time < ?1);",
+         days30},
+        // 关联条目随分享行一起清掉(无外键;须在删 shares 之前,子查询要读得到行)
+        {"DELETE FROM share_nodes WHERE share_id IN (SELECT id FROM shares WHERE status IN (2,3) "
          "AND update_time < ?1);",
          days30},
         {"DELETE FROM shares WHERE status IN (2,3) AND update_time < ?1;", days30},

@@ -174,6 +174,12 @@ class ZmFileNodeModule
     /// @brief 父目录 items/update_time 随动(parentId=0 时无操作)
     static bool TouchParentSync(ZmSqliteDb& db, int64_t parentId, int64_t dItems);
 
+    /// @brief 条目行 → 对外 JSON(id/type/name/size/ext/items/owner_uid/时间)
+    /// (分享虚拟根等跨模块视图复用;owner_name 由编排层补齐)
+    static ZMJSON NodeView(const ZMJSON& row);
+    /// @brief 列表里的目录行补子树字节(字段 bytes);跨模块构列表时复用
+    static void FillDirBytes(ZmFileDbModule* db, ZMJSON& list);
+
     /// @brief 软删除(批量;只标记顶层条目)
     /// @return {success,failed,count}
     drogon::Task<ZMJSON> SoftDelete(const std::vector<int64_t>& ids, const ZmOpCtx& ctx);
@@ -270,8 +276,6 @@ class ZmFileNodeModule
     /// @brief 类型筛选的扩展名清单集合(SQL IN 片段,调用方负责绑定参数)
     static std::string TypeFilterClause(const ZmListQuery&        q,
                                         std::vector<std::string>& params);
-    /// @brief 条目行 → 对外 JSON(owner_name 由编排层补齐)
-    static ZMJSON NodeView(const ZMJSON& row);
 
     ZmFileDbModule*    m_db    = nullptr;
     ZmFileStoreModule* m_store = nullptr;

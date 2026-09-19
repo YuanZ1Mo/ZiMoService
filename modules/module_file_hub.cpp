@@ -78,14 +78,14 @@ ZMJSON ParseBody(const HttpRequestPtr& req)
     return j.is_object() ? j : ZMJSON::object();
 }
 
-/// @brief 解析 ids 数组(去重、丢弃非正数)
-std::vector<int64_t> BodyIds(const ZMJSON& body)
+/// @brief 解析 id 数组(去重、丢弃非正数;key 默认 "ids")
+std::vector<int64_t> BodyIds(const ZMJSON& body, const char* key = "ids")
 {
     std::vector<int64_t> ids;
-    if (!body.contains("ids") || !body["ids"].is_array())
+    if (!body.contains(key) || !body[key].is_array())
         return ids;
     std::set<int64_t> seen;
-    for (const auto& v : body["ids"])
+    for (const auto& v : body[key])
     {
         int64_t id = 0;
         if (v.is_number_integer())
@@ -1377,17 +1377,24 @@ drogon::Task<HttpResponsePtr> ZmFileHubModule::HandleShareCreate(HttpRequestPtr 
     auto gate = co_await Authorize(req);
     if (!gate.ok)
         co_return ZmAuthGateModule::ApiError(gate.status, gate.code, gate.message);
-    ZMJSON  body   = ParseBody(req);
-    int64_t space  = zm_file_row_int(body, "space", 0);
-    int64_t nodeId = zm_file_row_int(body, "node_id", 0);
-    if (nodeId <= 0)
+    ZMJSON  body  = ParseBody(req);
+    int64_t space = zm_file_row_int(body, "space", 0);
+    // 多选分享传 node_ids 数组;兼容旧形态的单 node_id
+    std::vector<int64_t> nodeIds = BodyIds(body, "node_ids");
+    if (nodeIds.empty())
+    {
+        int64_t nodeId = zm_file_row_int(body, "node_id", 0);
+        if (nodeId > 0)
+            nodeIds.push_back(nodeId);
+    }
+    if (nodeIds.empty())
         co_return ZmAuthGateModule::ApiError(400, zm_file_err::kBadRequest, "未指定分享目标");
     bool    pwdEnabled = zm_json_get_bool(body, "pwd_enabled", false);
     int64_t expireDays = zm_file_row_int(body, "expire_days", 0);
     int64_t expireTime = zm_file_row_int(body, "expire_time", 0);
     int64_t maxDl      = zm_file_row_int(body, "max_downloads", 0);
     bool    loginOnly  = zm_json_get_bool(body, "login_only", false);
-    ZMJSON  out = co_await m_share->Create(OpOf(gate.ctx, req), space, nodeId, pwdEnabled,
+    ZMJSON  out = co_await m_share->Create(OpOf(gate.ctx, req), space, nodeIds, pwdEnabled,
                                            expireDays, expireTime, maxDl, loginOnly);
     if (!ZmFileHasError(out))
         out["url"] = ZmFileShareModule::BuildShareUrl(SitePageBase(req, m_rest),

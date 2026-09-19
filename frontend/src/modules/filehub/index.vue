@@ -284,7 +284,7 @@ function ctxAct(act) {
   else if (act === 'rename') targets.length > 1 ? openBatchRename(targets) : openRename(n)
   else if (act === 'move') openMove(targets)
   else if (act === 'copy') openCopy(targets)
-  else if (act === 'share') openShare(n)
+  else if (act === 'share') openShare(targets)
   else if (act === 'delete') doDelete(targets)
   else if (act === 'detail') targets.length > 1 ? openBatchDetail(targets) : openDetail(n)
 }
@@ -432,9 +432,13 @@ async function openDetail(n) {
   catch (e) { toast(e.message || '加载详情失败', 'err') }
 }
 
-// ── 分享 ──
-const shareDlg = reactive({ show: false, node: null })
-function openShare(n) { shareDlg.node = n; shareDlg.show = true }
+// ── 分享(单选/多选共用;一条分享可绑定多个条目) ──
+const shareDlg = reactive({ show: false, nodes: [] })
+function openShare(targets) {
+  if (!targets.length) return
+  shareDlg.nodes = targets
+  shareDlg.show = true
+}
 
 // ── 上传 ──
 const fileInput = ref(null)
@@ -840,8 +844,11 @@ onMounted(() => {
                     </tr>
                     <template v-else>
                       <tr v-for="s in shares" :key="s.id" :style="Number(s.status) !== 1 ? 'opacity:.62' : ''">
-                        <td><span class="fname" style="font-weight:600">{{ s.name }}</span></td>
-                        <td><span class="ftype">{{ Number(s.node_type) === 1 ? '文件夹' : '文件' }}</span></td>
+                        <td><span class="fname" style="font-weight:600">{{ s.name }}{{ Number(s.node_count) > 1 ? ` 等 ${s.node_count} 项` : '' }}</span></td>
+                        <td>
+                          <!-- 多选分享按条目数显示「N 项」(单条仍按类型) -->
+                          <span class="ftype">{{ Number(s.node_count) > 1 ? `${s.node_count} 项` : (Number(s.node_type) === 1 ? '文件夹' : '文件') }}</span>
+                        </td>
                         <td><span class="share-url-cell">{{ s.url.replace(/^https?:\/\//, '') }}</span></td>
                         <td>
                           <span class="badge badge-dim"
@@ -933,8 +940,8 @@ onMounted(() => {
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14m0 0-5-5m5 5-5 5"/></svg>移动</button>
         <button class="menu-item" type="button" @click="ctxAct('copy')">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>复制</button>
-        <!-- 分享只支持单条(一条分享绑定一个节点),多选时隐藏 -->
-        <button v-if="!ctxMenu.multi" class="menu-item" type="button" @click="ctxAct('share')">
+        <!-- 分享:单选一条 / 多选一条分享绑定全部选中项 -->
+        <button class="menu-item" type="button" @click="ctxAct('share')">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg>分享</button>
         <div class="menu-sep"></div>
         <button class="menu-item danger" type="button" @click="ctxAct('delete')">
@@ -1021,7 +1028,8 @@ onMounted(() => {
                     @close="mcDlg.show = false" @done="onMcDone" />
 
     <!-- 分享 -->
-    <ShareDialog :show="shareDlg.show" :node="shareDlg.node" :is-public="!shareDlg.node || Number(shareDlg.node.space) === 0"
+    <ShareDialog :show="shareDlg.show" :nodes="shareDlg.nodes"
+                 :is-public="!shareDlg.nodes.length || Number(shareDlg.nodes[0].space) === 0"
                  @close="shareDlg.show = false" @created="loadShares" />
 
     <!-- 详情 -->

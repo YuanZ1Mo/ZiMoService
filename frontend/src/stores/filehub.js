@@ -29,7 +29,12 @@ export const useFilehubStore = defineStore('filehub', {
     pendingPacks: []
   }),
   getters: {
-    activeCount: (s) => s.serverTasks.length + s.uploads.filter(u => u.status === 'run' || u.status === 'wait').length,
+    /// 进行中列表里的服务端任务:上传(type=1)由客户端上传队列呈现(带字节级进度),
+    /// 服务端上传任务行只进历史 —— 否则一次上传会同时出现"排队中"和"上传中"两条
+    activeServerTasks: (s) => (s.serverTasks || []).filter(t => Number(t.type) !== 1),
+    activeCount() {
+      return this.activeServerTasks.length + this.uploads.filter(u => u.status === 'run' || u.status === 'wait').length
+    },
     failedCount: (s) => s.history.filter(t => Number(t.status) === 4).length + s.uploads.filter(u => u.status === 'fail').length
   },
   actions: {

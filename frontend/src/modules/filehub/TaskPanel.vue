@@ -91,7 +91,7 @@ watch(() => store.panelOpen, (v) => { if (v && tab.value === 'history') loadHist
 
 const isEmpty = computed(() =>
   tab.value === 'active'
-    ? !store.serverTasks.length && !store.uploads.length
+    ? !store.activeServerTasks.length && !store.uploads.length
     : !historyItems.value.length && !loadingHistory.value)
 
 /**
@@ -189,8 +189,8 @@ async function deleteTask(t) {
             </div>
           </div>
         </template>
-        <!-- 服务端任务(1.5s 轮询 tasks/active) -->
-        <div v-for="t in store.serverTasks" :key="t.task_no" class="titem">
+        <!-- 服务端任务(1.5s 轮询 tasks/active);上传由上面的客户端队列呈现,不在这里重复列出 -->
+        <div v-for="t in store.activeServerTasks" :key="t.task_no" class="titem">
           <div class="t-top">
             <span class="st-chip" :class="statusChip(t.status)">{{ STATUS_NAME[Number(t.status)] }}</span>
             <span class="t-name">{{ t.name }}</span>

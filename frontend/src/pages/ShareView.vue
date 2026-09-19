@@ -13,7 +13,7 @@ const route = useRoute()
 const token = computed(() => String(route.params.token || ''))
 
 const state = ref('loading')   // loading | pwd | browse | need_login | expired | unavailable | notfound
-const info = reactive({ name: '', node_type: 1, owner_name: '', expire_time: 0, max_downloads: 0, download_count: 0 })
+const info = reactive({ name: '', node_type: 1, multi: false, node_count: 0, hidden_count: 0, nodes: [], owner_name: '', expire_time: 0, max_downloads: 0, download_count: 0 })
 const pwd = ref('')
 const pwdErr = ref('')
 const pwdBusy = ref(false)
@@ -34,8 +34,8 @@ async function loadInfo() {
     Object.assign(info, d)
     if (d.need_pwd) { state.value = 'pwd'; return }
     state.value = 'browse'
-    // 目录分享才需要列列表;单文件分享没有子条目,直接按分享目标本身下载(§3.12.3)
-    if (Number(info.node_type) === 1) loadList()
+    // 目录分享 / 多条目分享才需要列列表;单文件分享没有子条目,直接按分享目标本身下载(§3.12.3)
+    if (needList()) loadList()
   } catch (e) {
     if (e.status === 401 || e.code === 'NEED_LOGIN') { state.value = 'need_login'; return }
     if (e.code === 'SHARE_EXPIRED') { state.value = 'expired'; return }
@@ -43,6 +43,8 @@ async function loadInfo() {
     state.value = 'notfound'
   }
 }
+/// 是否需要渲染条目列表:多条目分享(虚拟根平铺)或单目录分享
+function needList() { return !!info.multi || Number(info.node_type) === 1 }
 onMounted(loadInfo)
 onUnmounted(stopPackRetry)
 
@@ -51,7 +53,7 @@ async function verify() {
   pwdBusy.value = true; pwdErr.value = ''
   try {
     const r = await filehubApi.shareVerify(token.value, { pwd: pwd.value })
-    if (r.pass) { state.value = 'browse'; if (Number(info.node_type) === 1) loadList() }
+    if (r.pass) { state.value = 'browse'; if (needList()) loadList() }
     else pwdErr.value = '提取码不正确,请重试'
   } catch (e) {
     if (e.code === 'SHARE_LOCKED') pwdErr.value = '错误次数过多,请 10 分钟后再试'
@@ -153,11 +155,11 @@ watch(token, loadInfo)
         <div class="share-owner" style="justify-content:center">
           <span class="avatar">{{ (info.owner_name || '?').charAt(0) }}</span>
           <div style="text-align:left">
-            <b>{{ info.owner_name }}</b> 分享了{{ Number(info.node_type) === 1 ? '文件夹' : '文件' }}
+            <b>{{ info.owner_name }}</b> 分享了{{ info.multi ? ` ${info.node_count} 项` : (Number(info.node_type) === 1 ? '文件夹' : '文件') }}
             <div class="cap" style="color:var(--color-text-3)">来自 ZiMo 文件中心</div>
           </div>
         </div>
-        <b style="font-size:19px;display:block;margin-top:20px">{{ info.name }}</b>
+        <b style="font-size:19px;display:block;margin-top:20px">{{ info.multi ? `${info.name} 等 ${info.node_count} 项` : info.name }}</b>
         <div class="form-item" style="max-width:280px;margin:24px auto 0">
           <input v-model.trim="pwd" class="input" style="height:46px;text-align:center;letter-spacing:4px;font-weight:700"
                  maxlength="8" placeholder="输入提取码" @keyup.enter="verify" />
@@ -182,19 +184,20 @@ watch(token, loadInfo)
           <div class="share-owner">
             <span class="avatar">{{ (info.owner_name || '?').charAt(0) }}</span>
             <div style="flex:1;min-width:0">
-              <div><b>{{ info.owner_name }}</b> 分享了{{ Number(info.node_type) === 1 ? '文件夹' : '文件' }} · <b>{{ info.name }}</b></div>
+              <div><b>{{ info.owner_name }}</b> 分享了{{ info.multi ? ` ${info.node_count} 项` : (Number(info.node_type) === 1 ? '文件夹' : '文件') }}<template v-if="!info.multi"> · <b>{{ info.name }}</b></template></div>
               <div class="cap" style="color:var(--color-text-3)">
                 {{ remain }}<template v-if="info.max_downloads"> · 已下载 {{ info.download_count }}/{{ info.max_downloads }} 次</template>
+                <template v-if="info.hidden_count > 0"> · 另有 {{ info.hidden_count }} 项暂不可用</template>
               </div>
             </div>
-            <button v-if="Number(info.node_type) === 1" class="btn btn-grad" type="button" :disabled="packing" @click="downloadAll">
+            <button v-if="needList()" class="btn btn-grad" type="button" :disabled="packing" @click="downloadAll">
               {{ packing ? '打包中…' : (selected.size ? `下载所选(${selected.size})` : '下载全部(zip)') }}
             </button>
             <button v-else class="btn btn-grad" type="button" @click="downloadOne({ id: info.node_id, type: 2, name: info.name })">下载</button>
           </div>
         </div>
         <!-- 单文件分享:没有子条目,直接给一个文件条目(不渲染空列表) -->
-        <div v-if="Number(info.node_type) !== 1" class="card"
+        <div v-if="!info.multi && Number(info.node_type) !== 1" class="card"
              style="width:760px;max-width:100%;margin-top:16px;padding:20px">
           <div class="fcell">
             <FileIcon :node="{ type: 2, name: info.name }" />
@@ -203,7 +206,7 @@ watch(token, loadInfo)
             <button class="btn btn-secondary btn-sm" type="button" @click="downloadOne({ id: info.node_id, type: 2, name: info.name })">下载</button>
           </div>
         </div>
-        <div v-if="Number(info.node_type) === 1" class="card" style="width:760px;max-width:100%;margin-top:16px;overflow:hidden">
+        <div v-if="needList()" class="card" style="width:760px;max-width:100%;margin-top:16px;overflow:hidden">
           <div class="crumbs">
             <template v-for="(bc, i) in breadcrumb" :key="bc.id">
               <button type="button" :class="{ here: i === breadcrumb.length - 1 }" @click="gotoCrumb(i === 0 ? null : bc)">{{ bc.name }}</button>

@@ -509,9 +509,11 @@ drogon::Task<ZMJSON> ZmFileUploadModule::Init(const ZmOpCtx& ctx, int64_t space,
                          std::to_string(zm_file::kChunkSize), std::to_string(chunkTotal),
                          conflict, std::to_string(now), std::to_string(expire)}))
                     return ZmFileError(zm_file_err::kInternal, 500, "创建上传会话失败");
-                // 任务在 init 建、complete 收尾,两次响应的 task_no 相同
+                // 任务在 init 建、complete 收尾,两次响应的 task_no 相同;分片随即开始传输,
+                // 建完即置"进行中"(与单请求上传/秒传一致,否则任务会一直挂在"排队中")
                 m_task->CreateSync(zm_file::kTaskUpload, ctx.uid, space, name, "", size, 1,
                                    uploadId, taskNo);
+                m_task->SetStatusSync(taskNo, zm_file::kTaskRunning);
                 m_store->EnsureDir(m_store->ChunkDir(space, uploadId));
             }
 

@@ -21,59 +21,6 @@ using namespace drogon;
 
 namespace
 {
-/**
- * @brief 给列表里本页的目录补上"子树文件字节数"(字段 bytes)
- *
- * 目录在 nodes 里 size 恒为 0,列表只显示 "N 项"、看不出占多大;批量条/删除/打包/移动
- * 复制的"共 X"也需要目录的体积。用**一次**递归 CTE 把本页所有目录一起算完,避免逐目录
- * 查询(一页几十个目录就是几十条查询)。只算本页 —— 前端能选中的也只有本页条目。
- *
- * @param db   数据模块
- * @param list [in,out] 列表行数组(NodeView 产物);目录行补 bytes
- */
-void FillDirBytes(ZmFileDbModule* db, ZMJSON& list)
-{
-    std::vector<int64_t> dirIds;
-    for (const auto& v : list)
-        if (zm_file_row_int(v, "type", 0) == zm_file::kTypeDir)
-            dirIds.push_back(zm_file_row_int(v, "id", 0));
-    if (dirIds.empty())
-        return;
-    std::sort(dirIds.begin(), dirIds.end());
-    dirIds.erase(std::unique(dirIds.begin(), dirIds.end()), dirIds.end());
-    std::string inList = "(";
-    for (size_t i = 0; i < dirIds.size(); ++i)
-    {
-        if (i)
-            inList += ",";
-        inList += std::to_string(dirIds[i]);
-    }
-    inList += ")";
-    // 每个根目录一棵子树,聚合出该目录下全部文件的字节总和(根目录自身 type=1 不计入 SUM)
-    ZMJSON agg = db->QueryRowsSync(
-        "WITH RECURSIVE sub(id, size, type, root, depth) AS ("
-        " SELECT id, size, type, id, 0 FROM nodes WHERE id IN " + inList +
-        "   AND type = 1 AND deleted = 0"
-        " UNION ALL"
-        " SELECT n.id, n.size, n.type, s.root, s.depth + 1 FROM nodes n"
-        " JOIN sub s ON n.parent_id = s.id AND n.deleted = 0 WHERE s.depth < 64)"
-        " SELECT root, COALESCE(SUM(CASE WHEN type = 2 THEN size ELSE 0 END), 0) AS bytes"
-        " FROM sub GROUP BY root;");
-    for (const auto& a : agg)
-    {
-        int64_t root = zm_file_row_int(a, "root", 0);
-        int64_t by   = zm_file_row_int(a, "bytes", 0);
-        for (auto& v : list)
-        {
-            if (zm_file_row_int(v, "id", 0) == root)
-            {
-                v["bytes"] = by;
-                break;
-            }
-        }
-    }
-}
-
 void AddCond(std::string& where, std::vector<std::string>& params, const std::string& cond,
              const std::vector<std::string>& vals)
 {
@@ -157,6 +104,59 @@ std::string IdPlaceholders(const std::vector<int64_t>& ids, std::vector<std::str
 // ============================================================================
 // ZmFileNode
 // ============================================================================
+/**
+ * @brief 给列表里本页的目录补上"子树文件字节数"(字段 bytes)
+ *
+ * 目录在 nodes 里 size 恒为 0,列表只显示 "N 项"、看不出占多大;批量条/删除/打包/移动
+ * 复制的"共 X"也需要目录的体积。用**一次**递归 CTE 把本页所有目录一起算完,避免逐目录
+ * 查询(一页几十个目录就是几十条查询)。只算本页 —— 前端能选中的也只有本页条目。
+ *
+ * @param db   数据模块
+ * @param list [in,out] 列表行数组(NodeView 产物);目录行补 bytes
+ */
+void ZmFileNodeModule::FillDirBytes(ZmFileDbModule* db, ZMJSON& list)
+{
+    std::vector<int64_t> dirIds;
+    for (const auto& v : list)
+        if (zm_file_row_int(v, "type", 0) == zm_file::kTypeDir)
+            dirIds.push_back(zm_file_row_int(v, "id", 0));
+    if (dirIds.empty())
+        return;
+    std::sort(dirIds.begin(), dirIds.end());
+    dirIds.erase(std::unique(dirIds.begin(), dirIds.end()), dirIds.end());
+    std::string inList = "(";
+    for (size_t i = 0; i < dirIds.size(); ++i)
+    {
+        if (i)
+            inList += ",";
+        inList += std::to_string(dirIds[i]);
+    }
+    inList += ")";
+    // 每个根目录一棵子树,聚合出该目录下全部文件的字节总和(根目录自身 type=1 不计入 SUM)
+    ZMJSON agg = db->QueryRowsSync(
+        "WITH RECURSIVE sub(id, size, type, root, depth) AS ("
+        " SELECT id, size, type, id, 0 FROM nodes WHERE id IN " + inList +
+        "   AND type = 1 AND deleted = 0"
+        " UNION ALL"
+        " SELECT n.id, n.size, n.type, s.root, s.depth + 1 FROM nodes n"
+        " JOIN sub s ON n.parent_id = s.id AND n.deleted = 0 WHERE s.depth < 64)"
+        " SELECT root, COALESCE(SUM(CASE WHEN type = 2 THEN size ELSE 0 END), 0) AS bytes"
+        " FROM sub GROUP BY root;");
+    for (const auto& a : agg)
+    {
+        int64_t root = zm_file_row_int(a, "root", 0);
+        int64_t by   = zm_file_row_int(a, "bytes", 0);
+        for (auto& v : list)
+        {
+            if (zm_file_row_int(v, "id", 0) == root)
+            {
+                v["bytes"] = by;
+                break;
+            }
+        }
+    }
+}
+
 ZmFileNode ZmFileNode::FromRow(const ZMJSON& row)
 {
     ZmFileNode n;

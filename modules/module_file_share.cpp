@@ -54,6 +54,16 @@ std::string RandomHex(int bytes)
         s += hex[dist(gen)];
     return s;
 }
+
+/// 分享根条目集合(ShareRootsSync 产物)→ 可见条目 id(保持绑定顺序)
+std::vector<int64_t> VisibleRootIds(const ZMJSON& roots)
+{
+    std::vector<int64_t> ids;
+    for (const auto& r : roots)
+        if (zm_json_get_bool(r, "visible", false))
+            ids.push_back(zm_file_row_int(r, "id", 0));
+    return ids;
+}
 } // namespace
 
 // ============================================================================
@@ -126,6 +136,41 @@ ZMJSON ZmFileShareModule::LoadShareSync(int64_t shareId)
     return m_db->QueryRowSync("SELECT * FROM shares WHERE id = ?1", {std::to_string(shareId)});
 }
 
+ZMJSON ZmFileShareModule::ShareRootsSync(const ZMJSON& share)
+{
+    int64_t shareId = zm_file_row_int(share, "id", 0);
+    std::vector<int64_t> ids;
+    ZMJSON rows = m_db->QueryRowsSync(
+        "SELECT node_id FROM share_nodes WHERE share_id = ?1 ORDER BY sort, id",
+        {std::to_string(shareId)});
+    for (const auto& r : rows)
+    {
+        int64_t id = zm_file_row_int(r, "node_id", 0);
+        if (id > 0)
+            ids.push_back(id);
+    }
+    // 改造前创建的分享没有关联行:按 shares.node_id 单条兜底(读路径统一)
+    if (ids.empty())
+        ids.push_back(zm_file_row_int(share, "node_id", 0));
+    ZMJSON out = ZMJSON::array();
+    for (int64_t id : ids)
+    {
+        ZMJSON nrow = m_db->NodeRowSync(id);
+        ZMJSON item = nrow.empty() ? ZMJSON::object() : ZmFileNodeModule::NodeView(nrow);
+        if (nrow.empty())
+        {
+            // 条目已被彻底删除:仍保留在集合里(visible=false),让"全部不可用"可判定
+            item["id"]   = id;
+            item["type"] = zm_file_row_int(share, "node_type", 0);
+            item["name"] = zm_file_row_str(share, "name");
+        }
+        item["visible"] = !nrow.empty() && zm_file_row_int(nrow, "deleted", 0) == 0 &&
+                          m_node->VisibleSync(id);
+        out.push_back(std::move(item));
+    }
+    return out;
+}
+
 int ZmFileShareModule::CheckUsableSync(const ZMJSON& share, std::string& code,
                                        std::string& message)
 {
@@ -163,12 +208,9 @@ int ZmFileShareModule::CheckUsableSync(const ZMJSON& share, std::string& code,
         message = "分享下载次数已达上限";
         return 410;
     }
-    // 目标在回收站/不存在:分享行状态不变,恢复后自动可用
-    int64_t nodeId = zm_file_row_int(share, "node_id", 0);
-    ZMJSON  row    = m_db->NodeRowSync(nodeId);
-    bool    visible =
-        !row.empty() && zm_file_row_int(row, "deleted", 0) == 0 && m_node->VisibleSync(nodeId);
-    if (!visible)
+    // 目标在回收站/不存在:分享行状态不变,恢复后自动可用。
+    // 多选分享里部分条目不可见只跳过该条,全部不可见才判分享不可用
+    if (VisibleRootIds(ShareRootsSync(share)).empty())
     {
         code    = zm_file_err::kShareUnavailable;
         message = "分享内容暂不可用(可能已被删除)";
@@ -177,18 +219,33 @@ int ZmFileShareModule::CheckUsableSync(const ZMJSON& share, std::string& code,
     return 0;
 }
 
-bool ZmFileShareModule::InShareTreeSync(int64_t dirId, int64_t shareRootId)
+bool ZmFileShareModule::InShareTreeSync(int64_t dirId, const std::vector<int64_t>& roots)
 {
-    if (dirId == 0 || dirId == shareRootId)
+    if (dirId == 0)
         return true;
+    for (int64_t r : roots)
+        if (r == dirId)
+            return true;
+    if (roots.empty())
+        return false;
+    std::string              inList;
+    std::vector<std::string> params = {std::to_string(dirId)};
+    for (size_t i = 0; i < roots.size(); ++i)
+    {
+        if (i)
+            inList += ",";
+        inList += "?" + std::to_string(params.size() + 1);
+        params.push_back(std::to_string(roots[i]));
+    }
+    // 一次上溯到根:任一分享根出现在祖先链上即视为在分享范围内
     ZMJSON row = m_db->QueryRowSync(
         "WITH RECURSIVE up(id, parent_id, depth) AS ("
         " SELECT id, parent_id, 0 FROM nodes WHERE id = ?1"
         " UNION ALL"
         " SELECT n.id, n.parent_id, up.depth + 1 FROM nodes n JOIN up ON n.id = up.parent_id"
         " WHERE up.depth < 64)"
-        " SELECT COUNT(*) AS n FROM up WHERE id = ?2;",
-        {std::to_string(dirId), std::to_string(shareRootId)});
+        " SELECT COUNT(*) AS n FROM up WHERE id IN (" + inList + ");",
+        params);
     return zm_file_row_int(row, "n", 0) > 0;
 }
 
@@ -196,20 +253,47 @@ bool ZmFileShareModule::InShareTreeSync(int64_t dirId, int64_t shareRootId)
 // 创建 / 列表 / 修改 / 取消 / 日志
 // ============================================================================
 drogon::Task<ZMJSON> ZmFileShareModule::Create(const ZmOpCtx& ctx, int64_t space,
-                                               int64_t nodeId, bool pwdEnabled,
-                                               int64_t expireDays, int64_t expireTime,
-                                               int64_t maxDownloads, bool loginOnly)
+                                               const std::vector<int64_t>& nodeIds,
+                                               bool pwdEnabled, int64_t expireDays,
+                                               int64_t expireTime, int64_t maxDownloads,
+                                               bool loginOnly)
 {
     co_return co_await ZmHttpServer::RunOnPool<ZMJSON>(
-        [this, ctx, space, nodeId, pwdEnabled, expireDays, expireTime, maxDownloads,
+        [this, ctx, space, nodeIds, pwdEnabled, expireDays, expireTime, maxDownloads,
          loginOnly]() -> ZMJSON
         {
             // 公共空间不提供"仅登录可见"(§3.12.2):前端已隐藏开关,这里兜住直接调接口的情况
             bool effectiveLoginOnly = (space == 0) ? false : loginOnly;
-            ZMJSON row;
-            if (!m_node->VisibleSync(nodeId, row))
+            // 去重 + 条数上限(多选分享一条记录绑定多个条目,记录本身仍算 1 条有效分享)
+            std::vector<int64_t> ids;
+            {
+                std::set<int64_t> seen;
+                for (int64_t id : nodeIds)
+                    if (id > 0 && seen.insert(id).second)
+                        ids.push_back(id);
+            }
+            if (ids.empty())
                 return ZmFileError(zm_file_err::kNodeNotFound, 404, "条目不存在");
-            int64_t realSpace = zm_file_row_int(row, "space", 0);
+            // 无分享专属上限:选中多少绑多少(文件夹只算 1 条,不含其内部文件)。
+            // 仅沿用所有批量操作共用的安全阈值,避免构造超大批量请求
+            if (static_cast<int64_t>(ids.size()) > zm_file::kBatchMaxIds)
+                return ZmFileError(zm_file_err::kBatchTooLarge, 400, "单次最多分享 2000 个条目");
+            // 逐条校验:可见 + 同一空间(跨空间的选中集无法用一条分享表达)
+            std::vector<ZMJSON> rows;
+            int64_t             realSpace = -1;
+            for (int64_t id : ids)
+            {
+                ZMJSON row;
+                if (!m_node->VisibleSync(id, row))
+                    return ZmFileError(zm_file_err::kNodeNotFound, 404, "条目不存在");
+                int64_t sp = zm_file_row_int(row, "space", 0);
+                if (realSpace < 0)
+                    realSpace = sp;
+                else if (sp != realSpace)
+                    return ZmFileError(zm_file_err::kBadRequest, 400,
+                                       "选中的条目必须来自同一空间");
+                rows.push_back(std::move(row));
+            }
             if (!ZmFileNodeModule::SpaceWritable(realSpace, ctx.uid))
                 return ZmFileError(zm_file_err::kPermDenied, 403, "无权分享该空间的条目");
             ZMJSON cnt = m_db->QueryRowSync(
@@ -233,8 +317,10 @@ drogon::Task<ZMJSON> ZmFileShareModule::Create(const ZmOpCtx& ctx, int64_t space
                 pwdPlain = GeneratePwd();
                 pwdHash  = HashPwd(token, pwdPlain);
             }
-            int64_t     nodeType = zm_file_row_int(row, "type", 0);
-            std::string name     = zm_file_row_str(row, "name");
+            // shares.node_id/node_type/name 保留为主条目(第一条)+ 展示名(列表/兼容旧读路径)
+            int64_t     nodeId   = ids[0];
+            int64_t     nodeType = zm_file_row_int(rows[0], "type", 0);
+            std::string name     = zm_file_row_str(rows[0], "name");
             int64_t     shareId  = 0;
             bool        ok       = m_db->WithTxSync(
                 [&](ZmSqliteDb& db) -> bool
@@ -253,11 +339,31 @@ drogon::Task<ZMJSON> ZmFileShareModule::Create(const ZmOpCtx& ctx, int64_t space
                         return false;
                     shareId = zm_file_row_int(
                         db.QueryRowTxSync("SELECT last_insert_rowid() AS id", {}), "id", 0);
+                    // 单条分享也写一行:读路径统一,不必到处 if 单条
+                    for (size_t i = 0; i < ids.size(); ++i)
+                    {
+                        if (!db.ExecSync(
+                                "INSERT INTO share_nodes(share_id,node_id,node_type,name,sort,"
+                                "create_time) VALUES(?1,?2,?3,?4,?5,?6)",
+                                {std::to_string(shareId), std::to_string(ids[i]),
+                                 std::to_string(zm_file_row_int(rows[i], "type", 0)),
+                                 zm_file_row_str(rows[i], "name"), std::to_string(i),
+                                 std::to_string(now)}))
+                            return false;
+                    }
                     ZMJSON detail         = ZMJSON::object();
                     detail["token"]       = token;
                     detail["path"]        = m_node->RelPathSync(nodeId);
                     detail["expire_time"] = expire;
                     detail["pwd"]         = pwdEnabled;
+                    if (ids.size() > 1)
+                    {
+                        detail["nodes"] = static_cast<int64_t>(ids.size());
+                        std::string joined;
+                        for (size_t i = 0; i < ids.size(); ++i)
+                            joined += (i ? "," : "") + std::to_string(ids[i]);
+                        detail["node_ids"] = joined;
+                    }
                     return m_audit->RecordFileOpSync(db, ctx.uid, ctx.account,
                                                                   zm_file::kActShareCreate, realSpace,
                                                                   nodeId, name, detail.dump(), ctx.ip, 1);
@@ -269,6 +375,7 @@ drogon::Task<ZMJSON> ZmFileShareModule::Create(const ZmOpCtx& ctx, int64_t space
             out["token"]       = token;
             out["pwd"]         = pwdPlain;
             out["expire_time"] = expire;
+            out["node_count"]  = static_cast<int64_t>(ids.size());
             return out;
         });
 }
@@ -324,6 +431,26 @@ drogon::Task<ZMJSON> ZmFileShareModule::List(int64_t uid, int status, int page, 
             std::to_string(lp.size() - 1) + " OFFSET ?" + std::to_string(lp.size()),
         lp);
     // 过期未置位的分享在列表里按"已失效"展示(周期清理会落库)
+    // 多选分享的条目数(列表类型列显示"N 项";改造前的旧行无关联行,按 1 计)
+    std::unordered_map<int64_t, int64_t> nodeCounts;
+    if (!rows.empty())
+    {
+        std::string              inList;
+        std::vector<std::string> cp;
+        for (const auto& r : rows)
+        {
+            if (!inList.empty())
+                inList += ",";
+            inList += "?" + std::to_string(cp.size() + 1);
+            cp.push_back(std::to_string(zm_file_row_int(r, "id", 0)));
+        }
+        ZMJSON cntRows = co_await m_db->QueryRows(
+            "SELECT share_id, COUNT(*) AS n FROM share_nodes WHERE share_id IN (" + inList +
+                ") GROUP BY share_id;",
+            cp);
+        for (const auto& c : cntRows)
+            nodeCounts[zm_file_row_int(c, "share_id", 0)] = zm_file_row_int(c, "n", 0);
+    }
     int64_t now  = ZmSqliteDb::Now();
     ZMJSON  list = ZMJSON::array();
     for (const auto& r : rows)
@@ -335,6 +462,8 @@ drogon::Task<ZMJSON> ZmFileShareModule::List(int64_t uid, int status, int page, 
         if (zm_file_row_int(v, "status", 0) == 1 &&
             ((expire > 0 && expire < now) || (maxDl > 0 && done >= maxDl)))
             v["status"] = 3;
+        auto it = nodeCounts.find(zm_file_row_int(r, "id", 0));
+        v["node_count"] = it != nodeCounts.end() ? it->second : 1;
         list.push_back(std::move(v));
     }
     ZMJSON out   = ZMJSON::object();
@@ -509,6 +638,10 @@ drogon::Task<ZMJSON> ZmFileShareModule::Purge(int64_t uid, const std::vector<int
                 if (!db.ExecSync("DELETE FROM shares WHERE id = ?1 AND uid = ?2",
                                  {std::to_string(id), std::to_string(uid)}))
                     return false;
+                // 关联条目随分享一起清掉(无外键,避免残留孤儿行)
+                if (!db.ExecSync("DELETE FROM share_nodes WHERE share_id = ?1",
+                                 {std::to_string(id)}))
+                    return false;
                 if (m_audit)
                 {
                     ZMJSON detail   = ZMJSON::object();
@@ -551,10 +684,13 @@ drogon::Task<ZMJSON> ZmFileShareModule::Info(const std::string& token, int64_t v
     bool        needLogin = false;
     ZMJSON      out       = ZMJSON::object();
     int64_t     ownerUid  = 0;
+    ZMJSON      roots     = ZMJSON::array();   // 可见条目(虚拟根/单文件卡片用)
+    int64_t     hidden    = 0;                 // 不可见条目数(在回收站/已彻底删除)
     {
         // 可用性判定与计数在同一段同步逻辑里做,避免中间被改
         ZMJSON result = co_await ZmHttpServer::RunOnPool<ZMJSON>(
-            [this, row, viewerUid, token, &code, &message, &status, &ownerUid]() -> ZMJSON
+            [this, row, viewerUid, token, &code, &message, &status, &ownerUid, &roots,
+             &hidden]() -> ZMJSON
             {
                 ZMJSON o = ZMJSON::object();
                 status   = CheckUsableSync(row, code, message);
@@ -569,6 +705,14 @@ drogon::Task<ZMJSON> ZmFileShareModule::Info(const std::string& token, int64_t v
                     message         = "该分享需要登录后访问";
                     o["need_login"] = true;
                     return o;
+                }
+                // 部分条目不可见只跳过该条,其余照常(§3.12 多选分享)
+                for (const auto& n : ShareRootsSync(row))
+                {
+                    if (zm_json_get_bool(n, "visible", false))
+                        roots.push_back(n);
+                    else
+                        ++hidden;
                 }
                 // 浏览计数(view_count 单条原子自增)
                 m_db->ExecSync("UPDATE shares SET view_count = view_count + 1 WHERE id = ?1",
@@ -604,6 +748,12 @@ drogon::Task<ZMJSON> ZmFileShareModule::Info(const std::string& token, int64_t v
     out["max_downloads"]  = zm_file_row_int(row, "max_downloads", 0);
     out["download_count"] = zm_file_row_int(row, "download_count", 0);
     out["node_id"]        = zm_file_row_int(row, "node_id", 0);
+    // 多条目形态:multi 按"绑定条目数 > 1"定形(不受个别条目暂时不可见影响),
+    // nodes 只给可见条目,hidden_count 供分享页提示"另有 N 项暂不可用"
+    out["multi"]        = static_cast<int64_t>(roots.size() + hidden) > 1;
+    out["node_count"]   = static_cast<int64_t>(roots.size() + hidden);
+    out["hidden_count"] = hidden;
+    out["nodes"]        = std::move(roots);
     co_return out;
 }
 
@@ -708,14 +858,16 @@ drogon::Task<ZMJSON> ZmFileShareModule::ListDir(const std::string& token, int64_
                                                 const std::string& ua)
 {
     ZMJSON row = co_await m_db->QueryRow("SELECT * FROM shares WHERE token = ?1", {token});
-    std::string code;
-    std::string message;
-    int64_t     shareId = 0;
-    int64_t     rootId  = 0;
-    int64_t     space   = 0;
+    std::string          code;
+    std::string          message;
+    int64_t              shareId = 0;
+    int64_t              space   = 0;
+    int64_t              rootId  = 0;   // 当前目录所属的分享根(面包屑起点)
+    bool                 multi   = false;
+    std::vector<int64_t> roots;         // 可见根条目(顺序 = 绑定顺序)
     {
         ZMJSON gate = co_await ZmHttpServer::RunOnPool<ZMJSON>(
-            [this, row, dirId, credOk, &code, &message]() -> ZMJSON
+            [this, row, dirId, credOk, &code, &message, &roots, &multi, &rootId]() -> ZMJSON
             {
                 ZMJSON o      = ZMJSON::object();
                 int    status = CheckUsableSync(row, code, message);
@@ -731,25 +883,75 @@ drogon::Task<ZMJSON> ZmFileShareModule::ListDir(const std::string& token, int64_
                     o["status"] = 403;
                     return o;
                 }
-                int64_t root = zm_file_row_int(row, "node_id", 0);
-                if (!InShareTreeSync(dirId, root))
+                // 多条目分享:顶层为虚拟根;部分条目不可见只跳过该条(§3.12 多选分享)
+                ZMJSON nodes = ShareRootsSync(row);
+                multi        = nodes.size() > 1;
+                roots        = VisibleRootIds(nodes);
+                if (!InShareTreeSync(dirId, roots))
                 {
                     code        = zm_file_err::kNodeNotFound;
                     message     = "目录不在分享范围内";
                     o["status"] = 404;
                     return o;
                 }
-                o["ok"]   = true;
-                o["root"] = root;
+                // 当前目录所属的分享根:单根时即该根;多根时找命中的那一个(面包屑从它起算)
+                rootId = roots[0];
+                if (dirId != 0)
+                {
+                    for (int64_t r : roots)
+                    {
+                        if (InShareTreeSync(dirId, {r}))
+                        {
+                            rootId = r;
+                            break;
+                        }
+                    }
+                }
+                o["ok"] = true;
                 return o;
             });
         if (!zm_json_get_bool(gate, "ok", false))
             co_return ZmFileError(
                 code.c_str(), static_cast<int>(zm_file_row_int(gate, "status", 404)), message);
         shareId = zm_file_row_int(row, "id", 0);
-        rootId  = zm_file_row_int(gate, "root", 0);
         space   = zm_file_row_int(row, "space", 0);
     }
+
+    // 多条目分享的顶层(dir_id=0)= 虚拟根:平铺各条目,面包屑只有分享名一级
+    if (multi && dirId == 0)
+    {
+        ZMJSON vlist = co_await ZmHttpServer::RunOnPool<ZMJSON>(
+            [this, roots, q]() -> ZMJSON
+            {
+                ZMJSON list = ZMJSON::array();
+                for (int64_t id : roots)
+                {
+                    ZMJSON nrow = m_db->NodeRowSync(id);
+                    if (!nrow.empty())
+                        list.push_back(ZmFileNodeModule::NodeView(nrow));
+                }
+                // 目录补子树字节(与常规列表同一口径);条目数受批量安全阈值约束(≤2000),不分页
+                ZmFileNodeModule::FillDirBytes(m_db, list);
+                ZMJSON out   = ZMJSON::object();
+                out["total"] = static_cast<int64_t>(list.size());
+                out["page"]  = 1;
+                out["size"]  = q.size;
+                out["list"]  = std::move(list);
+                return out;
+            });
+        ZMJSON bc = ZMJSON::array();
+        ZMJSON vm = ZMJSON::object();
+        vm["id"]   = 0;   // 0 = 虚拟根(点它回到分享顶层)
+        vm["name"] = zm_file_row_str(row, "name");
+        bc.push_back(std::move(vm));
+        vlist["breadcrumb"] = std::move(bc);
+        vlist["space"]      = space;
+        if (m_audit)
+            co_await m_audit->RecordShareAccess(shareId, token, zm_file::kShareLogList, 1,
+                                                viewerUid, ip, ua, "");
+        co_return vlist;
+    }
+
     // 分享根用 0 表示;其余用实际条目 id 列目录
     int64_t baseId = (dirId == 0) ? rootId : dirId;
     ZMJSON  list   = co_await m_node->List(space, baseId, q);
@@ -763,9 +965,16 @@ drogon::Task<ZMJSON> ZmFileShareModule::ListDir(const std::string& token, int64_
     if (m_audit)
         co_await m_audit->RecordShareAccess(shareId, token, zm_file::kShareLogList, 1,
                                             viewerUid, ip, ua, "");
-    // 面包屑:从分享根到当前目录(前端只认这棵树)
+    // 面包屑:从分享根到当前目录(前端只认这棵树);多条目分享首级是分享名(虚拟根)
     ZMJSON bc = ZMJSON::array();
     {
+        if (multi)
+        {
+            ZMJSON vm  = ZMJSON::object();
+            vm["id"]   = 0;
+            vm["name"] = zm_file_row_str(row, "name");
+            bc.push_back(std::move(vm));
+        }
         ZMJSON rootRow   = co_await m_db->QueryRow("SELECT id, name FROM nodes WHERE id = ?1",
                                                    {std::to_string(rootId)});
         ZMJSON rootItem  = ZMJSON::object();
@@ -819,7 +1028,6 @@ drogon::Task<ZMJSON> ZmFileShareModule::Download(const std::string&          tok
     std::string code;
     std::string message;
     int64_t     shareId  = 0;
-    int64_t     rootId   = 0;
     int64_t     space    = 0;
     int64_t     ownerUid = 0;
     {
@@ -840,10 +1048,11 @@ drogon::Task<ZMJSON> ZmFileShareModule::Download(const std::string&          tok
                     o["status"] = 403;
                     return o;
                 }
-                int64_t root = zm_file_row_int(row, "node_id", 0);
+                // 任一分享根的子树命中即放行(多选分享的条目分散在多棵子树下)
+                std::vector<int64_t> roots = VisibleRootIds(ShareRootsSync(row));
                 for (int64_t id : ids)
                 {
-                    if (!InShareTreeSync(id, root))
+                    if (!InShareTreeSync(id, roots))
                     {
                         code        = zm_file_err::kNodeNotFound;
                         message     = "条目不在分享范围内";
@@ -851,15 +1060,13 @@ drogon::Task<ZMJSON> ZmFileShareModule::Download(const std::string&          tok
                         return o;
                     }
                 }
-                o["ok"]   = true;
-                o["root"] = root;
+                o["ok"] = true;
                 return o;
             });
         if (!zm_json_get_bool(gate, "ok", false))
             co_return ZmFileError(
                 code.c_str(), static_cast<int>(zm_file_row_int(gate, "status", 404)), message);
         shareId  = zm_file_row_int(row, "id", 0);
-        rootId   = zm_file_row_int(gate, "root", 0);
         space    = zm_file_row_int(row, "space", 0);
         ownerUid = zm_file_row_int(row, "uid", 0);
     }
@@ -971,7 +1178,6 @@ drogon::Task<ZMJSON> ZmFileShareModule::Download(const std::string&          tok
     if (m_audit)
         co_await m_audit->RecordShareAccess(shareId, token, zm_file::kShareLogPack, 1,
                                             viewerUid, ip, ua, "打包中");
-    (void)rootId;
     ZMJSON out     = ZMJSON::object();
     out["task_no"] = taskNo;
     co_return out;
