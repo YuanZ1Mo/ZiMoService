@@ -4,6 +4,7 @@
 // 二维码前端本地生成(qrcode 库),不上传链接到第三方服务
 import { computed, ref, reactive, watch, nextTick, inject } from 'vue'
 import Modal from '../../components/Modal.vue'
+import ZmSelect from '../../components/ZmSelect.vue'
 import QRCode from 'qrcode'
 import { filehubApi, fmtSize } from '../../api/filehub'
 
@@ -15,7 +16,7 @@ const props = defineProps({
 const emit = defineEmits(['close', 'created'])
 const toast = inject('toast')
 
-const form = reactive({ pwd_enabled: false, expire_days: 7, max_downloads: 0, login_only: false })
+const form = reactive({ name: '', pwd: '', pwd_enabled: false, expire_days: 7, max_downloads: 0, login_only: false })
 const busy = ref(false)
 const done = ref(null)   // 创建成功结果 {url, pwd, expire_time}
 
@@ -29,7 +30,7 @@ const names = computed(() => {
 
 watch(() => props.show, (v) => {
   if (v) {
-    form.pwd_enabled = false; form.expire_days = 7; form.max_downloads = 0; form.login_only = false
+    form.name = ''; form.pwd = ''; form.pwd_enabled = false; form.expire_days = 7; form.max_downloads = 0; form.login_only = false
     done.value = null
   } else {
     nextTick(() => { done.value = null })
@@ -42,6 +43,8 @@ async function create() {
   try {
     const r = await filehubApi.shareCreate({
       space: props.nodes[0].space, node_ids: props.nodes.map(n => n.id),
+      name: form.name.trim() || undefined,
+      pwd: form.pwd.trim() || undefined,
       pwd_enabled: form.pwd_enabled, expire_days: Number(form.expire_days),
       max_downloads: Number(form.max_downloads), login_only: form.login_only
     })
@@ -65,12 +68,20 @@ async function copy(text, btn) {
   } catch { /* 剪贴板不可用 */ }
 }
 const EXPIRES = [{ v: 0, n: '永久' }, { v: 1, n: '1 天' }, { v: 7, n: '7 天' }, { v: 30, n: '30 天' }]
+// ZmSelect 要 {value,label}
+const expireOptions = EXPIRES.map(e => ({ value: e.v, label: e.n }))
 </script>
 
 <template>
   <Modal :show="show" :title="done ? '分享已创建' : (multi ? `分享 ${nodes.length} 项` : `分享「${nodes.length ? nodes[0].name : ''}」`)" @close="emit('close')">
     <!-- 设置态 -->
     <template v-if="!done">
+      <div class="form-item">
+        <label class="form-label">分享名称 <span class="opt">留空则用文件/文件夹名</span></label>
+        <input v-model.trim="form.name" class="input" maxlength="255"
+               :placeholder="nodes.length ? nodes[0].name : ''" />
+        <span class="form-hint">只作分享页的标题展示,不改文件名</span>
+      </div>
       <!-- 多选:列出一条分享实际绑定的条目(避免"分享了什么"不清楚) -->
       <div v-if="multi" class="form-item" style="margin-bottom:12px">
         <label class="form-label">分享内容 <span class="opt">共 {{ nodes.length }} 项{{ dirCount ? `,含 ${dirCount} 个文件夹` : '' }}</span></label>
@@ -87,12 +98,15 @@ const EXPIRES = [{ v: 0, n: '永久' }, { v: 1, n: '1 天' }, { v: 7, n: '7 天'
         </div>
         <span class="form-hint">提取码仅创建后展示一次,可在「我的分享」中重置</span>
       </div>
+      <!-- 自定义提取码:留空则服务端随机生成(4 位字母数字) -->
+      <div v-if="form.pwd_enabled" class="form-item" style="margin-top:-6px">
+        <label class="form-label">自定义提取码 <span class="opt">4 个字符;留空随机生成</span></label>
+        <input v-model.trim="form.pwd" class="input" maxlength="4" placeholder="留空则由服务端随机生成" />
+      </div>
       <div class="row" style="gap:12px;flex-wrap:wrap">
         <div class="form-item" style="flex:1;min-width:170px">
           <label class="form-label">有效期</label>
-          <select v-model.number="form.expire_days" class="input">
-            <option v-for="e in EXPIRES" :key="e.v" :value="e.v">{{ e.n }}</option>
-          </select>
+          <ZmSelect v-model="form.expire_days" :options="expireOptions" />
         </div>
         <div class="form-item" style="flex:1;min-width:170px">
           <label class="form-label">下载次数上限 <span class="opt">0 = 不限</span></label>

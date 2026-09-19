@@ -937,7 +937,7 @@ drogon::Task<HttpResponsePtr> ZmFileAdminModule::HandleTrash(HttpRequestPtr req)
     ZmListQuery q;
     q.page        = QueryInt(req, "page", 1, 1, 1000000);
     q.size        = QueryInt(req, "size", 50, 1, 500);
-    q.sort        = req->getParameter("sort").empty() ? "mtime" : req->getParameter("sort");
+    q.sort        = req->getParameter("sort").empty() ? "delete_time" : req->getParameter("sort");
     q.order       = req->getParameter("order").empty() ? "desc" : req->getParameter("order");
     int64_t space = req->getParameter("space").empty() ? -1 : QueryI64(req, "space", -1);
     int64_t from  = QueryI64(req, "from", 0);

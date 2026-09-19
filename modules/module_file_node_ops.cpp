@@ -1479,12 +1479,24 @@ ZMJSON ZmFileNodeModule::TrashListSync(int64_t space, const ZmListQuery& q, int6
         where += " AND delete_time <= ?" + std::to_string(params.size() + 1);
         params.push_back(std::to_string(q.mtimeTo));
     }
+    // 关键词过滤:与空间搜索同口径(口径统一在 ZmAddKeywordCond,别在这里另写一份)
+    ZmAddKeywordCond(where, params, q.keyword, {"name"});
 
     ZMJSON  totalRow = m_db->QueryRowSync("SELECT COUNT(*) AS n FROM nodes" + where, params);
     int64_t total    = zm_file_row_int(totalRow, "n", 0);
 
-    std::string              order = (q.sort == "name") ? " ORDER BY name ASC, id ASC"
-                                                        : " ORDER BY delete_time DESC, id DESC";
+    // 排序:回收站没有"修改时间"的语义,认 delete_time;order 参数真正生效
+    // (原先只认 sort=name,其余一律 delete_time DESC,升降序写死)
+    std::string dir = (q.order == "desc") ? " DESC" : " ASC";
+    std::string col = "delete_time";
+    if (q.sort == "name")
+        col = "name";
+    else if (q.sort == "type")
+        col = "type";
+    else if (q.sort == "size")
+        col = "size";
+    // id 兜底:同名/同大小/同秒删除时保证顺序稳定,翻页不会漏项或重项
+    std::string              order = " ORDER BY " + col + dir + ", id" + dir;
     std::vector<std::string> lp    = params;
     lp.push_back(std::to_string(q.size));
     lp.push_back(std::to_string((q.page - 1) * q.size));
@@ -1496,14 +1508,12 @@ ZMJSON ZmFileNodeModule::TrashListSync(int64_t space, const ZmListQuery& q, int6
     ZMJSON list = ZMJSON::array();
     for (const auto& r : rows)
     {
-        ZmFileNode n          = ZmFileNode::FromRow(r);
-        ZMJSON     item       = ZMJSON::object();
-        item["id"]            = n.id;
-        item["space"]         = n.space;   // 管理端"空间"列按它推导,缺了下发就恒为公共空间
-        item["name"]          = n.name;
-        item["type"]          = n.type;
-        item["size"]          = n.size;
-        item["items"]         = n.items;
+        ZmFileNode n = ZmFileNode::FromRow(r);
+        // 以空间列表同一套字段打底(NodeView),再叠加回收站独有的几项。
+        // 别在这里另起一份手写字段表:两边会漂移 —— "类型"列全变"其他"、
+        // "删除时间"列显示成"—"就是漏了 ext 与 update_time 造成的
+        ZMJSON item    = NodeView(r);
+        item["space"]  = n.space;   // 管理端"空间"列按它推导,缺了下发就恒为公共空间
         // 目录的 size 恒为 0(nodes 表语义:目录不占字节),但回收站视图的"大小"列
         // 要给"子树条目数与字节数"(需求 §3.7.2) —— 否则用户看到"1 项 · 0 B",
         // 既估不出彻底删除的耗时,也看不出这块占用有多大

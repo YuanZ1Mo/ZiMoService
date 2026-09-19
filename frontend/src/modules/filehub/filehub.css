@@ -51,6 +51,8 @@
 .fh-toolbar{display:flex;align-items:center;gap:8px;padding:8px;flex-wrap:wrap;min-height:60px}
 .fh-toolbar .grow{flex:1;min-width:0}
 .fh-search{width:250px}
+/* 搜索按钮内嵌在框右侧:输入框要留出这块,否则长关键词会钻到按钮底下 */
+.fh-search .input{padding-right:40px}
 @media (max-width:768px){.fh-search{width:150px}}
 .vseg{display:flex;gap:2px;padding:3px;background:var(--color-border-soft);border-radius:10px}
 .vseg button{width:32px;height:28px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;
@@ -154,6 +156,9 @@ tr:hover .row-ops,tr.sel .row-ops{opacity:1}
 .task-tabs{display:flex;gap:2px;margin-left:auto}
 .task-tabs button{height:30px;padding:0 12px;border-radius:9px;font-size:var(--fs-cap);font-weight:700;color:var(--color-text-3);border:none;background:none}
 .task-tabs button.on{background:var(--color-primary-soft);color:var(--color-primary)}
+/* 历史搜索行:放在滚动容器外面,不随列表滚走;输入框留出右侧清空按钮的位置 */
+.task-search{padding:8px 12px;border-bottom:1px solid var(--color-border-soft)}
+.task-search .input{height:34px;padding-right:34px}
 .task-list{flex:1;overflow-y:auto;padding:8px 12px 12px}
 .titem{display:flex;flex-direction:column;gap:7px;padding:12px;border-radius:var(--r-md)}
 .titem:hover{background:var(--color-border-soft)}
@@ -161,6 +166,10 @@ tr:hover .row-ops,tr.sel .row-ops{opacity:1}
 .t-name{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .t-ops{margin-left:auto;display:flex;gap:4px;flex:none}
 .t-sub{font-size:var(--fs-cap);color:var(--color-text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 任务编号:等宽小字 + 弱化底色,一眼能与相邻的说明文字区分开 */
+.t-no{margin-left:6px;padding:1px 5px;border-radius:5px;background:var(--color-border-soft);
+  font-family:var(--font-mono,monospace);font-size:var(--fs-cap);color:var(--color-text-3);cursor:pointer}
+.t-no:hover{color:var(--color-text-2)}
 .tprog{height:6px;border-radius:3px;background:var(--color-border-soft);overflow:hidden}
 .tprog i{display:block;height:100%;border-radius:3px;background:var(--grad-brand);transition:width var(--dur) linear}
 .tprog.done i{background:var(--color-ok)}

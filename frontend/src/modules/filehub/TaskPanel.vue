@@ -57,8 +57,24 @@ function onDragStart(e) {
   window.addEventListener('mousemove', offMove)
   window.addEventListener('mouseup', offUp)
 }
+/**
+ * 复制任务编号
+ *
+ * 编号是 32 位十六进制,行里只显示前 8 位,排障时要拿整串去搜,故给一键复制。
+ *
+ * @param no 完整任务编号
+ */
+async function copyTaskNo(no) {
+  try {
+    await navigator.clipboard.writeText(no)
+    toast('任务编号已复制', 'ok')
+  } catch { toast('复制失败,请手动选择文本', 'warn') }
+}
 // 面板随模块失活时若仍在拖,清掉全局监听,避免残留到其它页面
-onDeactivated(() => { if (offUp) offUp() })
+onDeactivated(() => {
+  if (offUp) offUp()
+  clearTimeout(searchTimer)   // 失活后防抖回调不该再发请求
+})
 
 const TYPE_NAME = { 1: '上传', 2: '复制', 3: '打包下载', 4: '目录统计', 5: '一致性同步', 6: '回收站清理' }
 const STATUS_NAME = { 1: '排队中', 2: '进行中', 3: '已完成', 4: '失败', 5: '已取消', 6: '已中断' }
@@ -78,13 +94,56 @@ function progressText(t) {
 }
 
 const historyItems = computed(() => store.history)
+const SEARCH_KW_MAX = 64        // 服务端关键词上限(超出会静默返回 0 条,故前端先拦)
+const SEARCH_DEBOUNCE_MS = 400  // 键入停止多久后自动搜
+const kwInput = ref('')
+const keyword = ref('')         // 已生效的关键词(防抖到点才落到这里)
+let searchTimer = 0
+let loadSeq = 0                 // 请求序号:连打关键词时只认最后一次发出的响应
 async function loadHistory() {
+  const seq = ++loadSeq
   loadingHistory.value = true
   try {
-    const d = await filehubApi.tasks({ page: 1, size: 50 })
+    const d = await filehubApi.tasks({ page: 1, size: 50, keyword: keyword.value })
+    if (seq !== loadSeq) return
     store.history = d.list || []
     store.historyTotal = d.total || 0
-  } catch { /* 静默 */ } finally { loadingHistory.value = false }
+  } catch { /* 静默 */ } finally {
+    if (seq === loadSeq) loadingHistory.value = false
+  }
+}
+/**
+ * 键入停止后自动搜索(防抖)
+ *
+ * 与空间/回收站两处同口径:输入框不配搜索按钮,靠这个间隔合并连续敲键;
+ * 清空关键词即时退出搜索、不等防抖,否则列表会先空一下再回来。
+ */
+function scheduleSearch() {
+  clearTimeout(searchTimer)
+  if (!kwInput.value.trim()) { keyword.value = ''; loadHistory(); return }
+  searchTimer = setTimeout(applySearch, SEARCH_DEBOUNCE_MS)
+}
+/// 立即搜索(回车):取消挂起的防抖
+function flushSearch() {
+  clearTimeout(searchTimer)
+  applySearch()
+}
+function applySearch() {
+  clearTimeout(searchTimer)
+  const kw = kwInput.value.trim()
+  if (kw.length > SEARCH_KW_MAX) {
+    toast(`关键词最多 ${SEARCH_KW_MAX} 个字符(当前 ${kw.length} 个)`, 'warn')
+    return
+  }
+  keyword.value = kw
+  loadHistory()
+}
+/// 一键清空并回到全量历史
+function clearSearch() {
+  clearTimeout(searchTimer)
+  kwInput.value = ''
+  keyword.value = ''
+  loadHistory()
 }
 watch(tab, (v) => { if (v === 'history') loadHistory() })
 watch(() => store.panelOpen, (v) => { if (v && tab.value === 'history') loadHistory() })
@@ -156,6 +215,18 @@ async function deleteTask(t) {
       </button>
     </div>
 
+    <!-- 历史搜索:匹配任务名或任务编号(编号是排障时最直接的抓手);
+         键入停止即搜,与空间/回收站两处同口径 -->
+    <div v-if="tab === 'history'" class="task-search input-wrap">
+      <input v-model.trim="kwInput" class="input" :maxlength="SEARCH_KW_MAX"
+             placeholder="搜索任务名或任务编号…" @input="scheduleSearch" @keyup.enter="flushSearch" />
+      <span v-if="kwInput" class="input-suffix">
+        <button class="icon-btn" type="button" aria-label="清空搜索" title="清空" @click="clearSearch">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </span>
+    </div>
+
     <div class="task-list">
       <template v-if="tab === 'active'">
         <!-- 客户端上传队列(客户端视角进度) -->
@@ -225,13 +296,17 @@ async function deleteTask(t) {
             <template v-else>
               <span class="num">{{ TYPE_NAME[Number(t.type)] }} · {{ fmtTime(t.end_time || t.create_time) }}{{ Number(t.total_items) ? ` · ${t.total_items} 项` : '' }}{{ t.size ? ` · ${fmtSize(t.size)}` : '' }}</span>
             </template>
+            <!-- 任务编号:全长 32 位十六进制,整串显示会把这一行撑爆,故只显前 8 位;
+                 悬停看全串,点击复制整串(排障时要拿它去搜) -->
+            <button class="t-no num" type="button" :title="`任务编号 ${t.task_no}(点击复制)`"
+                    @click.stop="copyTaskNo(t.task_no)">{{ t.task_no.slice(0, 8) }}</button>
           </div>
         </div>
       </template>
 
       <div v-if="isEmpty" class="empty" style="padding:32px 16px">
         <div class="empty-icon">🛫</div>
-        <div class="empty-title" style="font-size:var(--fs-body)">{{ tab === 'active' ? '暂无进行中任务' : '暂无历史任务' }}</div>
+        <div class="empty-title" style="font-size:var(--fs-body)">{{ tab === 'active' ? '暂无进行中任务' : (keyword ? '没有匹配的任务' : '暂无历史任务') }}</div>
       </div>
     </div>
 

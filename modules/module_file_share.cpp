@@ -95,6 +95,28 @@ std::string ZmFileShareModule::GeneratePwd()
     return s;
 }
 
+/**
+ * @brief 校验用户自定义的提取码
+ *
+ * 随机生成的码是 4 位(字母数字、去掉易混淆字符);自定义沿用**同一长度**,
+ * 但字符集放开 —— 用户想用 8888 或四个字母都行。只挡空白与控制字符:
+ * 它们既不能在分享页正常输入,也会让"看起来一样"的码验不过。
+ *
+ * @param pwd 待校验的提取码(调用方已去首尾空白)
+ * @return 空串 = 合法;否则是可直接回给用户的说明
+ */
+static std::string CheckCustomPwd(const std::string& pwd)
+{
+    if (pwd.size() != 4)
+        return "提取码须为 4 个字符";
+    for (unsigned char c : pwd)
+    {
+        if (c < 0x21 || c > 0x7E)
+            return "提取码只能用 4 个可见字符(不含空格)";
+    }
+    return {};
+}
+
 std::string ZmFileShareModule::HashPwd(const std::string& token, const std::string& pwd)
 {
     // 只存哈希;盐用分享 token(同一提取码在不同分享下哈希不同)
@@ -256,14 +278,23 @@ drogon::Task<ZMJSON> ZmFileShareModule::Create(const ZmOpCtx& ctx, int64_t space
                                                const std::vector<int64_t>& nodeIds,
                                                bool pwdEnabled, int64_t expireDays,
                                                int64_t expireTime, int64_t maxDownloads,
-                                               bool loginOnly)
+                                               bool loginOnly, const std::string& displayName,
+                                               const std::string& customPwd)
 {
     co_return co_await ZmHttpServer::RunOnPool<ZMJSON>(
         [this, ctx, space, nodeIds, pwdEnabled, expireDays, expireTime, maxDownloads,
-         loginOnly]() -> ZMJSON
+         loginOnly, displayName, customPwd]() -> ZMJSON
         {
             // 公共空间不提供"仅登录可见"(§3.12.2):前端已隐藏开关,这里兜住直接调接口的情况
             bool effectiveLoginOnly = (space == 0) ? false : loginOnly;
+            // 自定义提取码:留空 = 随机生成;给了就校验,不合规直接回 400
+            std::string customPwdTrim = ZmTrimSpaces(customPwd);
+            if (pwdEnabled && !customPwdTrim.empty())
+            {
+                std::string err = CheckCustomPwd(customPwdTrim);
+                if (!err.empty())
+                    return ZmFileError(zm_file_err::kBadRequest, 400, err);
+            }
             // 去重 + 条数上限(多选分享一条记录绑定多个条目,记录本身仍算 1 条有效分享)
             std::vector<int64_t> ids;
             {
@@ -314,13 +345,17 @@ drogon::Task<ZMJSON> ZmFileShareModule::Create(const ZmOpCtx& ctx, int64_t space
             std::string pwdHash;
             if (pwdEnabled)
             {
-                pwdPlain = GeneratePwd();
+                // 自定义优先,留空才随机生成
+                pwdPlain = customPwdTrim.empty() ? GeneratePwd() : customPwdTrim;
                 pwdHash  = HashPwd(token, pwdPlain);
             }
             // shares.node_id/node_type/name 保留为主条目(第一条)+ 展示名(列表/兼容旧读路径)
             int64_t     nodeId   = ids[0];
             int64_t     nodeType = zm_file_row_int(rows[0], "type", 0);
-            std::string name     = zm_file_row_str(rows[0], "name");
+            // 展示名:自定义优先,没给(或只给了空白)就沿用主条目名。
+            // 真实文件名在 share_nodes.name 里,改展示名不影响列表与下载
+            std::string custom = ZmTrimSpaces(displayName);
+            std::string name   = custom.empty() ? zm_file_row_str(rows[0], "name") : custom;
             int64_t     shareId  = 0;
             bool        ok       = m_db->WithTxSync(
                 [&](ZmSqliteDb& db) -> bool
@@ -408,10 +443,18 @@ ZMJSON ShareViewOf(const ZMJSON& row)
     return j;
 }
 
-drogon::Task<ZMJSON> ZmFileShareModule::List(int64_t uid, int status, int page, int size)
+drogon::Task<ZMJSON> ZmFileShareModule::List(int64_t uid, int status, int64_t space, int page,
+                                             int size, const std::string& keyword)
 {
     std::string              where = " WHERE uid = ?1";
     std::vector<std::string> p     = {std::to_string(uid)};
+    if (space >= 0)
+    {
+        where += " AND space = ?" + std::to_string(p.size() + 1);
+        p.push_back(std::to_string(space));
+    }
+    // 关键词匹配展示名;口径统一在 ZmAddKeywordCond
+    ZmAddKeywordCond(where, p, keyword, {"name"});
     // 有效状态(status=1)但已过期/达下载上限的行,展示上算"已失效"(见下方 status_name)。
     // 落库要等每日清理,若筛选直接比 status 会出现"有效筛选里混着已失效、已失效筛选里反而没有"
     // 的矛盾,故筛选统一按"有效状态"计算
@@ -497,12 +540,32 @@ drogon::Task<ZMJSON> ZmFileShareModule::Patch(int64_t uid, int64_t shareId, cons
     }
     if (body.contains("max_downloads"))
         addSet("max_downloads", std::to_string(zm_file_row_int(body, "max_downloads", 0)));
+    if (body.contains("name"))
+    {
+        // 只改展示名(分享页标题/列表);空串 = 不改,免得误清成无名
+        std::string nm = ZmTrimSpaces(zm_file_row_str(body, "name"));
+        if (!nm.empty())
+            addSet("name", nm);
+    }
     if (body.contains("login_only"))
         addSet("login_only", std::to_string(zm_file_row_int(body, "login_only", 0) ? 1 : 0));
     if (zm_json_get_bool(body, "reset_pwd", false))
     {
         newPwd = GeneratePwd();
         addSet("pwd_hash", HashPwd(token, newPwd));
+    }
+    else if (body.contains("pwd"))
+    {
+        // 自定义新提取码;留空 = 不改(不是"清空提取码",清空没有对应的界面语义)
+        std::string custom = ZmTrimSpaces(zm_file_row_str(body, "pwd"));
+        if (!custom.empty())
+        {
+            std::string err = CheckCustomPwd(custom);
+            if (!err.empty())
+                co_return ZmFileError(zm_file_err::kBadRequest, 400, err);
+            newPwd = custom;
+            addSet("pwd_hash", HashPwd(token, custom));
+        }
     }
     params.push_back(std::to_string(shareId));
     bool ok = co_await m_db->Exec("UPDATE shares SET " + setClause + " WHERE id = ?" +

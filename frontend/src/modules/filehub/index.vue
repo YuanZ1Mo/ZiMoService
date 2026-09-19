@@ -7,6 +7,7 @@ import { useSessionStore } from '../../stores/session'
 import { useFilehubStore } from '../../stores/filehub'
 import { filehubApi, fmtSize, fmtNodeSize, fmtTime, kindOf, FILE_KINDS, nextSelection, nodeBytes } from '../../api/filehub'
 import FileList from './FileList.vue'
+import ZmSelect from '../../components/ZmSelect.vue'
 import TrashView from './TrashView.vue'
 import TaskPanel from './TaskPanel.vue'
 import MoveCopyDialog from './MoveCopyDialog.vue'
@@ -37,10 +38,23 @@ async function loadSpaces() {
   try {
     spaces.value = await filehubApi.spaces() || []
     if (!spaces.value.some(s => s.space === space.value)) space.value = 0
+    tagNav()   // 空间列表可能刚把 space 归位,当前记录的位置同步一下
   } catch (e) {
     if (e.status === 403) denied403.value = true
     else toast(e.message || '加载空间信息失败', 'err')
   }
+}
+/**
+ * 回收站工具条切空间
+ *
+ * 只换空间,回收站自己按新空间重取 —— 不能走 switchSpace:它会强制把视图切回"文件浏览"
+ *
+ * @param s 目标空间号
+ */
+function switchTrashSpace(s) {
+  if (space.value === s) return
+  space.value = s
+  selected.value = new Set()
 }
 function switchSpace(s) {
   if (view.value !== 'files') view.value = 'files'
@@ -48,8 +62,74 @@ function switchSpace(s) {
   space.value = s
   dirId.value = 0          // 切空间回到根目录(§3.1)
   selected.value = new Set()
+  pushNav()                // 切空间也是一次位置变化,后退能退回去
   // 搜索态切空间:关键词与结果都属于旧空间,先退出搜索(它内部会按新空间重载)
   if (query.searching) { exitSearch(); return }
+  load()
+}
+
+// ── 目录前进后退(浏览器历史) ──
+// 鼠标侧键是浏览器级的历史导航,页面拦不住(preventDefault 不生效),所以反过来做:
+// 让浏览器的前进后退本身成为目录导航 —— 每次换位置压一条历史记录(URL 不变,只挂状态),
+// popstate 时按记录回放。鼠标侧键、Alt+←/→、浏览器返回键于是全都生效,不需要另接键盘。
+// 状态字段与 vue-router 的 buildState 对齐:position 取 history.length,它靠这个算
+// 前进/后退的 delta;URL 不变则 vue-router 只会收到一次"同址导航"并忽略,不会抢历史。
+/**
+ * 把当前位置写进"当前"这条记录(替换,不新增)
+ *
+ * 首条记录也要带上 fh,否则从第一层目录后退会落到一条没状态的记录上 ——
+ * 浏览器已经退了,界面却还在原处。
+ */
+function tagNav() {
+  const cur = history.state || {}
+  const pos = typeof cur.position === 'number' ? cur.position : window.history.length - 1
+  history.replaceState({ back: null, current: null, forward: null, replaced: true,
+                         position: pos, scroll: null,
+                         fh: { space: space.value, dirId: dirId.value } }, '')
+}
+/// 进入新位置:压一条记录(URL 不变,只挂状态)
+function pushNav() {
+  history.pushState({ back: null, current: null, forward: null, replaced: false,
+                      position: window.history.length, scroll: null,
+                      fh: { space: space.value, dirId: dirId.value } }, '')
+}
+/**
+ * 浏览器前进/后退 → 目录前进/后退
+ *
+ * @param e popstate 事件
+ */
+function onPopState(e) {
+  const st = e.state && e.state.fh
+  if (!st) return   // 退到的是别的路由记录:交给 vue-router 处理
+  const sp   = Number(st.space)
+  const did  = Number(st.dirId)
+  const same = sp === space.value && did === dirId.value
+  if (same && view.value === 'files') return   // 已在位,不必重载
+  view.value = 'files'
+  // 目录要变了,搜索态与选中集都不再适用;清搜索态但不单独发请求,下面统一 load 一次
+  clearTimeout(searchTimer)
+  searchSeq++
+  query.searching = false; query.truncated = false; searchInput.value = ''
+  if (!same) {
+    space.value = sp
+    dirId.value = did
+    selected.value = new Set()
+    lastIdx = -1
+  }
+  load()
+}
+/**
+ * 面包屑跳级(回某一级祖先 / 回空间根)
+ *
+ * @param id 目标目录 id;0 = 空间根
+ */
+function goDir(id) {
+  const target = Number(id)
+  if (target === dirId.value) return   // 点当前这一级不产生新记录
+  dirId.value = target
+  selected.value = new Set()
+  lastIdx = -1
+  pushNav()
   load()
 }
 
@@ -116,9 +196,34 @@ let refreshTimer = null
 
 // ── 搜索(当前目录及子目录,§3.2) ──
 const searchInput = ref('')
+const SEARCH_DEBOUNCE_MS = 400   // 键入停止多久后自动搜索
 // 搜索态面包屑会被清空,"返回上一级目录"仍需要它:进入搜索时留一份快照
 let bcBeforeSearch = []
+let searchTimer = 0
+let searchSeq = 0
+/**
+ * 键入停止后自动搜索(防抖)
+ *
+ * 输入框不配"搜索"按钮,靠这个间隔把连续敲键合并成一次请求。
+ * 清空关键词即时退出搜索、不等防抖 —— 否则列表会先空一下再回来。
+ */
+function scheduleSearch() {
+  clearTimeout(searchTimer)
+  if (!searchInput.value.trim()) { doSearch(); return }
+  searchTimer = setTimeout(doSearch, SEARCH_DEBOUNCE_MS)
+}
+/// 立即搜索(回车):取消挂起的防抖,不必再等那 400ms
+function flushSearch() {
+  clearTimeout(searchTimer)
+  doSearch()
+}
+/// 一键清空并退出搜索
+function clearSearch() {
+  searchInput.value = ''
+  exitSearch()
+}
 async function doSearch() {
+  clearTimeout(searchTimer)
   const kw = searchInput.value.trim()
   if (!kw) { exitSearch(); return }
   // 服务端关键词上限 64 字符:超了会静默返回 0 条,这里先拦下并说明原因
@@ -129,15 +234,25 @@ async function doSearch() {
   query.searching = true
   bcBeforeSearch = [...breadcrumb.value]   // 快照当前目录链,供"返回上一级目录"使用
   loading.value = true
+  // 自动搜索下连续敲键会有两个请求在飞:只认最后一次发出的那个响应,
+  // 否则慢的那个后到会把新结果盖回旧的
+  const seq = ++searchSeq
   try {
     const d = await filehubApi.search({ space: space.value, dir_id: dirId.value, keyword: kw, page: 1, size: 500 })
+    if (seq !== searchSeq) return
     items.value = d.list || []
     total.value = d.total || 0
     query.truncated = !!d.truncated
     breadcrumb.value = []
-  } catch (e) { toast(e.message || '搜索失败', 'err') } finally { loading.value = false }
+  } catch (e) {
+    if (seq === searchSeq) toast(e.message || '搜索失败', 'err')
+  } finally {
+    if (seq === searchSeq) loading.value = false
+  }
 }
 function exitSearch() {
+  clearTimeout(searchTimer)
+  searchSeq++   // 退出搜索后,在飞的响应不许再改列表
   query.searching = false; query.truncated = false; searchInput.value = ''
   items.value = []; load()
 }
@@ -184,13 +299,15 @@ function onKeydown(e) {
   const t = e.target
   // 输入框/可编辑区里不劫持快捷键:否则 Ctrl+A 无法全选输入内容
   const typing = !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
-  if (e.key === 'Escape') { clearSel(); ctxMenu.show = false; closeUpMenu() }
+  if (e.key === 'Escape') { clearSel(); ctxMenu.show = false; closeShareCtx(); closeUpMenu() }
   if (!typing && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a' && view.value === 'files' && !query.searching) { e.preventDefault(); selectAll() }
 }
 // keep-alive 下组件不卸载、只失活:监听须随激活状态挂摘,否则隐藏页仍会吃掉 Ctrl+A
 onMounted(() => document.addEventListener('keydown', onKeydown))
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('popstate', onPopState)
+  clearTimeout(searchTimer)   // 卸载后防抖回调不该再发请求
   if (offChange) { offChange(); offChange = null }
 })
 
@@ -198,10 +315,14 @@ onBeforeUnmount(() => {
 function openNode(n) {
   if (Number(n.type) === 1) {
     // 只重置搜索态(不能调 exitSearch:它内部会按旧目录先 load 一次,白跑一个请求)
-    if (query.searching) { query.searching = false; query.truncated = false; searchInput.value = '' }
+    if (query.searching) {
+      clearTimeout(searchTimer)   // 连带取消挂起的自动搜索,否则进目录后还会再补一次请求
+      query.searching = false; query.truncated = false; searchInput.value = ''
+    }
     dirId.value = n.id
     selected.value = new Set()
     lastIdx = -1
+    pushNav()
     load()
   } else {
     // 下载失败要说一声(文件可能已被他人删除 / 令牌过期)
@@ -263,10 +384,14 @@ function goParent() {
   if (!dirId.value) return
   const bc = query.searching ? bcBeforeSearch : breadcrumb.value
   const parent = bc.length >= 2 ? Number(bc[bc.length - 2].id) : 0
-  if (query.searching) { query.searching = false; query.truncated = false; searchInput.value = '' }
+  if (query.searching) {
+    clearTimeout(searchTimer)
+    query.searching = false; query.truncated = false; searchInput.value = ''
+  }
   dirId.value = parent
   selected.value = new Set()
   lastIdx = -1
+  pushNav()
   load()
 }
 function closeCtx() { ctxMenu.show = false }
@@ -542,17 +667,225 @@ const pwdBox = reactive({ show: false, name: '', pwd: '' })
 // 默认只看"有效":取消/失效的记录会离开列表,避免历史记录把列表撑满
 const shareFilter = ref(1)
 const SHARE_FILTERS = [[1, '有效'], [2, '已取消'], [3, '已失效'], [0, '全部']]
+const shareFilterOptions = SHARE_FILTERS.map(([v, n]) => ({ value: v, label: n }))
+// 修改属性里的有效期档位(与创建分享保持一致)
+const EDIT_EXPIRES = [{ value: 1, label: '1 天' }, { value: 7, label: '7 天' },
+                      { value: 30, label: '30 天' }, { value: 0, label: '永久' }]
+// 空间分类:与空间/回收站同款 seg。切空间只重取列表,不动状态筛选
+const shareSpace = ref(0)
+const shareSel = ref(new Set())
+const shareKwInput = ref('')
+const shareKeyword = ref('')   // 已生效的关键词(防抖到点才落到这里)
+let shareTimer = 0
+let shareSeq = 0               // 请求序号:防抖连打时只认最后一次发出的响应
 async function loadShares() {
+  const seq = ++shareSeq
   sharesLoading.value = true
   try {
-    const d = await filehubApi.shareList({ status: shareFilter.value || undefined, page: 1, size: 200 })
+    const d = await filehubApi.shareList({
+      status: shareFilter.value || undefined,
+      space: shareSpace.value,
+      keyword: shareKeyword.value || undefined,
+      page: 1, size: 200
+    })
+    if (seq !== shareSeq) return
     shares.value = d.list || []
-  } catch (e) { toast(e.message || '加载分享失败', 'err') } finally { sharesLoading.value = false }
+    shareSel.value = new Set()   // 整表换了,旧选中不再对应任何行
+  } catch (e) {
+    if (seq === shareSeq) toast(e.message || '加载分享失败', 'err')
+  } finally {
+    if (seq === shareSeq) sharesLoading.value = false
+  }
 }
-function setShareFilter(v) {
-  if (shareFilter.value === v) return
-  shareFilter.value = v
+/// 切空间:只看该空间的分享;状态筛选不动
+function switchShareSpace(v) {
+  if (Number(shareSpace.value) === Number(v)) return
+  shareSpace.value = Number(v)
   loadShares()
+}
+/// 键入停止后自动搜索(与空间/回收站/传输历史同口径)
+function scheduleShareSearch() {
+  clearTimeout(shareTimer)
+  if (!shareKwInput.value.trim()) { shareKeyword.value = ''; loadShares(); return }
+  shareTimer = setTimeout(applyShareSearch, SEARCH_DEBOUNCE_MS)
+}
+function flushShareSearch() {
+  clearTimeout(shareTimer)
+  applyShareSearch()
+}
+function applyShareSearch() {
+  clearTimeout(shareTimer)
+  const kw = shareKwInput.value.trim()
+  if (kw.length > SEARCH_KW_MAX) {
+    toast(`关键词最多 ${SEARCH_KW_MAX} 个字符(当前 ${kw.length} 个)`, 'warn')
+    return
+  }
+  shareKeyword.value = kw
+  loadShares()
+}
+function clearShareSearch() {
+  clearTimeout(shareTimer)
+  shareKwInput.value = ''
+  shareKeyword.value = ''
+  loadShares()
+}
+// ── 我的分享:选中与右键(与空间同一套语义) ──
+function toggleShareSel(s, e, alwaysToggle) {
+  const r = nextSelection(shares.value.map(x => x.id), shareSel.value, s.id, {
+    ctrl: !!(e && (e.ctrlKey || e.metaKey)),
+    shift: !!(e && e.shiftKey),
+    alwaysToggle: !!alwaysToggle,
+    lastIdx: shareLastIdx
+  })
+  shareSel.value = r.selected
+  shareLastIdx = r.lastIdx
+}
+let shareLastIdx = -1
+function toggleAllShares(checked) {
+  shareSel.value = checked ? new Set(shares.value.map(s => s.id)) : new Set()
+  shareLastIdx = -1
+}
+const shareTargets = computed(() => shares.value.filter(s => shareSel.value.has(s.id)))
+// 表头全选态:全部已加载行都在选中集里=全选;部分选中=半选
+const allSharesChecked  = computed(() => shares.value.length > 0 && shares.value.every(s => shareSel.value.has(s.id)))
+const someSharesChecked = computed(() => !allSharesChecked.value && shares.value.some(s => shareSel.value.has(s.id)))
+const shareCtx = reactive({ show: false, x: 0, y: 0, share: null, multi: false })
+/**
+ * 打开分享右键菜单
+ *
+ * @param e      触发事件
+ * @param s      命中的行(行尾 ⋯ 与行右键都传,空白处不传)
+ * @param source row = 右键某行;dots = 行尾 ⋯;area = 列表空白区
+ */
+function openShareCtx(e, s, source) {
+  if (source === 'area' && !shareSel.value.size) return   // 空白处且无选中:没有可操作对象
+  if (source !== 'area' && (source === 'dots' || !shareSel.value.has(s.id))) {
+    // 行尾 ⋯ = 只操作该行;右键未选中行 = 把它设为唯一选中项
+    shareSel.value = new Set([s.id])
+    shareLastIdx = -1
+  }
+  shareCtx.share = source === 'area' ? null : s
+  shareCtx.multi = shareSel.value.size > 1
+  shareCtx.show = true
+  const mh = 220
+  shareCtx.x = Math.min(e.clientX, window.innerWidth - 208)
+  shareCtx.y = (e.clientY + mh + 8 > window.innerHeight) ? Math.max(8, e.clientY - mh) : e.clientY
+}
+function closeShareCtx() { shareCtx.show = false }
+/// 菜单作用对象:多选 = 选中集;单选 = 命中行,空白处右键时回落到选中集里唯一项
+const shareCtxTargets = computed(() => {
+  if (shareCtx.multi) return shareTargets.value
+  const one = shareCtx.share || shareTargets.value[0] || null
+  return one ? [one] : []
+})
+/// 菜单项可用性:某个动作是否对当前选中集有意义(混选时按"至少有一条可用"显示)
+const shareCanCancel = computed(() => shareCtxTargets.value.some(s => Number(s.status) === 1))
+const shareCanResume = computed(() => shareCtxTargets.value.some(s => Number(s.status) === 2))
+/**
+ * 批量取消:只处理"有效"的那些,其余跳过并说明 ——
+ * 已取消/已失效的本来就无法取消,混选时不该整批失败
+ */
+function cancelShares(list) {
+  const hit = list.filter(s => Number(s.status) === 1)
+  const skip = list.length - hit.length
+  if (!hit.length) { toast('选中项里没有可取消的分享', 'warn'); return }
+  askConfirm(`取消 ${hit.length} 条分享?`,
+    '取消后链接立即失效,可随时恢复(原链接与提取码不变)。'
+    + (skip ? `<br>另外 <b>${skip}</b> 条不是有效状态,将跳过。` : ''),
+    async () => {
+      let ok = 0
+      for (const s of hit) {
+        try { await filehubApi.shareCancel(s.id); ok++ } catch { /* 单条失败不打断整批 */ }
+      }
+      toast(`已取消 ${ok} 条` + (ok < hit.length ? `,${hit.length - ok} 条失败` : ''), ok < hit.length ? 'warn' : 'ok')
+      loadShares(); loadSpaces()
+    })
+}
+/**
+ * 批量删除:任意状态都可删(有效分享删除即链接失效且不可恢复)
+ */
+/**
+ * 批量恢复:只处理"已取消"的那些,其余跳过 ——
+ * 有效的本来就有效、已失效的过期/达上限恢复不了
+ */
+function resumeShares(list) {
+  const hit = list.filter(s => Number(s.status) === 2)
+  const skip = list.length - hit.length
+  if (!hit.length) { toast('选中项里没有可恢复的分享', 'warn'); return }
+  askConfirm(`恢复 ${hit.length} 条分享?`,
+    '恢复后原链接与提取码继续可用;已过期或已达下载上限的无法恢复。'
+    + (skip ? `<br>另外 <b>${skip}</b> 条不是已取消状态,将跳过。` : ''),
+    async () => {
+      let ok = 0
+      for (const s of hit) {
+        try { await filehubApi.shareResume(s.id); ok++ } catch { /* 单条失败不打断整批 */ }
+      }
+      toast(`已恢复 ${ok} 条` + (ok < hit.length ? `,${hit.length - ok} 条失败` : ''), ok < hit.length ? 'warn' : 'ok')
+      loadShares(); loadSpaces()
+    })
+}
+/**
+ * 批量删除:任意状态都可删(有效分享删除即链接失效且不可恢复)。
+ * 走 shares/purge 批量接口,不必逐条发
+ */
+function purgeShares(list) {
+  const live = list.filter(s => Number(s.status) === 1).length
+  askConfirm(`删除 ${list.length} 条分享记录?`,
+    (live ? `其中 <b>${live}</b> 条<b style="color:var(--color-err)">正在生效</b>,删除后链接立即失效且不可恢复。<br>` : '')
+    + '删除的是分享记录,不影响文件本身。只想临时停用请改用「取消」——链接失效但可随时恢复。',
+    async () => {
+      try {
+        const r = await filehubApi.sharePurge({ ids: list.map(s => s.id) })
+        toast(`已删除 ${(r && r.purged) || 0} 条记录`, 'ok')
+        loadShares(); loadSpaces()
+      } catch (e) { toast(e.message || '删除失败', 'err') }
+    })
+}
+// ── 修改分享属性(创建时的那些:名称/有效期/次数/仅登录可见/提取码) ──
+const shareEdit = reactive({ show: false, id: 0, name: '', expire_days: 7, max_downloads: 0,
+                             login_only: false, pwd_enabled: false, reset_pwd: false, pwd: '', busy: false })
+function openShareEdit(s) {
+  shareEdit.id = s.id
+  shareEdit.name = s.name
+  // 有效期是"从现在起重新算 N 天",接口收的就是这个语义,所以不回显原到期时间
+  shareEdit.expire_days = 7
+  shareEdit.max_downloads = Number(s.max_downloads) || 0
+  shareEdit.login_only = !!Number(s.login_only)
+  shareEdit.pwd_enabled = !!s.has_pwd
+  shareEdit.reset_pwd = false
+  shareEdit.pwd = ''
+  shareEdit.busy = false
+  shareEdit.show = true
+}
+async function submitShareEdit() {
+  if (shareEdit.busy) return
+  shareEdit.busy = true
+  try {
+    const body = {
+      name: shareEdit.name.trim(),
+      expire_days: Number(shareEdit.expire_days) || 0,
+      max_downloads: Number(shareEdit.max_downloads) || 0,
+      login_only: shareEdit.login_only ? 1 : 0
+    }
+    // 手填的提取码优先;没填才看"重新生成随机码"
+    if (shareEdit.pwd_enabled && shareEdit.pwd.trim()) body.pwd = shareEdit.pwd.trim()
+    else if (shareEdit.pwd_enabled && shareEdit.reset_pwd) body.reset_pwd = true
+    const r = await filehubApi.sharePatch(shareEdit.id, body)
+    shareEdit.show = false
+    if (r && r.pwd) {
+      pwdBox.name = shareEdit.name
+      pwdBox.pwd = r.pwd
+      pwdBox.show = true
+      copyText(r.pwd, '新提取码已复制到剪贴板')   // 与单条重置同一体验:顺手复制
+    } else {
+      toast('已保存分享属性', 'ok')
+    }
+    loadShares()
+  } catch (e) {
+    toast(e.message || '保存失败', 'err')
+  } finally {
+    shareEdit.busy = false
+  }
 }
 // 恢复被取消的分享:重新生效,原链接与提取码继续可用
 function resumeShare(s) {
@@ -566,19 +899,6 @@ function resumeShare(s) {
     })
 }
 // 彻底删除记录(任意状态均可;有效分享删除即链接失效)
-function purgeShare(s) {
-  const live = Number(s.status) === 1
-  askConfirm('删除这条分享记录?',
-    live
-      ? `「${s.name}」当前<b>仍是有效分享</b>,删除后链接会<b>立即失效</b>,且记录不可恢复(访问日志仍保留)。只想临时停用请改用「取消」。`
-      : `「${s.name}」的记录将从「我的分享」中移除,不可恢复(访问日志仍保留)。`,
-    async () => {
-      try {
-        const r = await filehubApi.sharePurge({ ids: [s.id] })
-        toast(`已删除 ${(r && r.purged) || 0} 条记录`, 'ok'); loadShares()
-      } catch (e) { toast(e.message || '删除失败', 'err') }
-    })
-}
 function purgeInactive() {
   askConfirm('清空非有效分享记录?',
     '将删除全部「已取消」「已失效」的分享记录,不可恢复(访问日志仍保留)。',
@@ -613,11 +933,6 @@ async function resetPwd(s) {
     loadShares()
   } catch (e) { toast(e.message || '重置失败', 'err') }
 }
-function cancelShare(s) {
-  askConfirm('取消分享?', `取消后「${s.name}」的分享链接立即失效。记录会保留,之后可以随时恢复。`, async () => {
-    try { await filehubApi.shareCancel(s.id); toast('已取消分享', 'ok'); loadShares() } catch (e) { toast(e.message || '操作失败', 'err') }
-  })
-}
 async function showQr(s) {
   qr.name = s.name
   qr.url = s.url
@@ -643,6 +958,7 @@ let offChange = null       // onChange 的注销函数
 onActivated(() => {
   store.onActivated()
   document.addEventListener('keydown', onKeydown)   // 与 onDeactivated 成对(同函数重复注册无副作用)
+  window.addEventListener('popstate', onPopState)
   if (firstActivate) { firstActivate = false; return }
   if (view.value === 'files') load()
   loadSpaces()
@@ -650,14 +966,19 @@ onActivated(() => {
 onDeactivated(() => {
   store.onDeactivated()
   closeCtx()
+  closeShareCtx()
   closeUpMenu()   // 悬浮菜单须随页面失活关闭(它们被传送到 body,不会自己消失)
   document.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('popstate', onPopState)
   if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null }
 })
 onMounted(() => {
   loadSpaces()
   load()
   loadShares()   // 侧栏「我的分享」的计数:不进该标签页也要有值
+  // 当前记录打上本模块的目录位置:从第一层目录后退时,落点才有状态可回放
+  tagNav()
+  window.addEventListener('popstate', onPopState)
   offChange = store.onChange(() => { if (view.value === 'files') scheduleRefresh() })
 })
 </script>
@@ -717,7 +1038,6 @@ onMounted(() => {
             <button type="button" class="side-entry" :class="{ active: view === 'trash' }" @click="view = 'trash'">
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M9 10h6M10 3h4v3h-4z"/></svg>
               回收站
-              <span v-if="curSpace && curSpace.my_trash_items" class="cnt num">{{ curSpace.my_trash_items }}</span>
             </button>
           </div>
         </aside>
@@ -734,11 +1054,14 @@ onMounted(() => {
                         :class="{ active: space === s.space }" @click="switchSpace(s.space)">{{ s.name }}</button>
               </div>
               <div class="input-wrap fh-search grow">
-                <span class="input-prefix" aria-hidden="true">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-                </span>
                 <input v-model.trim="searchInput" class="input" style="height:38px" :maxlength="SEARCH_KW_MAX"
-                       placeholder="搜索当前目录及子目录…" @keyup.enter="doSearch" />
+                       placeholder="搜索当前目录及子目录…" @input="scheduleSearch" @keyup.enter="flushSearch" />
+                <!-- 键入停止即自动搜索,故不需要"搜索"按钮;留个清空按钮,一键退出搜索 -->
+                <span v-if="searchInput" class="input-suffix">
+                  <button class="icon-btn" type="button" aria-label="清空搜索" title="清空" @click="clearSearch">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                  </button>
+                </span>
               </div>
               <button class="btn btn-grad" type="button" @click="toggleUpMenu"
                       aria-haspopup="menu" :aria-expanded="upMenu.show">
@@ -785,13 +1108,13 @@ onMounted(() => {
             <!-- 列表 -->
             <div class="card fh-listcard" style="padding:0;overflow:hidden;position:relative">
               <div v-if="!query.searching" class="crumbs">
-                <button type="button" @click="dirId = 0; selected = new Set(); load()">
+                <button type="button" @click="goDir(0)">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>
                   {{ curSpace ? curSpace.name : '空间' }}
                 </button>
                 <template v-for="b in breadcrumb" :key="b.id">
                   <svg class="sep" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg>
-                  <button type="button" :class="{ here: b.id === dirId }" @click="dirId = b.id; selected = new Set(); load()">{{ b.name }}</button>
+                  <button type="button" :class="{ here: b.id === dirId }" @click="goDir(b.id)">{{ b.name }}</button>
                 </template>
                 <span style="flex:1"></span>
                 <span class="cap num" style="color:var(--color-text-3)">共 {{ total }} 项</span>
@@ -807,24 +1130,51 @@ onMounted(() => {
           </template>
 
           <!-- 回收站 -->
-          <TrashView v-else-if="view === 'trash'" :space="space" :me-space="meSpace" @changed="onTrashChanged" />
+          <TrashView v-else-if="view === 'trash'" :space="space" :me-space="meSpace" :spaces="spaces"
+                     @changed="onTrashChanged" @space="switchTrashSpace" />
 
           <!-- 我的分享 -->
           <template v-else-if="view === 'shares'">
-            <!-- 筛选条:默认只看有效,取消/失效的记录不再挤占列表 -->
-            <div class="card fh-toolbar" style="padding:10px 16px">
-              <div class="seg" style="width:300px">
-                <button v-for="[v, n] in SHARE_FILTERS" :key="v" type="button" class="seg-item"
-                        :class="{ active: shareFilter === v }" @click="setShareFilter(v)">{{ n }}</button>
+            <!-- 工具条 / 批量条:与空间、回收站同款。顺序按需求:空间分类 → 状态 → 搜索 → 清空非有效 -->
+            <div v-if="shareSel.size < 2" class="card fh-toolbar">
+              <div class="seg" style="width:196px">
+                <button v-for="sp in spaces" :key="sp.space" type="button" class="seg-item"
+                        :class="{ active: Number(shareSpace) === Number(sp.space) }"
+                        @click="switchShareSpace(sp.space)">{{ sp.name }}</button>
               </div>
-              <span style="flex:1"></span>
-              <button class="btn btn-secondary btn-sm" type="button" @click="purgeInactive">清空非有效记录</button>
+              <!-- 前缀做进控件内:整块是一个可点区域,文案随选项变(状态:有效 / 状态:全部) -->
+              <ZmSelect v-model="shareFilter" prefix="状态:" :options="shareFilterOptions"
+                        style="min-width:132px" @change="loadShares()" />
+              <div class="input-wrap fh-search grow">
+                <input v-model.trim="shareKwInput" class="input" style="height:38px" :maxlength="SEARCH_KW_MAX"
+                       placeholder="搜索分享名称…" @input="scheduleShareSearch" @keyup.enter="flushShareSearch" />
+                <span v-if="shareKwInput" class="input-suffix">
+                  <button class="icon-btn" type="button" aria-label="清空搜索" title="清空" @click="clearShareSearch">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                  </button>
+                </span>
+              </div>
+              <button class="btn btn-secondary" type="button" @click="purgeInactive">清空非有效记录</button>
             </div>
+            <div v-else class="card fh-toolbar batch-bar">
+              <button class="icon-btn" type="button" aria-label="取消选择" @click="shareSel = new Set(); shareLastIdx = -1">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+              </button>
+              <span class="sel-num num">已选 {{ shareSel.size }} 项</span>
+              <span style="flex:1"></span>
+              <span class="cap" style="color:var(--color-text-3)">在列表内右键,可对选中项执行操作</span>
+            </div>
+
             <div class="card" style="padding:0;overflow:hidden">
               <div style="overflow-x:auto">
                 <table class="ftbl">
                   <thead>
                     <tr>
+                      <th class="col-cb">
+                        <input type="checkbox" class="fcheck" :checked="allSharesChecked"
+                               :indeterminate="someSharesChecked" aria-label="全选"
+                               @change="toggleAllShares($event.target.checked)" />
+                      </th>
                       <th style="min-width:170px">名称</th>
                       <th style="width:70px">类型</th>
                       <th style="width:190px">链接</th>
@@ -833,17 +1183,25 @@ onMounted(() => {
                       <th style="width:66px">浏览</th>
                       <th style="width:80px">下载</th>
                       <th style="width:80px">状态</th>
-                      <th style="width:280px">操作</th>
+                      <th style="width:60px"></th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr v-if="sharesLoading">
-                      <td :colspan="9" style="padding:16px">
+                      <td :colspan="10" style="padding:16px">
                         <div v-for="i in 4" :key="i" class="skeleton" style="height:20px;margin-bottom:10px"></div>
                       </td>
                     </tr>
                     <template v-else>
-                      <tr v-for="s in shares" :key="s.id" :style="Number(s.status) !== 1 ? 'opacity:.62' : ''">
+                      <!-- 行操作全走右键/行尾 ⋯(与空间、回收站一致),状态用整行降透明区分 -->
+                      <tr v-for="s in shares" :key="s.id" :class="{ sel: shareSel.has(s.id) }"
+                          :style="Number(s.status) !== 1 ? 'opacity:.62' : ''"
+                          @click="toggleShareSel(s, $event)"
+                          @contextmenu.prevent.stop="openShareCtx($event, s, 'row')">
+                        <td class="col-cb" @click.stop @dblclick.stop>
+                          <input type="checkbox" class="fcheck" :checked="shareSel.has(s.id)"
+                                 @click.stop="toggleShareSel(s, $event, true)" :aria-label="`选择 ${s.name}`" />
+                        </td>
                         <td><span class="fname" style="font-weight:600">{{ s.name }}{{ Number(s.node_count) > 1 ? ` 等 ${s.node_count} 项` : '' }}</span></td>
                         <td>
                           <!-- 多选分享按条目数显示「N 项」(单条仍按类型) -->
@@ -852,7 +1210,7 @@ onMounted(() => {
                         <td><span class="share-url-cell">{{ s.url.replace(/^https?:\/\//, '') }}</span></td>
                         <td>
                           <span class="badge badge-dim"
-                                :title="s.has_pwd ? '出于安全考虑,原提取码无法查看;可点「重置并复制」生成新的提取码' : '该分享无需提取码'">
+                                :title="s.has_pwd ? '出于安全考虑,原提取码无法查看;可在右键菜单里重置' : '该分享无需提取码'">
                             {{ s.has_pwd ? '已设置' : '未设置' }}
                           </span>
                         </td>
@@ -865,28 +1223,19 @@ onMounted(() => {
                           </span>
                         </td>
                         <td>
-                          <!-- 动作按状态区分:
-                               有效   → 复制/二维码/重置 + 取消(临时停用,可恢复) + 删除
-                               已取消 → 恢复 + 删除
-                               已失效 → 只能删除 -->
                           <span class="row-ops">
-                            <template v-if="Number(s.status) === 1">
-                              <button class="btn btn-ghost btn-sm" type="button" @click="copyText(s.url, '链接已复制')">复制</button>
-                              <button class="btn btn-ghost btn-sm" type="button" @click="showQr(s)">二维码</button>
-                              <button v-if="s.has_pwd" class="btn btn-ghost btn-sm" type="button" @click="resetPwd(s)">重置并复制</button>
-                              <button class="btn btn-secondary btn-sm" type="button" @click="cancelShare(s)">取消</button>
-                            </template>
-                            <button v-else-if="Number(s.status) === 2" class="btn btn-secondary btn-sm" type="button" @click="resumeShare(s)">恢复</button>
-                            <button class="btn btn-danger-soft btn-sm" type="button" @click="purgeShare(s)">删除</button>
+                            <button class="dots-btn" type="button" aria-label="更多操作" @click.stop="openShareCtx($event, s, 'dots')">
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg>
+                            </button>
                           </span>
                         </td>
                       </tr>
                       <tr v-if="!shares.length">
-                        <td :colspan="9">
+                        <td :colspan="10">
                           <div class="empty">
                             <div class="empty-icon">🔗</div>
-                            <div class="empty-title">{{ shareFilter === 1 ? '暂无有效分享' : '没有符合条件的记录' }}</div>
-                            <div class="empty-sub">{{ shareFilter === 1 ? '在文件上右键选择"分享"即可创建' : '切换上方筛选查看其它状态的分享' }}</div>
+                            <div class="empty-title">{{ shareKeyword ? '没有匹配的分享' : (Number(shareFilter) === 1 ? '暂无有效分享' : '没有符合条件的记录') }}</div>
+                            <div class="empty-sub">{{ shareKeyword ? '换个关键词试试' : (Number(shareFilter) === 1 ? '在文件上右键选择"分享"即可创建' : '换个状态或空间看看') }}</div>
                           </div>
                         </td>
                       </tr>
@@ -950,6 +1299,78 @@ onMounted(() => {
         <button class="menu-item" type="button" @click="ctxAct('detail')">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>详情</button>
       </div>
+
+      <!-- 我的分享:右键菜单(单选 = 按状态给原有动作 + 修改属性;多选 = 取消 + 删除) -->
+      <div v-if="shareCtx.show" style="position:fixed;inset:0;z-index:890"
+           @click="closeShareCtx" @contextmenu.prevent="closeShareCtx"></div>
+      <div v-if="shareCtx.show" class="menu" style="position:fixed;z-index:891;min-width:200px"
+           :style="{ left: shareCtx.x + 'px', top: shareCtx.y + 'px' }">
+        <template v-if="!shareCtx.multi && shareCtxTargets.length === 1">
+          <template v-if="Number(shareCtxTargets[0].status) === 1">
+            <button class="menu-item" type="button" @click="closeShareCtx(); copyText(shareCtxTargets[0].url, '链接已复制')">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>复制链接</button>
+            <button class="menu-item" type="button" @click="closeShareCtx(); showQr(shareCtxTargets[0])">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><path d="M14 14h3v3h-3zM20 20h-3"/></svg>二维码</button>
+            <button v-if="shareCtxTargets[0].has_pwd" class="menu-item" type="button" @click="closeShareCtx(); resetPwd(shareCtxTargets[0])">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>重置提取码</button>
+            <div class="menu-sep"></div>
+          </template>
+          <button class="menu-item" type="button" @click="closeShareCtx(); openShareEdit(shareCtxTargets[0])">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>修改属性</button>
+          <div class="menu-sep"></div>
+          <button v-if="Number(shareCtxTargets[0].status) === 1" class="menu-item" type="button" @click="closeShareCtx(); cancelShares([shareCtxTargets[0]])">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg>取消</button>
+          <button v-else-if="Number(shareCtxTargets[0].status) === 2" class="menu-item" type="button" @click="closeShareCtx(); resumeShare(shareCtxTargets[0])">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>恢复</button>
+          <button class="menu-item danger" type="button" @click="closeShareCtx(); purgeShares([shareCtxTargets[0]])">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>删除</button>
+        </template>
+        <template v-else>
+          <!-- 多选:只给批量有意义的两个。取消只作用于其中"有效"的,其余自动跳过 -->
+          <button v-if="shareCanCancel" class="menu-item" type="button" @click="closeShareCtx(); cancelShares(shareCtxTargets)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg>取消 {{ shareCtxTargets.length }} 条</button>
+          <button v-else-if="shareCanResume" class="menu-item" type="button" @click="closeShareCtx(); resumeShares(shareCtxTargets)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>恢复 {{ shareCtxTargets.length }} 条</button>
+          <button class="menu-item danger" type="button" @click="closeShareCtx(); purgeShares(shareCtxTargets)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>删除 {{ shareCtxTargets.length }} 条</button>
+        </template>
+      </div>
+
+      <!-- 修改分享属性:有效期是"从现在起重新算 N 天",不是改原到期日,故只给重设不给回显 -->
+      <Modal :show="shareEdit.show" title="修改分享属性" @close="shareEdit.show = false">
+        <div class="form-item">
+          <label class="form-label">分享名称</label>
+          <input v-model.trim="shareEdit.name" class="input" maxlength="255" placeholder="分享页上显示的标题" />
+          <span class="form-hint">只影响分享页标题与列表,不改文件名</span>
+        </div>
+        <div class="form-item">
+          <label class="form-label">有效期</label>
+          <ZmSelect v-model="shareEdit.expire_days" :options="EDIT_EXPIRES" />
+          <span class="form-hint" style="color:var(--color-warn)">选完从现在起重新计时,不是改原来的到期日</span>
+        </div>
+        <div class="form-item">
+          <label class="form-label">下载次数上限</label>
+          <input v-model.number="shareEdit.max_downloads" class="input" type="number" min="0" placeholder="0 = 不限" />
+        </div>
+        <div class="form-item" v-if="Number(shareSpace) !== 0">
+          <label class="row" style="gap:8px;cursor:pointer">
+            <input v-model="shareEdit.login_only" type="checkbox" class="fcheck" />
+            <span>仅登录用户可见</span>
+          </label>
+        </div>
+        <div class="form-item" v-if="shareEdit.pwd_enabled">
+          <label class="form-label">新提取码 <span class="opt">4 个字符;留空保持不变</span></label>
+          <input v-model.trim="shareEdit.pwd" class="input" maxlength="4" placeholder="留空保持不变" />
+          <label class="row" style="gap:8px;cursor:pointer;margin-top:6px">
+            <input v-model="shareEdit.reset_pwd" type="checkbox" class="fcheck" :disabled="!!shareEdit.pwd.trim()" />
+            <span :style="shareEdit.pwd.trim() ? 'opacity:.5' : ''">改为随机新码(保存后显示,旧码立即失效)</span>
+          </label>
+        </div>
+        <template #foot>
+          <button class="btn btn-ghost" type="button" @click="shareEdit.show = false">取消</button>
+          <button class="btn btn-primary" type="button" :disabled="shareEdit.busy" @click="submitShareEdit">保存</button>
+        </template>
+      </Modal>
     </Teleport>
 
     <!-- 上传入口(隐藏) -->
@@ -1045,6 +1466,10 @@ onMounted(() => {
           <tr><td style="color:var(--color-text-3)">修改时间</td><td class="num">{{ fmtTime(detail.node.update_time) }}</td></tr>
         </tbody>
       </table>
+      <!-- 纯展示弹窗也给个关闭位:只靠右上角 × 的话,底部没有落点,手会不知道往哪放 -->
+      <template #foot>
+        <button class="btn btn-primary" type="button" @click="detail.show = false">关闭</button>
+      </template>
     </Modal>
 
     <!-- 删除/打包等确认 -->

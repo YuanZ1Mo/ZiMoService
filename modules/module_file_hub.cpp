@@ -991,10 +991,11 @@ drogon::Task<HttpResponsePtr> ZmFileHubModule::HandleTrash(HttpRequestPtr req)
     ZmListQuery q = ListQueryOf(req, 200);
     q.sort        = QueryStr(req, "sort");
     if (q.sort.empty())
-        q.sort = "mtime";
+        q.sort = "delete_time";
     q.order = QueryStr(req, "order");
     if (q.order.empty())
         q.order = "desc";
+    q.keyword = QueryStr(req, "keyword");
     ZMJSON out = co_await m_node->TrashList(space, q, gate.ctx.uid, false);
     if (!ZmFileHasError(out))
         co_await FillTrashNames(out["list"]);
@@ -1299,11 +1300,12 @@ drogon::Task<HttpResponsePtr> ZmFileHubModule::HandleTasks(HttpRequestPtr req)
     auto gate = co_await Authorize(req);
     if (!gate.ok)
         co_return ZmAuthGateModule::ApiError(gate.status, gate.code, gate.message);
-    int    type   = QueryInt(req, "type", 0, 0, 99);
-    int    status = QueryInt(req, "status", 0, 0, 99);
-    int    page   = QueryInt(req, "page", 1, 1, 1000000);
-    int    size   = QueryInt(req, "size", 20, 1, 200);
-    ZMJSON out    = co_await m_task->List(gate.ctx.uid, type, status, page, size);
+    int         type    = QueryInt(req, "type", 0, 0, 99);
+    int         status  = QueryInt(req, "status", 0, 0, 99);
+    int         page    = QueryInt(req, "page", 1, 1, 1000000);
+    int         size    = QueryInt(req, "size", 20, 1, 200);
+    std::string keyword = QueryStr(req, "keyword");
+    ZMJSON out = co_await m_task->List(gate.ctx.uid, type, status, page, size, keyword);
     co_return Respond(out);
 }
 
@@ -1393,9 +1395,12 @@ drogon::Task<HttpResponsePtr> ZmFileHubModule::HandleShareCreate(HttpRequestPtr 
     int64_t expireDays = zm_file_row_int(body, "expire_days", 0);
     int64_t expireTime = zm_file_row_int(body, "expire_time", 0);
     int64_t maxDl      = zm_file_row_int(body, "max_downloads", 0);
-    bool    loginOnly  = zm_json_get_bool(body, "login_only", false);
-    ZMJSON  out = co_await m_share->Create(OpOf(gate.ctx, req), space, nodeIds, pwdEnabled,
-                                           expireDays, expireTime, maxDl, loginOnly);
+    bool        loginOnly   = zm_json_get_bool(body, "login_only", false);
+    std::string displayName = zm_file_row_str(body, "name");   // 可选:自定义分享名
+    std::string customPwd   = zm_file_row_str(body, "pwd");    // 可选:自定义提取码
+    ZMJSON      out = co_await m_share->Create(OpOf(gate.ctx, req), space, nodeIds, pwdEnabled,
+                                               expireDays, expireTime, maxDl, loginOnly,
+                                               displayName, customPwd);
     if (!ZmFileHasError(out))
         out["url"] = ZmFileShareModule::BuildShareUrl(SitePageBase(req, m_rest),
                                                       zm_file_row_str(out, "token"));
@@ -1407,10 +1412,12 @@ drogon::Task<HttpResponsePtr> ZmFileHubModule::HandleShareList(HttpRequestPtr re
     auto gate = co_await Authorize(req);
     if (!gate.ok)
         co_return ZmAuthGateModule::ApiError(gate.status, gate.code, gate.message);
-    int    status = QueryInt(req, "status", 0, 0, 99);
-    int    page   = QueryInt(req, "page", 1, 1, 1000000);
-    int    size   = QueryInt(req, "size", 50, 1, 200);
-    ZMJSON out    = co_await m_share->List(gate.ctx.uid, status, page, size);
+    int         status  = QueryInt(req, "status", 0, 0, 99);
+    int         page    = QueryInt(req, "page", 1, 1, 1000000);
+    int         size    = QueryInt(req, "size", 50, 1, 200);
+    int64_t     space   = QueryI64(req, "space", -1);
+    std::string keyword = QueryStr(req, "keyword");
+    ZMJSON out = co_await m_share->List(gate.ctx.uid, status, space, page, size, keyword);
     if (!ZmFileHasError(out))
     {
         // 分享链接用页面基址(80/443),不能用 REST 端口;详见 SitePageBase 注释

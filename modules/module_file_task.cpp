@@ -7,6 +7,7 @@
 #include "zm_util_logger.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <random>
 #include <thread>
@@ -213,7 +214,7 @@ ZMJSON ZmFileTaskModule::TaskView(const ZMJSON& row)
 }
 
 drogon::Task<ZMJSON> ZmFileTaskModule::List(int64_t uid, int type, int status, int page,
-                                            int size)
+                                            int size, const std::string& keyword)
 {
     std::string              where = " WHERE uid = ?1";
     std::vector<std::string> p     = {std::to_string(uid)};
@@ -227,6 +228,8 @@ drogon::Task<ZMJSON> ZmFileTaskModule::List(int64_t uid, int type, int status, i
         where += " AND status = ?" + std::to_string(p.size() + 1);
         p.push_back(std::to_string(status));
     }
+    // 任务名或任务编号任一命中(编号是排障时最直接的抓手);口径统一在 ZmAddKeywordCond
+    ZmAddKeywordCond(where, p, keyword, {"name", "task_no"});
     ZMJSON totalRow =
         co_await m_db->QueryRow("SELECT COUNT(*) AS n FROM transfer_tasks" + where, p);
     int64_t                  total = zm_file_row_int(totalRow, "n", 0);

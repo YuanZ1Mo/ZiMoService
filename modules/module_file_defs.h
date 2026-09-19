@@ -2,12 +2,13 @@
 #define ZM_MODULE_FILE_DEFS_H
 
 // ============================================================================
-// 文件中心公共定义:常量 / 错误码 / 枚举 / 行取值助手
-// 所有模块共用;只放"多处引用且必须一致"的取值,避免各自魔法数发散。
+// 文件中心公共定义:常量 / 错误码 / 枚举 / 行取值助手 / 共用小工具
+// 所有模块共用;只放"多处引用且必须一致"的东西,避免各自实现发散。
 // ============================================================================
 
 #include <zm_util_json.h>
 
+#include <cctype>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -275,6 +276,59 @@ inline std::string ZmFileErrorCode(const ZMJSON& j)
 inline std::string ZmFileErrorMessage(const ZMJSON& j)
 {
     return ZmFileHasError(j) ? zm_file_row_str(j["error"], "message") : "";
+}
+
+// ── 共用小工具 ──
+
+/// @return 去掉首尾空白的副本
+inline std::string ZmTrimSpaces(const std::string& s)
+{
+    size_t b = 0;
+    size_t e = s.size();
+    while (b < e && std::isspace(static_cast<unsigned char>(s[b])))
+        ++b;
+    while (e > b && std::isspace(static_cast<unsigned char>(s[e - 1])))
+        --e;
+    return s.substr(b, e - b);
+}
+
+/**
+ * @brief 给 WHERE 追加"关键词模糊匹配"条件(文件中心各列表搜索共用)
+ *
+ * 口径统一在这里,免得各处各写一份而后漂移。三件事固定:去首尾空白;
+ * 空关键词不加条件;超长(> kSearchKwMax)一律视为"搜不到" —— 追加的是 `AND 0`
+ * 而不是提前返回,因为列表的总数/占用统计要照常算,否则前端会跟着显示成 0。
+ *
+ * @param where [in,out] WHERE 子句
+ * @param p     [in,out] 参数表(条件从 p.size()+1 起编号追加)
+ * @param kw    关键词
+ * @param cols  参与匹配的列,多个之间为 OR(如 {"name"} 或 {"name", "task_no"})
+ * @return true = 追加了条件;false = 关键词为空(where 未被改动)
+ *
+ * @example
+ *   ZmAddKeywordCond(where, p, q.keyword, {"name"});
+ */
+inline bool ZmAddKeywordCond(std::string& where, std::vector<std::string>& p,
+                             const std::string& kw, const std::vector<const char*>& cols)
+{
+    std::string k = ZmTrimSpaces(kw);
+    if (k.empty())
+        return false;
+    if (k.size() > static_cast<size_t>(zm_file::kSearchKwMax))
+    {
+        where += " AND 0";
+        return true;
+    }
+    where += " AND (";
+    for (size_t i = 0; i < cols.size(); ++i)
+    {
+        if (i)
+            where += " OR ";
+        where += std::string(cols[i]) + " LIKE ?" + std::to_string(p.size() + 1);
+        p.push_back("%" + k + "%");
+    }
+    where += ")";
+    return true;
 }
 
 #endif // ZM_MODULE_FILE_DEFS_H

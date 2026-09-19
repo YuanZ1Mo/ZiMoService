@@ -339,5 +339,7 @@ export function fmtTime(sec) {
   if (!sec) return '—'
   const d = new Date(Number(sec) * 1000)
   const p = (n) => String(n).padStart(2, '0')
-  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+  const md = `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+  // 跨年才补年份:当年条目占绝大多数,一律带上年份会把列宽白白撑开
+  return d.getFullYear() === new Date().getFullYear() ? md : `${d.getFullYear()}-${md}`
 }

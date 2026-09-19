@@ -35,13 +35,14 @@ struct ZmOpCtx
 /// 列表查询参数(列表/搜索/回收站共用)
 struct ZmListQuery
 {
-    std::string sort  = "name"; ///< name | size | mtime | type
+    std::string sort  = "name"; ///< name | size | mtime | type(回收站列表另有 delete_time)
     std::string order = "asc";  ///< asc | desc
     int         page  = 1;
     int         size  = 200;
     std::string typeFilter;    ///< dir|doc|img|vid|aud|zip|oth(空 = 不限)
-    int64_t     mtimeFrom = 0; ///< 修改时间起点(0 = 不限)
-    int64_t     mtimeTo   = 0; ///< 修改时间终点(0 = 不限)
+    std::string keyword;       ///< 名称关键词过滤(空 = 不限;回收站列表按它过滤)
+    int64_t     mtimeFrom = 0; ///< 修改时间起点(0 = 不限;回收站列表按删除时间判)
+    int64_t     mtimeTo   = 0; ///< 修改时间终点(0 = 不限;回收站列表按删除时间判)
 };
 
 /// 条目行(库中 nodes 行的强类型视图)

@@ -129,7 +129,9 @@ class ZmFileTaskModule
 
     // ── 查询 ──
     /// @brief 任务列表(用户侧;type/status ≤0 表示不过滤)
-    drogon::Task<ZMJSON> List(int64_t uid, int type, int status, int page, int size);
+    /// @param keyword 关键词(空 = 不限);同时匹配任务名与任务编号
+    drogon::Task<ZMJSON> List(int64_t uid, int type, int status, int page, int size,
+                              const std::string& keyword = {});
     /// @brief 全量任务列表(管理侧;uid=0 表示不限)
     drogon::Task<ZMJSON> AdminList(int64_t uid, int type, int status, int page, int size);
     /// @brief 排队中 + 进行中的任务精简列表(前端轮询主接口)

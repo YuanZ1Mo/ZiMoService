@@ -55,16 +55,22 @@ class ZmFileShareModule
  * @param expireTime 自定义到期时刻(优先于 expireDays;0 = 不指定)
  * @param maxDownloads 下载次数上限(0 = 不限)
  * @param loginOnly 是否仅登录可见
+ * @param displayName 自定义展示名(空 = 沿用主条目名);只影响分享页标题与列表,不影响文件名
+ * @param customPwd 自定义提取码(空 = 随机生成);须为 4 个可见字符
  * @return {share_id, token, pwd?, expire_time};失败 → {"error":{...}}
  */
     drogon::Task<ZMJSON> Create(const ZmOpCtx& ctx, int64_t space,
                                 const std::vector<int64_t>& nodeIds, bool pwdEnabled,
                                 int64_t expireDays, int64_t expireTime, int64_t maxDownloads,
-                                bool loginOnly);
+                                bool loginOnly, const std::string& displayName = {},
+                                const std::string& customPwd = {});
 
     /// @brief 我的分享列表(status ≤0 不过滤)
+    /// @param space   空间(负数 = 不限)
+    /// @param keyword 关键词(空 = 不限);匹配展示名
     /// @return {total, page, size, list}
-    drogon::Task<ZMJSON> List(int64_t uid, int status, int page, int size);
+    drogon::Task<ZMJSON> List(int64_t uid, int status, int64_t space, int page, int size,
+                              const std::string& keyword = {});
 
     /// @brief 修改分享(有效期/次数上限/重置提取码/仅登录可见)
     /// @return {pwd?}(重置时一次性返回新明文)

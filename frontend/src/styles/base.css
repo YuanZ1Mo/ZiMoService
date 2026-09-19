@@ -192,7 +192,14 @@ h1,h2,h3,h4{font-weight:700;margin:0}
 .input.err:focus{box-shadow:0 0 0 3px rgba(220,38,38,.18)}
 .input:disabled{background:var(--color-border-soft);color:var(--color-text-3);cursor:not-allowed;border-style:dashed}
 .input[readonly]{background:var(--color-border-soft);color:var(--color-text-3);cursor:not-allowed;border-style:dashed}
-select.input{cursor:pointer;appearance:auto}
+/* 原生下拉统一美化:去掉系统外观,自绘一个跟随明暗主题的箭头。
+   原先写 appearance:auto,于是分享有效期、管理页筛选等所有下拉都是系统样式,
+   与自绘的输入框摆在一起很突兀。一处生效,全站下拉一致 */
+select.input{cursor:pointer;appearance:none;padding-right:32px;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%238a8f98' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 10px center}
+[data-theme="dark"] select.input{
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23a8adb8' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")}
 .input-wrap{position:relative;display:flex;align-items:center}
 .input-prefix{position:absolute;left:12px;display:flex;color:var(--color-text-3);pointer-events:none}
 .input-prefix + .input{padding-left:38px}
