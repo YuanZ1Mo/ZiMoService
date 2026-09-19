@@ -3,6 +3,7 @@
 // 工具条 + 侧栏(空间树/我的分享/回收站)+ 面包屑 + 列表(虚拟滚动)+ 右键菜单 + 任务面板
 // 选中:单击/Ctrl 加选/Shift 连选/Ctrl+A 全选/Esc 取消;批量条替换工具条(§7.2)
 import { ref, reactive, computed, watch, nextTick, onMounted, onBeforeUnmount, onActivated, onDeactivated, inject } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useSessionStore } from '../../stores/session'
 import { useFilehubStore } from '../../stores/filehub'
 import { filehubApi, fmtSize, fmtNodeSize, fmtTime, kindOf, FILE_KINDS, nextSelection, nodeBytes } from '../../api/filehub'
@@ -38,7 +39,6 @@ async function loadSpaces() {
   try {
     spaces.value = await filehubApi.spaces() || []
     if (!spaces.value.some(s => s.space === space.value)) space.value = 0
-    tagNav()   // 空间列表可能刚把 space 归位,当前记录的位置同步一下
   } catch (e) {
     if (e.status === 403) denied403.value = true
     else toast(e.message || '加载空间信息失败', 'err')
@@ -62,62 +62,58 @@ function switchSpace(s) {
   space.value = s
   dirId.value = 0          // 切空间回到根目录(§3.1)
   selected.value = new Set()
-  pushNav()                // 切空间也是一次位置变化,后退能退回去
+  syncQuery()              // 切空间也是一次位置变化,后退能退回去
   // 搜索态切空间:关键词与结果都属于旧空间,先退出搜索(它内部会按新空间重载)
   if (query.searching) { exitSearch(); return }
   load()
 }
 
-// ── 目录前进后退(浏览器历史) ──
-// 鼠标侧键是浏览器级的历史导航,页面拦不住(preventDefault 不生效),所以反过来做:
-// 让浏览器的前进后退本身成为目录导航 —— 每次换位置压一条历史记录(URL 不变,只挂状态),
-// popstate 时按记录回放。鼠标侧键、Alt+←/→、浏览器返回键于是全都生效,不需要另接键盘。
-// 状态字段与 vue-router 的 buildState 对齐:position 取 history.length,它靠这个算
-// 前进/后退的 delta;URL 不变则 vue-router 只会收到一次"同址导航"并忽略,不会抢历史。
-/**
- * 把当前位置写进"当前"这条记录(替换,不新增)
- *
- * 首条记录也要带上 fh,否则从第一层目录后退会落到一条没状态的记录上 ——
- * 浏览器已经退了,界面却还在原处。
- */
-function tagNav() {
-  const cur = history.state || {}
-  const pos = typeof cur.position === 'number' ? cur.position : window.history.length - 1
-  history.replaceState({ back: null, current: null, forward: null, replaced: true,
-                         position: pos, scroll: null,
-                         fh: { space: space.value, dirId: dirId.value } }, '')
-}
-/// 进入新位置:压一条记录(URL 不变,只挂状态)
-function pushNav() {
-  history.pushState({ back: null, current: null, forward: null, replaced: false,
-                      position: window.history.length, scroll: null,
-                      fh: { space: space.value, dirId: dirId.value } }, '')
+// ── 目录前进后退(交给 vue-router 的历史栈) ──
+// 位置写进 URL 查询串(space/dir),换目录就是一次真正的路由跳转 —— 于是鼠标侧键、
+// Alt+←/→、浏览器返回键全都是 vue-router 自己处理的历史导航,本模块一行历史代码都不用写。
+// 早期的做法是自己 history.pushState 挂状态、URL 保持不变:那会和 vue-router 的历史
+// 记账相互干扰(生产上表现为点侧栏「用户主页」跳到 https://<域名>null/),已废弃。
+// 附带好处:目录位置可分享、刷新后仍停在原处。
+const route  = useRoute()
+const router = useRouter()
+
+/// @return 当前 URL 查询串所代表的目录位置
+function queryPos() {
+  return { space: Number(route.query.space || 0), dirId: Number(route.query.dir || 0) }
 }
 /**
- * 浏览器前进/后退 → 目录前进/后退
+ * 把当前位置同步进 URL 查询串
  *
- * @param e popstate 事件
+ * 已在位时直接返回 —— 不比较的话,本模块自己发起的那次跳转回来还会再触发一次回放。
+ *
+ * @param replace true = 替换当前记录(不单独占一步后退),用于切空间这类
  */
-function onPopState(e) {
-  const st = e.state && e.state.fh
-  if (!st) return   // 退到的是别的路由记录:交给 vue-router 处理
-  const sp   = Number(st.space)
-  const did  = Number(st.dirId)
-  const same = sp === space.value && did === dirId.value
-  if (same && view.value === 'files') return   // 已在位,不必重载
-  view.value = 'files'
-  // 目录要变了,搜索态与选中集都不再适用;清搜索态但不单独发请求,下面统一 load 一次
-  clearTimeout(searchTimer)
-  searchSeq++
-  query.searching = false; query.truncated = false; searchInput.value = ''
-  if (!same) {
-    space.value = sp
-    dirId.value = did
+function syncQuery(replace = false) {
+  const p = queryPos()
+  if (p.space === space.value && p.dirId === dirId.value) return
+  const q = { ...route.query, space: String(space.value), dir: String(dirId.value) }
+  replace ? router.replace({ query: q }) : router.push({ query: q })
+}
+/// 浏览器前进/后退(含鼠标侧键、Alt+方向键)落到本页时,按 URL 回放目录位置
+watch(
+  () => [route.query.space, route.query.dir],
+  () => {
+    // 已经离开本模块时路由也会变,别在别的页面上重载文件列表
+    if (!route.path.startsWith('/portal/filehub')) return
+    const p = queryPos()
+    if (p.space === space.value && p.dirId === dirId.value) return   // 本模块自己发起的那次
+    view.value = 'files'
+    // 目录要变了,搜索态与选中集都不再适用;清搜索态但不单独发请求,下面统一 load 一次
+    clearTimeout(searchTimer)
+    searchSeq++
+    query.searching = false; query.truncated = false; searchInput.value = ''
+    space.value = p.space
+    dirId.value = p.dirId
     selected.value = new Set()
     lastIdx = -1
+    load()
   }
-  load()
-}
+)
 /**
  * 面包屑跳级(回某一级祖先 / 回空间根)
  *
@@ -129,7 +125,7 @@ function goDir(id) {
   dirId.value = target
   selected.value = new Set()
   lastIdx = -1
-  pushNav()
+  syncQuery()
   load()
 }
 
@@ -306,7 +302,6 @@ function onKeydown(e) {
 onMounted(() => document.addEventListener('keydown', onKeydown))
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', onKeydown)
-  window.removeEventListener('popstate', onPopState)
   clearTimeout(searchTimer)   // 卸载后防抖回调不该再发请求
   if (offChange) { offChange(); offChange = null }
 })
@@ -322,7 +317,7 @@ function openNode(n) {
     dirId.value = n.id
     selected.value = new Set()
     lastIdx = -1
-    pushNav()
+    syncQuery()
     load()
   } else {
     // 下载失败要说一声(文件可能已被他人删除 / 令牌过期)
@@ -391,7 +386,7 @@ function goParent() {
   dirId.value = parent
   selected.value = new Set()
   lastIdx = -1
-  pushNav()
+  syncQuery()
   load()
 }
 function closeCtx() { ctxMenu.show = false }
@@ -958,7 +953,6 @@ let offChange = null       // onChange 的注销函数
 onActivated(() => {
   store.onActivated()
   document.addEventListener('keydown', onKeydown)   // 与 onDeactivated 成对(同函数重复注册无副作用)
-  window.addEventListener('popstate', onPopState)
   if (firstActivate) { firstActivate = false; return }
   if (view.value === 'files') load()
   loadSpaces()
@@ -969,16 +963,16 @@ onDeactivated(() => {
   closeShareCtx()
   closeUpMenu()   // 悬浮菜单须随页面失活关闭(它们被传送到 body,不会自己消失)
   document.removeEventListener('keydown', onKeydown)
-  window.removeEventListener('popstate', onPopState)
   if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null }
 })
 onMounted(() => {
+  // 深链:URL 里带着目录位置就先落位,再拉列表(顺序反了会按根目录白拉一次)
+  const p0 = queryPos()
+  space.value = p0.space
+  dirId.value = p0.dirId
   loadSpaces()
   load()
   loadShares()   // 侧栏「我的分享」的计数:不进该标签页也要有值
-  // 当前记录打上本模块的目录位置:从第一层目录后退时,落点才有状态可回放
-  tagNav()
-  window.addEventListener('popstate', onPopState)
   offChange = store.onChange(() => { if (view.value === 'files') scheduleRefresh() })
 })
 </script>

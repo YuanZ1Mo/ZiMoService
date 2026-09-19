@@ -195,11 +195,10 @@ h1,h2,h3,h4{font-weight:700;margin:0}
 /* 原生下拉统一美化:去掉系统外观,自绘一个跟随明暗主题的箭头。
    原先写 appearance:auto,于是分享有效期、管理页筛选等所有下拉都是系统样式,
    与自绘的输入框摆在一起很突兀。一处生效,全站下拉一致 */
-select.input{cursor:pointer;appearance:none;padding-right:32px;
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%238a8f98' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-  background-repeat:no-repeat;background-position:right 10px center}
-[data-theme="dark"] select.input{
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23a8adb8' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")}
+/* 原生下拉保持系统外观:自绘箭头这条全局规则已撤掉 —— 它把管理页的角色下拉弄坏了,
+   而那些真正需要"弹出列表也可控"的地方(分享有效期/修改属性有效期/我的分享状态)
+   已改用自绘组件 ZmSelect,不必在这里做全局 hack */
+select.input{cursor:pointer;appearance:auto}
 .input-wrap{position:relative;display:flex;align-items:center}
 .input-prefix{position:absolute;left:12px;display:flex;color:var(--color-text-3);pointer-events:none}
 .input-prefix + .input{padding-left:38px}
@@ -283,13 +282,18 @@ select.input{cursor:pointer;appearance:none;padding-right:32px;
 .modal-mask{
   position:fixed;inset:0;background:var(--color-scrim);z-index:1000;
   display:flex;align-items:center;justify-content:center;padding:var(--sp-4);
-  backdrop-filter:blur(2px);
+  /* 这里与弹窗本体都不放毛玻璃。这个属性在本项目踩过两次:放在全屏遮罩上时,
+     全屏 backdrop-filter 要对整个视口做离屏采样,底下任何重绘都得重算 ——
+     实测打开弹窗时 CPU 飙高、操作发卡,DevTools 勾掉即恢复。详见 .modal */
   animation:maskIn var(--dur) var(--ease);
 }
 @keyframes maskIn{from{opacity:0}to{opacity:1}}
 .modal{
   width:min(440px,94vw);max-height:86vh;overflow-y:auto;
-  background:var(--color-card);border-radius:var(--r-xl);box-shadow:var(--shadow-lg);
+  /* 不透明底,不做毛玻璃。要恢复的话必须"只在本体上做 + 同时把底色改成半透明",
+     缺一不可:不透底的元素加 backdrop-filter 是白做(模糊结果被自己的底色盖住) */
+  background:var(--color-card);
+  border-radius:var(--r-xl);box-shadow:var(--shadow-lg);
   padding:var(--sp-6);
   animation:modalIn var(--dur-slow) var(--ease);
 }

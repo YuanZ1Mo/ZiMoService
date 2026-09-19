@@ -31,6 +31,9 @@ const POP_MAX_H = 280
 
 /// 按触发按钮的位置摆放浮层;下方放不下就向上弹
 function place() {
+  // 收起时直接返回:否则页面上**任何**滚动都会走一次 getBoundingClientRect
+  // (强制同步布局,打断渲染流水线),滚动明显发卡
+  if (!open.value) return
   const el = wrap.value
   if (!el) return
   const r     = el.getBoundingClientRect()
