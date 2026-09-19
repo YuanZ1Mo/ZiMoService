@@ -40,6 +40,7 @@ const query = reactive({ keyword: '', searching: false })
 const selected = ref(new Set())
 let lastIdx = -1
 let searchTimer = 0
+let kwComposing = false   // 输入法组字中:拼音阶段每个字母都会触发 input,此时不该发请求
 let loadSeq = 0   // 请求序号:只认最后一次发出的请求,防止慢响应把新结果盖回旧的
 
 const confirmBox = reactive({ show: false, title: '', html: '', fn: null })
@@ -100,6 +101,7 @@ function reload() { emit('changed'); load() }
  * 清空关键词即时退出搜索、不等防抖 —— 否则列表会先空一下再回来。
  */
 function scheduleSearch() {
+  if (kwComposing) return   // 组字未结束,等 compositionend 再搜
   clearTimeout(searchTimer)
   if (!kwInput.value.trim()) { doSearch(); return }
   searchTimer = setTimeout(doSearch, SEARCH_DEBOUNCE_MS)
@@ -304,7 +306,7 @@ function remainDays(n) {
     </div>
     <div class="input-wrap fh-search grow">
       <input v-model.trim="kwInput" class="input" style="height:38px" :maxlength="SEARCH_KW_MAX"
-             placeholder="在回收站内搜索…" @input="scheduleSearch" @keyup.enter="flushSearch" />
+             placeholder="在回收站内搜索…" @compositionstart="kwComposing = true" @compositionend="kwComposing = false; scheduleSearch()" @input="scheduleSearch" @keyup.enter="flushSearch" />
       <!-- 键入停止即自动搜索,故不需要"搜索"按钮;留个清空按钮,与空间文件区一致 -->
       <span v-if="kwInput" class="input-suffix">
         <button class="icon-btn" type="button" aria-label="清空搜索" title="清空" @click="clearSearch">

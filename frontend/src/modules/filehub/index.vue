@@ -51,16 +51,31 @@ async function loadSpaces() {
  *
  * @param s 目标空间号
  */
+/// 每个空间上次停留的目录(会话内记忆):切走再切回来应回到原处,而不是重置到根
+const spaceDirs = reactive({})
+/**
+ * 换空间:先记下当前空间停在哪,再落到目标空间上次停留的目录
+ *
+ * 只改 space/dirId 两个状态,不动视图与列表 —— 工具条切空间还要做搜索态收尾、
+ * 回收站切空间不该跳到文件浏览,两边的收尾各在外面做。
+ *
+ * @param s 目标空间号
+ */
+function applySpace(s) {
+  if (space.value === s) return
+  spaceDirs[space.value] = dirId.value
+  space.value = s
+  dirId.value = Number(spaceDirs[s] || 0)
+}
 function switchTrashSpace(s) {
   if (space.value === s) return
-  space.value = s
+  applySpace(s)
   selected.value = new Set()
 }
 function switchSpace(s) {
   if (view.value !== 'files') view.value = 'files'
   if (space.value === s) return
-  space.value = s
-  dirId.value = 0          // 切空间回到根目录(§3.1)
+  applySpace(s)
   selected.value = new Set()
   syncQuery()              // 切空间也是一次位置变化,后退能退回去
   // 搜索态切空间:关键词与结果都属于旧空间,先退出搜索(它内部会按新空间重载)
@@ -107,7 +122,7 @@ watch(
     clearTimeout(searchTimer)
     searchSeq++
     query.searching = false; query.truncated = false; searchInput.value = ''
-    space.value = p.space
+    applySpace(p.space)   // 先记住离开前的目录,再落到 URL 指定的位置
     dirId.value = p.dirId
     selected.value = new Set()
     lastIdx = -1
@@ -196,6 +211,7 @@ const SEARCH_DEBOUNCE_MS = 400   // 键入停止多久后自动搜索
 // 搜索态面包屑会被清空,"返回上一级目录"仍需要它:进入搜索时留一份快照
 let bcBeforeSearch = []
 let searchTimer = 0
+let searchComposing = false   // 输入法组字中:拼音阶段每个字母都会触发 input,此时不该发请求
 let searchSeq = 0
 /**
  * 键入停止后自动搜索(防抖)
@@ -204,6 +220,7 @@ let searchSeq = 0
  * 清空关键词即时退出搜索、不等防抖 —— 否则列表会先空一下再回来。
  */
 function scheduleSearch() {
+  if (searchComposing) return   // 组字未结束,等 compositionend 再搜
   clearTimeout(searchTimer)
   if (!searchInput.value.trim()) { doSearch(); return }
   searchTimer = setTimeout(doSearch, SEARCH_DEBOUNCE_MS)
@@ -672,6 +689,7 @@ const shareSel = ref(new Set())
 const shareKwInput = ref('')
 const shareKeyword = ref('')   // 已生效的关键词(防抖到点才落到这里)
 let shareTimer = 0
+let shareComposing = false   // 输入法组字中:拼音阶段每个字母都会触发 input,此时不该发请求
 let shareSeq = 0               // 请求序号:防抖连打时只认最后一次发出的响应
 async function loadShares() {
   const seq = ++shareSeq
@@ -700,6 +718,7 @@ function switchShareSpace(v) {
 }
 /// 键入停止后自动搜索(与空间/回收站/传输历史同口径)
 function scheduleShareSearch() {
+  if (shareComposing) return   // 组字未结束,等 compositionend 再搜
   clearTimeout(shareTimer)
   if (!shareKwInput.value.trim()) { shareKeyword.value = ''; loadShares(); return }
   shareTimer = setTimeout(applyShareSearch, SEARCH_DEBOUNCE_MS)
@@ -838,7 +857,8 @@ function purgeShares(list) {
 }
 // ── 修改分享属性(创建时的那些:名称/有效期/次数/仅登录可见/提取码) ──
 const shareEdit = reactive({ show: false, id: 0, name: '', expire_days: 7, max_downloads: 0,
-                             login_only: false, pwd_enabled: false, reset_pwd: false, pwd: '', busy: false })
+                             login_only: false, pwd_enabled: false, pwd: '',
+                             had_pwd: false, busy: false })
 function openShareEdit(s) {
   shareEdit.id = s.id
   shareEdit.name = s.name
@@ -847,7 +867,7 @@ function openShareEdit(s) {
   shareEdit.max_downloads = Number(s.max_downloads) || 0
   shareEdit.login_only = !!Number(s.login_only)
   shareEdit.pwd_enabled = !!s.has_pwd
-  shareEdit.reset_pwd = false
+  shareEdit.had_pwd = !!s.has_pwd
   shareEdit.pwd = ''
   shareEdit.busy = false
   shareEdit.show = true
@@ -862,9 +882,15 @@ async function submitShareEdit() {
       max_downloads: Number(shareEdit.max_downloads) || 0,
       login_only: shareEdit.login_only ? 1 : 0
     }
-    // 手填的提取码优先;没填才看"重新生成随机码"
-    if (shareEdit.pwd_enabled && shareEdit.pwd.trim()) body.pwd = shareEdit.pwd.trim()
-    else if (shareEdit.pwd_enabled && shareEdit.reset_pwd) body.reset_pwd = true
+    // 提取码:开关关掉 → 清空;开着时手填优先;原本没有、这次也没填的则随机生成一个
+    // (已有提取码时留空 = 保持不变;要换新码请用右键菜单的"重置提取码")
+    body.pwd_enabled = shareEdit.pwd_enabled ? 1 : 0
+    if (shareEdit.pwd_enabled)
+    {
+      const custom = shareEdit.pwd.trim()
+      if (custom) body.pwd = custom
+      else if (!shareEdit.had_pwd) body.reset_pwd = true
+    }
     const r = await filehubApi.sharePatch(shareEdit.id, body)
     shareEdit.show = false
     if (r && r.pwd) {
@@ -1021,17 +1047,21 @@ onMounted(() => {
               <span class="cnt num">{{ shares.length }}</span>
             </button>
             <!-- 传输任务入口:原先做成右下角悬浮球,会盖住列表最后一行右侧的 ⋯ 操作;
-                 移进侧栏后不再与任何行重叠,进行中/失败数用徽标常驻可见 -->
+                 移进侧栏后不再与任何行重叠,进行中/失败数用徽标常驻可见。
+                 它单独占一栏(见下方卡片):上面三项是"切换浏览视图",它是"查看进行中的传输",
+                 不是一类东西,挤在同一栏里容易被当成第四个视图 -->
+            <button type="button" class="side-entry" :class="{ active: view === 'trash' }" @click="view = 'trash'">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M9 10h6M10 3h4v3h-4z"/></svg>
+              回收站
+            </button>
+          </div>
+          <div class="card" style="padding:6px">
             <button type="button" class="side-entry" :class="{ active: store.panelOpen }"
                     @click="store.togglePanel(!store.panelOpen)">
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v12m0 0-4-4m4 4 4-4"/><path d="M4 17v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1"/></svg>
               传输任务
               <span v-if="store.activeCount" class="cnt num">{{ store.activeCount }}</span>
               <span v-else-if="store.failedCount" class="cnt warn num">{{ store.failedCount }}</span>
-            </button>
-            <button type="button" class="side-entry" :class="{ active: view === 'trash' }" @click="view = 'trash'">
-              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M9 10h6M10 3h4v3h-4z"/></svg>
-              回收站
             </button>
           </div>
         </aside>
@@ -1049,7 +1079,7 @@ onMounted(() => {
               </div>
               <div class="input-wrap fh-search grow">
                 <input v-model.trim="searchInput" class="input" style="height:38px" :maxlength="SEARCH_KW_MAX"
-                       placeholder="搜索当前目录及子目录…" @input="scheduleSearch" @keyup.enter="flushSearch" />
+                       placeholder="搜索当前目录及子目录…" @compositionstart="searchComposing = true" @compositionend="searchComposing = false; scheduleSearch()" @input="scheduleSearch" @keyup.enter="flushSearch" />
                 <!-- 键入停止即自动搜索,故不需要"搜索"按钮;留个清空按钮,一键退出搜索 -->
                 <span v-if="searchInput" class="input-suffix">
                   <button class="icon-btn" type="button" aria-label="清空搜索" title="清空" @click="clearSearch">
@@ -1141,7 +1171,7 @@ onMounted(() => {
                         style="min-width:132px" @change="loadShares()" />
               <div class="input-wrap fh-search grow">
                 <input v-model.trim="shareKwInput" class="input" style="height:38px" :maxlength="SEARCH_KW_MAX"
-                       placeholder="搜索分享名称…" @input="scheduleShareSearch" @keyup.enter="flushShareSearch" />
+                       placeholder="搜索分享名称…" @compositionstart="shareComposing = true" @compositionend="shareComposing = false; scheduleShareSearch()" @input="scheduleShareSearch" @keyup.enter="flushShareSearch" />
                 <span v-if="shareKwInput" class="input-suffix">
                   <button class="icon-btn" type="button" aria-label="清空搜索" title="清空" @click="clearShareSearch">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
@@ -1169,7 +1199,7 @@ onMounted(() => {
                                :indeterminate="someSharesChecked" aria-label="全选"
                                @change="toggleAllShares($event.target.checked)" />
                       </th>
-                      <th style="min-width:170px">名称</th>
+                      <th style="width:200px">名称</th>
                       <th style="width:70px">类型</th>
                       <th style="width:190px">链接</th>
                       <th style="width:84px">提取码</th>
@@ -1352,13 +1382,21 @@ onMounted(() => {
             <span>仅登录用户可见</span>
           </label>
         </div>
+        <!-- 提取码开关常显(原本没有的能加上、原本有的能去掉)。
+             用与创建分享同款的开关 + 固定文案:文案不随状态变字 ——
+             写成"免提取码访问"会被读成"点了就不要密码",那描述的是点之后的结果,不是当前状态 -->
+        <div class="form-item">
+          <label class="form-label">提取码 <span class="opt">开启后访问需输入 4 位码</span></label>
+          <div class="row between" style="background:var(--color-bg);border:1px solid var(--color-border-soft);border-radius:var(--r-md);padding:10px 14px">
+            <span style="font-size:var(--fs-cap);color:var(--color-text-2)">需要提取码才能访问</span>
+            <button type="button" class="switch" :class="{ on: shareEdit.pwd_enabled }" aria-label="提取码开关"
+                    @click="shareEdit.pwd_enabled = !shareEdit.pwd_enabled"></button>
+          </div>
+        </div>
         <div class="form-item" v-if="shareEdit.pwd_enabled">
-          <label class="form-label">新提取码 <span class="opt">4 个字符;留空保持不变</span></label>
-          <input v-model.trim="shareEdit.pwd" class="input" maxlength="4" placeholder="留空保持不变" />
-          <label class="row" style="gap:8px;cursor:pointer;margin-top:6px">
-            <input v-model="shareEdit.reset_pwd" type="checkbox" class="fcheck" :disabled="!!shareEdit.pwd.trim()" />
-            <span :style="shareEdit.pwd.trim() ? 'opacity:.5' : ''">改为随机新码(保存后显示,旧码立即失效)</span>
-          </label>
+          <label class="form-label">提取码内容 <span class="opt">4 个字符</span></label>
+          <input v-model.trim="shareEdit.pwd" class="input" maxlength="4"
+                 :placeholder="shareEdit.had_pwd ? '留空保持不变' : '留空则随机生成'" />
         </div>
         <template #foot>
           <button class="btn btn-ghost" type="button" @click="shareEdit.show = false">取消</button>

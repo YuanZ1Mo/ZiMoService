@@ -29,6 +29,9 @@ const emit = defineEmits(['toggle', 'open', 'ctx', 'drag-to', 'files', 'sort', '
 // 可排序列表头:键必须落在服务端支持的范围(name|size|mtime|type,见 ListOrderClause)
 // "创建者"列不参与排序(服务端无该排序键),故单独成列、不写在本表内
 const SORTS = [['name', '名称'], ['type', '类型'], ['size', '大小'], ['mtime', '修改时间']]
+// 各列显式宽度:表格是 table-layout:auto,列宽由整列内容算出来 —— 空数据时只剩表头,
+// 没给宽度的列会缩到表头文字宽,于是"有数据/无数据"两种状态下列宽对不上。全给上就一致了
+const SORT_W = { name: '220px', type: '90px', size: '130px', mtime: '130px', delete_time: '130px' }
 // 回收站变体:列集与手势都不同 ——
 //   列:修改时间换删除时间,多"剩余"与常驻"原位置"(空间里"位置"只在搜索时出现)
 //   手势:不接拖拽(回收站内不能移动、不能拖入上传),双击不触发动作(文件夹不下钻、文件不下载)
@@ -184,12 +187,12 @@ async function onDropFiles(e) {
                      :aria-label="allChecked ? '取消全选' : '全选'" @change="emit('toggle-all', $event.target.checked)" />
             </th>
             <th v-for="[k, label] in sorts" :key="k" class="sortable" :class="{ sorted: sort === k }"
-                :style="k === 'name' ? 'min-width:200px' : ''" @click="emit('sort', k)">
+                :style="{ width: SORT_W[k] }" @click="emit('sort', k)">
               {{ label }}{{ sort === k ? (order === 'asc' ? ' ↑' : ' ↓') : '' }}
             </th>
-            <th v-if="!isTrash && Number(space) === 0" style="min-width:70px">创建者</th>
+            <th v-if="!isTrash && Number(space) === 0" style="width:90px">创建者</th>
             <th v-if="isTrash" style="width:96px">剩余</th>
-            <th v-if="isTrash || showPath" style="min-width:180px">{{ isTrash ? '原位置' : '位置' }}</th>
+            <th v-if="isTrash || showPath" style="width:190px">{{ isTrash ? '原位置' : '位置' }}</th>
             <th style="width:60px"></th>
           </tr>
         </thead>

@@ -549,7 +549,12 @@ drogon::Task<ZMJSON> ZmFileShareModule::Patch(int64_t uid, int64_t shareId, cons
     }
     if (body.contains("login_only"))
         addSet("login_only", std::to_string(zm_file_row_int(body, "login_only", 0) ? 1 : 0));
-    if (zm_json_get_bool(body, "reset_pwd", false))
+    // 提取码开关:与创建同口径,用 pwd_enabled 表达(0 = 关掉提取码,分享变免码访问)
+    if (body.contains("pwd_enabled") && zm_file_row_int(body, "pwd_enabled", 1) == 0)
+    {
+        addSet("pwd_hash", "");   // 空串即"没有提取码",与创建时的表示一致
+    }
+    else if (zm_json_get_bool(body, "reset_pwd", false))
     {
         newPwd = GeneratePwd();
         addSet("pwd_hash", HashPwd(token, newPwd));

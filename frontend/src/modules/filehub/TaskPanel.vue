@@ -24,6 +24,39 @@ let offUp = null
  *
  * @param e  mousedown 事件
  */
+/**
+ * 面板可摆放的范围:夹在视口内,且让开门户顶栏与侧栏
+ *
+ * 两者 z-index 都比面板高,压上去会盖住标题栏 —— 从被盖住的那段就再也抓不动面板了
+ * (移动端侧栏是移出屏外的抽屉,right 为负 → 退回 8)。
+ *
+ * @param r 面板矩形(缺省现取;面板已定长,拖动期间不会变)
+ * @return {topMin, leftMin, maxL, maxT}
+ */
+function panelBounds(r) {
+  const rect = r || (panelEl.value && panelEl.value.getBoundingClientRect())
+  const w    = rect ? rect.width : 410
+  const h    = rect ? rect.height : Math.min(window.innerHeight * 0.72, 640)
+  const topMin = (parseFloat(getComputedStyle(document.documentElement)
+                             .getPropertyValue('--topbar-h')) || 60) + 8
+  const side      = document.querySelector('.portal-side')
+  const sideRight = side ? side.getBoundingClientRect().right : 0
+  const maxL      = Math.max(0, window.innerWidth - w - 16)
+  const leftMin   = Math.min(maxL, Math.max(8, Math.round(sideRight) + 8))
+  const maxT      = Math.max(topMin, window.innerHeight - h - 16)
+  return { topMin, leftMin, maxL, maxT }
+}
+/// 把已摆放的面板重新夹回合法范围:窗口尺寸变了,原来的坐标可能已经越界
+function reclampPos() {
+  if (!dragPos.value) return
+  const b = panelBounds()
+  dragPos.value = {
+    left: Math.min(b.maxL, Math.max(b.leftMin, dragPos.value.left)),
+    top:  Math.min(b.maxT, Math.max(b.topMin, dragPos.value.top))
+  }
+}
+// 窗口尺寸变化即时纠正;未拖动过时直接返回,开销可忽略(与模块同生命周期)
+window.addEventListener('resize', reclampPos)
 function onDragStart(e) {
   if (e.button !== 0 || !panelEl.value) return
   if (e.target.closest && e.target.closest('button')) return
@@ -31,20 +64,12 @@ function onDragStart(e) {
   const from = { mx: e.clientX, my: e.clientY, left: r.left, top: r.top }
   dragging.value = true
   e.preventDefault()   // 拖动时不要顺带选中标题文字
-  // 夹在视口内,且让开门户顶栏与侧栏 —— 两者 z-index 都比面板高,压上去会盖住标题栏,
-  // 从被盖住的那段就再也抓不动面板了(移动端侧栏是移出屏外的抽屉,right 为负 → 退回 8)
-  const topMin    = (parseFloat(getComputedStyle(document.documentElement)
-                                .getPropertyValue('--topbar-h')) || 60) + 8
-  const side      = document.querySelector('.portal-side')
-  const sideRight = side ? side.getBoundingClientRect().right : 0
-  const maxL      = Math.max(0, window.innerWidth - r.width - 16)
-  const leftMin   = Math.min(maxL, Math.max(8, Math.round(sideRight) + 8))
+  const b = panelBounds(r)
   offMove = (ev) =>
   {
-    const maxT = Math.max(topMin, window.innerHeight - r.height - 16)
     dragPos.value = {
-      left: Math.min(maxL, Math.max(leftMin, from.left + ev.clientX - from.mx)),
-      top:  Math.min(maxT, Math.max(topMin, from.top + ev.clientY - from.my))
+      left: Math.min(b.maxL, Math.max(b.leftMin, from.left + ev.clientX - from.mx)),
+      top:  Math.min(b.maxT, Math.max(b.topMin, from.top + ev.clientY - from.my))
     }
   }
   offUp = () =>
@@ -99,6 +124,7 @@ const SEARCH_DEBOUNCE_MS = 400  // 键入停止多久后自动搜
 const kwInput = ref('')
 const keyword = ref('')         // 已生效的关键词(防抖到点才落到这里)
 let searchTimer = 0
+let kwComposing = false   // 输入法组字中:拼音阶段每个字母都会触发 input,此时不该发请求
 let loadSeq = 0                 // 请求序号:连打关键词时只认最后一次发出的响应
 async function loadHistory() {
   const seq = ++loadSeq
@@ -119,6 +145,7 @@ async function loadHistory() {
  * 清空关键词即时退出搜索、不等防抖,否则列表会先空一下再回来。
  */
 function scheduleSearch() {
+  if (kwComposing) return   // 组字未结束,等 compositionend 再搜
   clearTimeout(searchTimer)
   if (!kwInput.value.trim()) { keyword.value = ''; loadHistory(); return }
   searchTimer = setTimeout(applySearch, SEARCH_DEBOUNCE_MS)
@@ -219,7 +246,7 @@ async function deleteTask(t) {
          键入停止即搜,与空间/回收站两处同口径 -->
     <div v-if="tab === 'history'" class="task-search input-wrap">
       <input v-model.trim="kwInput" class="input" :maxlength="SEARCH_KW_MAX"
-             placeholder="搜索任务名或任务编号…" @input="scheduleSearch" @keyup.enter="flushSearch" />
+             placeholder="搜索任务名或任务编号…" @compositionstart="kwComposing = true" @compositionend="kwComposing = false; scheduleSearch()" @input="scheduleSearch" @keyup.enter="flushSearch" />
       <span v-if="kwInput" class="input-suffix">
         <button class="icon-btn" type="button" aria-label="清空搜索" title="清空" @click="clearSearch">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
@@ -296,8 +323,9 @@ async function deleteTask(t) {
             <template v-else>
               <span class="num">{{ TYPE_NAME[Number(t.type)] }} · {{ fmtTime(t.end_time || t.create_time) }}{{ Number(t.total_items) ? ` · ${t.total_items} 项` : '' }}{{ t.size ? ` · ${fmtSize(t.size)}` : '' }}</span>
             </template>
-            <!-- 任务编号:全长 32 位十六进制,整串显示会把这一行撑爆,故只显前 8 位;
-                 悬停看全串,点击复制整串(排障时要拿它去搜) -->
+            <!-- 任务编号:靠右(这一行的右下角)。全长 32 位十六进制,整串显示会把行撑爆,
+                 故只显前 8 位;悬停看全串,点击复制整串(排障时要拿它去搜) -->
+            <span style="flex:1"></span>
             <button class="t-no num" type="button" :title="`任务编号 ${t.task_no}(点击复制)`"
                     @click.stop="copyTaskNo(t.task_no)">{{ t.task_no.slice(0, 8) }}</button>
           </div>

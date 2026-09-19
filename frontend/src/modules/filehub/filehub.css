@@ -144,7 +144,10 @@ tr:hover .row-ops,tr.sel .row-ops{opacity:1}
 
 /* ---------- 任务面板 ---------- */
 /* 入口已移到侧栏「传输任务」,面板仍按视口右下悬浮,需自行让开壳层底部的特效带(--fx-h) */
-.task-panel{position:fixed;right:20px;bottom:calc(var(--fx-h) + 20px);z-index:551;width:410px;max-width:calc(100vw - 24px);max-height:min(72vh,640px);
+.task-panel{position:fixed;right:20px;bottom:calc(var(--fx-h) + 20px);z-index:551;width:410px;max-width:calc(100vw - 24px);
+  /* 定长而非"最高":切到历史页数据变多时会撑高面板,而拖拽边界只在拖动时才算 ——
+     面板会顶出视口/盖住顶栏,得再拖一下才回位。定长后内容在内部滚动,尺寸不随数据变 */
+  height:min(72vh,640px);
   display:flex;flex-direction:column;background:var(--color-card);border:1px solid var(--color-border-soft);border-radius:var(--r-xl);
   box-shadow:var(--shadow-lg)}
 .task-head{display:flex;align-items:center;gap:10px;padding:16px 20px;border-bottom:1px solid var(--color-border-soft);
@@ -165,7 +168,8 @@ tr:hover .row-ops,tr.sel .row-ops{opacity:1}
 .t-top{display:flex;align-items:center;gap:8px;min-width:0}
 .t-name{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .t-ops{margin-left:auto;display:flex;gap:4px;flex:none}
-.t-sub{font-size:var(--fs-cap);color:var(--color-text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.t-sub{display:flex;align-items:center;gap:8px;font-size:var(--fs-cap);color:var(--color-text-3);overflow:hidden;white-space:nowrap}
+.t-sub > span:first-child{overflow:hidden;text-overflow:ellipsis}
 /* 任务编号:等宽小字 + 弱化底色,一眼能与相邻的说明文字区分开 */
 .t-no{margin-left:6px;padding:1px 5px;border-radius:5px;background:var(--color-border-soft);
   font-family:var(--font-mono,monospace);font-size:var(--fs-cap);color:var(--color-text-3);cursor:pointer}
