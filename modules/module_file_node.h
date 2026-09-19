@@ -218,6 +218,18 @@ class ZmFileNodeModule
     ZMJSON ClearTrashExec(int64_t space, bool adminAll, const ZmOpCtx& ctx,
                           ZmTaskHandle* handle);
 
+    /**
+ * @brief 把历史回收站条目的文件补搬进回收站区(启动期调用;幂等)
+ *
+ * 软删除曾只标记数据库、不搬文件,这些条目的文件还留在原位置;而恢复与彻底删除
+ * 都以回收站区为准,不补搬就恢复不出内容。只搬"回收站区没有、原位置还在、
+ * 且原位置没有被在用条目占用"的条目 —— 末一条是防呆:同名新文件已落在原位置时,
+ * 那份文件不属于回收站条目,搬了就是抢新文件。搬完条件即不再成立,重复调用无副作用。
+ *
+ * @return {moved} 本次搬移的条目数(0 = 无需迁移)
+ */
+    ZMJSON MigrateTrashLayout();
+
     // ── 供其他模块复用的判定 ──
     /**
  * @brief 可见树判定:条目存在且 deleted=0 且祖先链上无 deleted=1

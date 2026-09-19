@@ -91,7 +91,8 @@ bool ZmFileDbModule::EnsureSpaceDirs(int64_t space) const
         return true;
     };
     return makeDir(m_rootDir + "\\space\\" + std::to_string(space)) &&
-           makeDir(m_rootDir + "\\space_cache\\" + std::to_string(space));
+           makeDir(m_rootDir + "\\space_cache\\" + std::to_string(space)) &&
+           makeDir(m_rootDir + "\\space_trash\\" + std::to_string(space));
 }
 
 // ============================================================================

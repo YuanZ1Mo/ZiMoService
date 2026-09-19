@@ -1312,11 +1312,61 @@ ZMJSON ZmFileNodeModule::SoftDeleteSync(const std::vector<int64_t>& idsIn, const
         keys.emplace_back(n.space, n.parentId);
     auto guards = m_lock->LockAll(keys);
 
+    // 物理侧先行:把条目从在用目录搬进回收站,再改库。文件动作进不了数据库事务,
+    // 故取"先搬后记":搬不动、算不出源路径的条目本轮不删(库行原样保留,下轮重试),
+    // 免得留下"行已进回收站、文件却还在在用目录"这种半截状态
+    std::vector<ZmFileNode> moved;      // 本轮可进回收站的条目(物理侧已就绪)
+    std::vector<ZmFileNode> movedPhys;  // 其中真的搬动了文件的(回滚时按它搬回)
+    for (const auto& n : nodes)
+    {
+        auto fail = [&](const char* code)
+        {
+            ZMJSON f  = ZMJSON::object();
+            f["id"]   = n.id;
+            f["name"] = n.name;
+            f["code"] = code;
+            failed.push_back(std::move(f));
+        };
+        int64_t     sp = n.space;
+        std::string src;
+        if (!m_store->PhysicalPathSync(n.id, sp, src).ok)
+        {
+            fail(zm_file_err::kNodeNotFound);
+            continue;
+        }
+        if (!m_store->EnsureDir(m_store->TrashEntryDir(n.space, n.id)).ok)
+        {
+            fail(zm_file_err::kInternal);
+            continue;
+        }
+        if (m_store->Exists(src))
+        {
+            ZmStoreResult mv =
+                m_store->MovePath(src, m_store->TrashEntryPath(n.space, n.id, n.name));
+            if (!mv.ok)
+            {
+                fail((mv.code == static_cast<int>(ZmErrCode::Locked) ||
+                      mv.code == static_cast<int>(ZmErrCode::AccessDenied))
+                         ? zm_file_err::kFileLocked
+                         : zm_file_err::kInternal);
+                continue;
+            }
+            movedPhys.push_back(n);
+        }
+        else
+        {
+            // 源文件本就不在:照常进回收站(条目无内容),交给一致性同步兜底
+            DEFAULT_LOG_WARN("ZmFileNodeModule: 删除时源文件已缺失,回收站条目无内容: {}",
+                             n.name);
+        }
+        moved.push_back(n);
+    }
+
     int64_t now = ZmSqliteDb::Now();
     bool    ok  = m_db->WithTxSync(
         [&](ZmSqliteDb& db) -> bool
         {
-            for (const auto& n : nodes)
+            for (const auto& n : moved)
             {
                 // deleted=0 守卫不可省:重复删除会覆盖原位置与归属
                 if (!db.ExecSync("UPDATE nodes SET deleted = 1, delete_time = ?1, "
@@ -1329,6 +1379,12 @@ ZMJSON ZmFileNodeModule::SoftDeleteSync(const std::vector<int64_t>& idsIn, const
                     zm_file_row_int(db.QueryRowTxSync("SELECT changes() AS n", {}), "n", 0);
                 if (changed == 0)
                 {
+                    // 库行没动,但文件已被搬进回收站:搬回原位,两者保持一致
+                    int64_t     sp = n.space;
+                    std::string back;
+                    if (m_store->PhysicalPathSync(n.id, sp, back).ok &&
+                        m_store->MovePath(m_store->TrashEntryPath(n.space, n.id, n.name), back).ok)
+                        m_store->RemoveTreeSync(m_store->TrashEntryDir(n.space, n.id));
                     ZMJSON f  = ZMJSON::object();
                     f["id"]   = n.id;
                     f["name"] = n.name;
@@ -1360,14 +1416,25 @@ ZMJSON ZmFileNodeModule::SoftDeleteSync(const std::vector<int64_t>& idsIn, const
             if (!auditItems.empty())
             {
                 if (!m_audit->RecordBatchSync(db, ctx.uid, ctx.account, zm_file::kActDelete,
-                                              nodes.empty() ? 0 : nodes.front().space,
+                                              moved.empty() ? 0 : moved.front().space,
                                                   auditItems, ctx.ip, 1))
                     return false;
             }
             return true;
         });
     if (!ok)
+    {
+        // 事务整体回滚:库行留在原位,已搬走的文件也得搬回去,否则在用条目会丢内容
+        for (const auto& n : movedPhys)
+        {
+            int64_t     sp = n.space;
+            std::string back;
+            if (m_store->PhysicalPathSync(n.id, sp, back).ok &&
+                m_store->MovePath(m_store->TrashEntryPath(n.space, n.id, n.name), back).ok)
+                m_store->RemoveTreeSync(m_store->TrashEntryDir(n.space, n.id));
+        }
         return ZmFileError(zm_file_err::kInternal, 500, "删除失败");
+    }
 
     ZMJSON out     = ZMJSON::object();
     out["success"] = std::move(success);
@@ -1577,6 +1644,29 @@ ZMJSON ZmFileNodeModule::RestoreSync(const std::vector<int64_t>& idsIn, const Zm
         m_store->EnsureSpaceRoot(n.space);
         ZmDirLock::Guard guard(*m_lock, n.space, parentId);
         std::string      finalName = FreeNameSync(n.space, parentId, n.name);
+
+        // 物理侧先行:把文件从回收站搬回目标位置。名字被占用时 finalName 已换新名,
+        // 所以搬过去即改名,不留"库名变了、磁盘还在旧名"的空壳
+        int64_t     backSp = n.space;
+        std::string parentPath;
+        std::string srcPath = m_store->TrashEntryPath(n.space, n.id, n.name);
+        if (!m_store->PhysicalPathSync(parentId, backSp, parentPath).ok ||
+            !m_store->Exists(srcPath))
+        {
+            // 算不出目标目录,或回收站里的内容已丢(存档损坏):恢复出来也是空壳,
+            // 如实拒绝,别让用户以为文件回来了
+            DEFAULT_LOG_ERROR("ZmFileNodeModule: 恢复内容缺失: {} (id={})", n.name, n.id);
+            notFound();
+            continue;
+        }
+        std::string dstPath = parentPath + "\\" + finalName;
+        if (!m_store->EnsureDir(parentPath).ok || !m_store->MovePath(srcPath, dstPath).ok)
+        {
+            DEFAULT_LOG_ERROR("ZmFileNodeModule: 恢复搬移失败: {} (id={})", n.name, n.id);
+            notFound();
+            continue;
+        }
+
         int64_t          now       = ZmSqliteDb::Now();
         int64_t          newId     = n.id;
         bool             ok        = m_db->WithTxSync(
@@ -1603,9 +1693,13 @@ ZMJSON ZmFileNodeModule::RestoreSync(const std::vector<int64_t>& idsIn, const Zm
             });
         if (!ok)
         {
+            // 事务失败:刚搬回的文件送回回收站,库行没动,条目留在回收站可重试
+            m_store->MovePath(dstPath, srcPath);
             notFound();
             continue;
         }
+        // 文件已搬走,回收站里那个条目目录空了:顺手删掉,免得留空壳
+        m_store->RemoveTreeSync(m_store->TrashEntryDir(n.space, n.id));
         success.push_back(n.id);
         ZMJSON one  = ZMJSON::object();
         one["id"]   = newId;
@@ -1681,20 +1775,12 @@ ZMJSON ZmFileNodeModule::PurgeSync(const std::vector<int64_t>& idsIn, const ZmOp
             continue;
         }
 
-        int64_t     subBytes = 0;
-        ZMJSON      subIds   = SubtreeIdsSync(n.id, &subBytes, nullptr);
-        int64_t     subItems = static_cast<int64_t>(subIds.size());
-        int64_t     sp       = n.space;
-        std::string physPath;
-        if (!m_store->PhysicalPathSync(n.id, sp, physPath).ok)
-        {
-            ZMJSON f  = ZMJSON::object();
-            f["id"]   = n.id;
-            f["name"] = n.name;
-            f["code"] = zm_file_err::kNodeNotFound;
-            failed.push_back(std::move(f));
-            continue;
-        }
+        int64_t subBytes = 0;
+        ZMJSON  subIds   = SubtreeIdsSync(n.id, &subBytes, nullptr);
+        int64_t subItems = static_cast<int64_t>(subIds.size());
+        // 回收站条目的文件在回收站区(删除时已搬离原位),按条目目录整棵删;
+        // 目录本就空/不存在时 RemoveTreeSync 视作成功,不必先探存在
+        std::string physPath = m_store->TrashEntryDir(n.space, n.id);
         // ① 先做物理删除:失败则整条保留(行一行都不动),下轮重试
         ZmStoreResult rm = m_store->RemoveTreeSync(physPath);
         if (!rm.ok)
@@ -1875,6 +1961,50 @@ ZMJSON ZmFileNodeModule::ClearTrashExec(int64_t space, bool adminAll, const ZmOp
     }
     (void)totalBytes;
     return agg;
+}
+
+ZMJSON ZmFileNodeModule::MigrateTrashLayout()
+{
+    ZMJSON  out   = ZMJSON::object();
+    int64_t moved = 0;
+    ZMJSON  rows  = m_db->QueryRowsSync(
+        "SELECT id, space, parent_id, name FROM nodes WHERE deleted = 1 "
+        "ORDER BY delete_time ASC LIMIT 5000",
+        {});
+    for (const auto& r : rows)
+    {
+        int64_t     id     = zm_file_row_int(r, "id", 0);
+        int64_t     space  = zm_file_row_int(r, "space", 0);
+        int64_t     parent = zm_file_row_int(r, "parent_id", 0);
+        std::string name   = zm_file_row_str(r, "name");
+
+        std::string dst = m_store->TrashEntryPath(space, id, name);
+        if (m_store->Exists(dst))
+            continue; // 回收站区已有内容 = 已迁过
+        // 原位置被在用条目占用:那份文件属于新文件,不是这条回收站条目的
+        ZMJSON dup = m_db->QueryRowSync(
+            "SELECT id FROM nodes WHERE space = ?1 AND parent_id = ?2 AND deleted = 0 "
+            "AND name = ?3 COLLATE NOCASE LIMIT 1",
+            {std::to_string(space), std::to_string(parent), name});
+        if (!dup.empty())
+            continue;
+        int64_t     sp = space;
+        std::string src;
+        if (!m_store->PhysicalPathSync(id, sp, src).ok || !m_store->Exists(src))
+            continue;
+        if (!m_store->EnsureDir(m_store->TrashEntryDir(space, id)).ok)
+            continue;
+        if (!m_store->MovePath(src, dst).ok)
+        {
+            DEFAULT_LOG_WARN("ZmFileNodeModule: 回收站条目文件搬迁失败,跳过: {}", name);
+            continue;
+        }
+        ++moved;
+    }
+    out["moved"] = moved;
+    if (moved > 0)
+        DEFAULT_LOG_INFO("ZmFileNodeModule: 回收站条目文件补搬完成,共 {} 条", moved);
+    return out;
 }
 
 // ============================================================================

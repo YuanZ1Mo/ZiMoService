@@ -198,9 +198,10 @@ void ServicePortal::CreateModules()
         m_restful, m_session.get(), m_permission.get(), m_gate.get(), m_user.get(),
         m_fileDb.get(), m_fileNode.get(), m_fileTask.get(), m_fileAudit.get(),
         m_filePack.get(), m_fileStore.get(), m_fileUpload.get());
-    // 启动期收尾:僵尸任务置已中断 + 打包任务中断标记
+    // 启动期收尾:僵尸任务置已中断 + 打包任务中断标记 + 历史回收站条目文件补搬
     m_fileTask->MarkZombieTasks();
     m_filePack->RecoverOrphans();
+    m_fileNode->MigrateTrashLayout();
     m_fileAdmin->StartMaintenance();
     m_fileHub->StartDownloadSweeper();
     // 权限点登记(filehub / filehubAdmin;幂等)

@@ -7,6 +7,7 @@
 // (**不接收任何客户端路径字符串**),统一加 \\?\ 前缀绕过 MAX_PATH。
 // 物理操作:建目录 / 原子改名入位 / 复制 / 递归删除 / 磁盘枚举。
 // 缓存区:space_cache\<space>\zip(压缩包)与 \chunk\<upload_id>(分片)。
+// 回收站区:space_trash\<space>\<node_id>\(条目原名);属用户数据,不随缓存清理删除。
 // 本模块不查权限、不做同名裁决,只接收已确定的物理路径;错误经 ZmStoreResult
 // 带错误码上抛,Win32 错误码在本层收敛为 ZmErrCode。
 // ============================================================================
@@ -79,7 +80,7 @@ class ZmFileStoreModule
  * @brief 构造物理存储模块
  *
  * @param db 数据访问模块(拼路径时取条目名与父链)
- * @param rootDir 文件中心根目录(其下为 space\ 与 space_cache\)
+ * @param rootDir 文件中心根目录(其下为 space\ 、space_cache\ 与 space_trash\)
  */
     ZmFileStoreModule(ZmFileDbModule* db, const std::string& rootDir);
     ~ZmFileStoreModule();
@@ -93,14 +94,20 @@ class ZmFileStoreModule
     std::string ZipDir(int64_t space) const;
     /// @return 上传分片目录
     std::string ChunkDir(int64_t space, const std::string& uploadId) const;
+    /// @return 空间回收站根目录(其下按条目 id 再分一层)
+    std::string TrashRoot(int64_t space) const;
+    /// @return 回收站中某条目的存放目录(其下即条目原名)
+    std::string TrashEntryDir(int64_t space, int64_t nodeId) const;
+    /// @return 回收站中某条目的物理路径(条目原名作最后一级)
+    std::string TrashEntryPath(int64_t space, int64_t nodeId, const std::string& name) const;
     /// @return 文件中心根目录
     const std::string& RootDir() const { return m_rootDir; }
 
     /**
  * @brief 由条目 id 组装物理绝对路径(目录/文件通用)
  *
- * 沿 parent 链从库中取 name 拼接;**不校验可见树**(回收站内条目物理文件仍在原位,
- * 彻底删除时必须能算出路径),可见性判断由调用方负责。
+ * 沿 parent 链从库中取 name 拼接;**不校验可见树**,可见性判断由调用方负责。
+ * 注意:回收站条目的文件不在本函数算出的路径上,而在 TrashEntryPath 处,两者勿混用。
  *
  * @param nodeId 条目 id;0 = 空间根
  * @param space [in,out] 传入时为期望空间;nodeId=0 时用其直接出路径;

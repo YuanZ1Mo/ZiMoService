@@ -124,6 +124,22 @@ std::string ZmFileStoreModule::ChunkDir(int64_t space, const std::string& upload
     return CacheRoot(space) + "\\chunk\\" + uploadId;
 }
 
+std::string ZmFileStoreModule::TrashRoot(int64_t space) const
+{
+    return m_rootDir + "\\space_trash\\" + std::to_string(space);
+}
+
+std::string ZmFileStoreModule::TrashEntryDir(int64_t space, int64_t nodeId) const
+{
+    return TrashRoot(space) + "\\" + std::to_string(nodeId);
+}
+
+std::string ZmFileStoreModule::TrashEntryPath(int64_t space, int64_t nodeId,
+                                              const std::string& name) const
+{
+    return TrashEntryDir(space, nodeId) + "\\" + name;
+}
+
 // ============================================================================
 // 路径组装
 // ============================================================================

@@ -10,10 +10,18 @@
 #include <Wtsapi32.h>
 #pragma comment(lib, "Wtsapi32.lib")
 
+namespace
+{
+/// 关停时等待工作池在途任务收尾的上限(毫秒)。
+/// 系统对服务停止有约 30 秒的隐含上限,此处须留足余量,不能无限等
+constexpr uint32_t kWorkPoolDrainMs = 10000;
+}
+
 // ============================================================================
 // 生命周期回调(相位契约)
 //   OnStart(Phase1/2):NetDock::Init(配置三面+全局参数) → Portal::Init(注册路由) → NetDock::Open
-//   OnStop (Phase3):  Portal::Shutdown(业务收尾) → NetDock::Close(quit+join) → 释放
+//   OnStop (Phase3):  Portal::Shutdown(业务收尾) → NetDock::Close(quit+join)
+//                     → 工作池排空(在途任务收尾) → 释放
 // ============================================================================
 
 void ServiceCenter::OnStart(DWORD /*argc*/, TCHAR** /*argv[]*/)
@@ -53,6 +61,15 @@ void ServiceCenter::OnStop()
         m_servicePortal->Shutdown();
     if (m_netDock)
         m_netDock->Close();
+
+    // 循环已停,不会再有新任务提交;但此前排进工作池的任务仍可能没跑完,
+    // 而任务体持有模块指针(定时清理、后台打包/复制皆经工作池),故必须先等它们
+    // 收尾再析构模块,否则任务会访问已释放的对象
+    if (!ZmHttpServer::WorkPool().WaitIdle(kWorkPoolDrainMs))
+    {
+        DEFAULT_LOG_ERROR("ServiceCenter::OnStop: 工作池 {}ms 内未排空,在途任务仍持有模块指针",
+                          kWorkPoolDrainMs);
+    }
 
     delete m_servicePortal;
     m_servicePortal = nullptr;
