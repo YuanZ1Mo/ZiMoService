@@ -564,7 +564,8 @@ void ZmFilePackModule::CleanCache(int64_t now)
             {
                 if (!c.isDir)
                     continue;
-                if (now - c.mtime > zm_file::kCacheKeepSec)
+                // 分片目录是上传临时区,与打包保留期无关,仍按天级回收
+                if (now - c.mtime > zm_file::kCacheChunkKeepSec)
                     m_store->RemoveTreeSync(spaceDir + "\\chunk\\" + c.name);
             }
         }

@@ -1,7 +1,7 @@
 <script setup>
 // 右下角传输任务面板:进行中(服务端 tasks/active + 客户端上传队列)/ 历史
 // 轮询契约在 stores/filehub.js;本组件只负责展示与操作(取消/重试/下载/清理)
-import { ref, computed, watch, inject } from 'vue'
+import { ref, computed, watch, inject, onDeactivated } from 'vue'
 import { useFilehubStore } from '../../stores/filehub'
 import { filehubApi, fmtSize, fmtTime } from '../../api/filehub'
 
@@ -9,6 +9,56 @@ const store = useFilehubStore()
 const toast = inject('toast')
 const tab = ref('active')
 const loadingHistory = ref(false)
+
+// ── 面板可拖动:默认贴右下角,按住标题栏可拖到任意位置(位置记住在当前会话) ──
+// 拖动后改用 left/top 定位(内联覆盖 CSS 的 right/bottom);没拖过就不设内联定位,回落到右下角
+const panelEl = ref(null)
+const dragging = ref(false)
+const dragPos = ref(null)   // { left, top }
+let offMove = null
+let offUp = null
+/**
+ * 按下标题栏开始拖动
+ *
+ * 标题栏内的按钮(进行中/历史、收起)不参与,否则点标签页会变成拖拽。
+ *
+ * @param e  mousedown 事件
+ */
+function onDragStart(e) {
+  if (e.button !== 0 || !panelEl.value) return
+  if (e.target.closest && e.target.closest('button')) return
+  const r    = panelEl.value.getBoundingClientRect()
+  const from = { mx: e.clientX, my: e.clientY, left: r.left, top: r.top }
+  dragging.value = true
+  e.preventDefault()   // 拖动时不要顺带选中标题文字
+  // 夹在视口内,且让开门户顶栏与侧栏 —— 两者 z-index 都比面板高,压上去会盖住标题栏,
+  // 从被盖住的那段就再也抓不动面板了(移动端侧栏是移出屏外的抽屉,right 为负 → 退回 8)
+  const topMin    = (parseFloat(getComputedStyle(document.documentElement)
+                                .getPropertyValue('--topbar-h')) || 60) + 8
+  const side      = document.querySelector('.portal-side')
+  const sideRight = side ? side.getBoundingClientRect().right : 0
+  const maxL      = Math.max(0, window.innerWidth - r.width - 16)
+  const leftMin   = Math.min(maxL, Math.max(8, Math.round(sideRight) + 8))
+  offMove = (ev) =>
+  {
+    const maxT = Math.max(topMin, window.innerHeight - r.height - 16)
+    dragPos.value = {
+      left: Math.min(maxL, Math.max(leftMin, from.left + ev.clientX - from.mx)),
+      top:  Math.min(maxT, Math.max(topMin, from.top + ev.clientY - from.my))
+    }
+  }
+  offUp = () =>
+  {
+    dragging.value = false
+    window.removeEventListener('mousemove', offMove)
+    window.removeEventListener('mouseup', offUp)
+    offMove = offUp = null
+  }
+  window.addEventListener('mousemove', offMove)
+  window.addEventListener('mouseup', offUp)
+}
+// 面板随模块失活时若仍在拖,清掉全局监听,避免残留到其它页面
+onDeactivated(() => { if (offUp) offUp() })
 
 const TYPE_NAME = { 1: '上传', 2: '复制', 3: '打包下载', 4: '目录统计', 5: '一致性同步', 6: '回收站清理' }
 const STATUS_NAME = { 1: '排队中', 2: '进行中', 3: '已完成', 4: '失败', 5: '已取消', 6: '已中断' }
@@ -69,27 +119,32 @@ async function clearHistory() {
     store.history = []; store.historyTotal = 0; store.clearFinished()
   } catch (e) { toast(e.message || '清除历史失败', 'err') }
 }
-async function cleanPack(t) {
+/**
+ * 删除单条历史记录
+ *
+ * 只删记录,不动打包压缩包 —— 压缩包是缓存文件,由缓存回收统一处理(空闲 30 分钟 /
+ * 每日兜底 / 容量阈值),与"清除历史"同一口径。
+ * 删完按服务端重拉列表 —— 原先只改本地数组,切 tab 重新拉取时记录又冒出来了。
+ *
+ * @param t  任务对象(取 task_no)
+ */
+async function deleteTask(t) {
   try {
-    await filehubApi.packClean(t.task_no)
-    store.history = store.history.filter(x => x.task_no !== t.task_no)
-  } catch (e) { toast(e.message || '清理失败', 'err') }
+    await filehubApi.taskDelete(t.task_no)
+    await loadHistory()
+  } catch (e) { toast(e.message || '删除失败', 'err') }
 }
 </script>
 
 <template>
-  <!-- 悬浮入口:有任务=品牌渐变+徽标;无任务=idle 态(不轮询) -->
-  <button v-if="!store.panelOpen" type="button" class="task-fab" :class="{ idle: !store.activeCount }"
-          @click="store.togglePanel(true)" aria-label="传输任务面板">
-    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v12m0 0-4-4m4 4 4-4"/><path d="M4 17v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1"/></svg>
-    任务
-    <span v-if="store.activeCount" class="badge num">{{ store.activeCount }}</span>
-    <span v-else-if="store.failedCount" class="badge" style="background:var(--color-warn-bg);color:var(--color-warn)">{{ store.failedCount }}</span>
-  </button>
+  <!-- 入口在侧栏「传输任务」(原先的右下角悬浮球会盖住列表最后一行的 ⋯ 操作) -->
 
   <!-- 面板留在模块 DOM 内:传送到 body 会在 keep-alive 缓存期间残留到其它页面 -->
-  <div v-if="store.panelOpen" class="task-panel" role="dialog" aria-label="传输任务面板">
-    <div class="task-head">
+  <div v-if="store.panelOpen" ref="panelEl" class="task-panel" :class="{ dragging }" role="dialog"
+       aria-label="传输任务面板"
+       :style="dragPos ? { left: dragPos.left + 'px', top: dragPos.top + 'px', right: 'auto', bottom: 'auto' } : null">
+    <!-- 标题栏 = 拖动把手(按住可拖到任意位置;栏内按钮不参与拖动) -->
+    <div class="task-head" @mousedown="onDragStart">
       <b>传输任务</b>
       <span v-if="store.activeCount" class="badge badge-info num">进行中 {{ store.activeCount }}</span>
       <div class="task-tabs">
@@ -157,12 +212,11 @@ async function cleanPack(t) {
             <span class="st-chip" :class="statusChip(t.status)">{{ STATUS_NAME[Number(t.status)] }}</span>
             <span class="t-name">{{ t.name }}</span>
             <span class="t-ops">
-              <!-- 打包完成:下载 + 清理(空闲 30 分钟自动删) -->
-              <template v-if="Number(t.type) === 3 && Number(t.status) === 3">
-                <button class="btn btn-secondary btn-sm" type="button" @click="downloadZip(t)">下载</button>
-                <button class="btn btn-ghost btn-sm" type="button" @click="cleanPack(t)">清理</button>
-              </template>
+              <!-- 打包完成:可下载产物(产物空闲 30 分钟自动回收) -->
+              <button v-if="Number(t.type) === 3 && Number(t.status) === 3" class="btn btn-secondary btn-sm" type="button" @click="downloadZip(t)">下载</button>
               <button v-if="Number(t.status) === 4 || Number(t.status) === 6" class="btn btn-secondary btn-sm" type="button" @click="retryTask(t)">重试</button>
+              <!-- 删除记录(压缩包是缓存,由缓存回收处理,不随记录删) -->
+              <button class="btn btn-danger-soft btn-sm" type="button" @click="deleteTask(t)">删除</button>
             </span>
           </div>
           <div class="tprog" :class="{ done: Number(t.status) === 3, err: Number(t.status) === 4 }"><i :style="{ width: progress(t) + '%' }"></i></div>
@@ -181,8 +235,8 @@ async function cleanPack(t) {
       </div>
     </div>
 
-    <div class="t-foot">
-      <span class="hint">轮询 /filehub/tasks/active · 1.5s · 无任务自动停止</span>
+    <!-- 清除历史只对历史页有意义,进行中页不显示(原先无条件渲染,进行中页也有这个按钮) -->
+    <div v-if="tab === 'history'" class="t-foot">
       <button class="btn btn-ghost btn-sm" type="button" @click="clearHistory">清除历史</button>
     </div>
   </div>

@@ -159,14 +159,16 @@ export const filehubApi = {
   // 下载与打包
   downloadToken: (ids) => api.post('/filehub/download/token', { ids }),
   pack: (space, ids) => api.post('/filehub/pack', { space, ids }),
-  packClean: (taskNo) => api.post(`/filehub/pack/${taskNo}/clean`),
   // 打包产物下载:按 task_no 换直链(压缩包是缓存文件,不是 nodes 条目)
   downloadPack: (taskNo) => api.post('/filehub/download/token', { task_no: taskNo }),
   // 传输任务
   tasks: (p) => api.get('/filehub/tasks' + qs(p)),
   tasksActive: () => api.get('/filehub/tasks/active'),
+  taskDetail: (no) => api.get(`/filehub/tasks/${no}`),
   taskCancel: (no) => api.post(`/filehub/tasks/${no}/cancel`),
   taskRetry: (no) => api.post(`/filehub/tasks/${no}/retry`),
+  // 删除单条历史记录(只删记录;打包压缩包是缓存,由缓存回收统一处理)
+  taskDelete: (no) => api.del(`/filehub/tasks/${no}`),
   tasksClear: (status) => api.post('/filehub/tasks/clear', { status }),
   // 分享(登录侧)
   shareCreate: (body) => api.post('/filehub/shares', body),
@@ -302,6 +304,37 @@ export function fmtSize(bytes, items) {
   while (v >= 1024 && i < u.length - 1) { v /= 1024; i++ }
   return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)} ${u[i]}`
 }
+/**
+ * 条目的占用字节数(文件/目录统一口径)
+ *
+ * 文件取自身 size;目录取服务端下发的子树字节 bytes —— 目录在 nodes 里 size 恒为 0,
+ * 直接读 size 会把整个文件夹算成 0(批量条/删除/打包/移动复制的"共 X"都会偏小)。
+ *
+ * @param n  条目 {type, size, bytes?}
+ * @return 字节数(拿不到 bytes 的目录按 0 计)
+ */
+export function nodeBytes(n) {
+  return Number(n.type) === 1 ? Number(n.bytes || 0) : Number(n.size || 0)
+}
+
+/**
+ * 条目"大小"列的文案
+ *
+ * 文件 = 人性化字节;目录 = 直接子项数 + 子树字节数(目录自身 size 恒为 0,子树字节由
+ * 服务端在列表里批量算好下发 bytes;拿不到 bytes 时退回只显示项数)。
+ *
+ * @param n  条目 {type, size, items, bytes?}
+ * @return 展示文本
+ */
+export function fmtNodeSize(n) {
+  if (Number(n.type) === 1) {
+    return n.bytes === undefined || n.bytes === null
+      ? `${n.items} 项`
+      : `${n.items} 项 · ${fmtSize(n.bytes)}`
+  }
+  return fmtSize(n.size)
+}
+
 export function fmtTime(sec) {
   if (!sec) return '—'
   const d = new Date(Number(sec) * 1000)

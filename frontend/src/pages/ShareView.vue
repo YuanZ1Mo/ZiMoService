@@ -5,7 +5,7 @@
 // 上限约 60s,超时提示失败)
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { filehubApi, downloadByUrl, fmtSize, fmtTime, kindOf } from '../api/filehub'
+import { filehubApi, downloadByUrl, fmtNodeSize, fmtTime, kindOf } from '../api/filehub'
 import FileIcon from '../modules/filehub/FileIcon.vue'
 import '../modules/filehub/filehub.css'
 
@@ -246,7 +246,7 @@ watch(token, loadInfo)
                       </div>
                     </td>
                     <td><span class="ftype">{{ kindOf(n) === 'dir' ? '文件夹' : '文件' }}</span></td>
-                    <td><span class="num" :class="{ 'items-num': Number(n.type) === 1 }">{{ Number(n.type) === 1 ? `${n.items} 项` : fmtSize(n.size) }}</span></td>
+                    <td><span class="num">{{ fmtNodeSize(n) }}</span></td>
                     <td><span class="num">{{ fmtTime(n.update_time) }}</span></td>
                     <td>
                       <span class="row-ops">

@@ -4,9 +4,20 @@
    ============================================================ */
 
 /* ---------- 布局 ---------- */
-.fh-body{display:flex;gap:16px;align-items:flex-start}
+/* 模块根占满模块区可用高度(顶栏/特效带由壳层 flex 扣掉),让列表在内部滚。
+   原先列表高度靠 calc(100vh - 330px) 硬猜:顶栏 60 + 特效带 56 + 模块区上下内边距 48
+   + 页头 + 工具条 + 面包屑都要算进去,常数一旦偏小,内容就撑破模块区、壳层再出一条
+   外部滚动条(与列表自身的滚动条并存)。改由 flex 逐级让高度,不再依赖视口常数。 */
+.fh-page{height:100%;display:flex;flex-direction:column;min-height:0}
+.fh-page > .page-head{flex:none}
+.fh-body{display:flex;gap:16px;align-items:stretch;min-height:0;flex:1}
 .fh-side{width:228px;flex:none;display:flex;flex-direction:column;gap:12px}
-.fh-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:12px;min-height:40vh}
+.fh-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:12px;min-height:0}
+/* 回收站 / 我的分享 自身没有滚动容器,由主区滚;文件浏览不滚(高度让给列表) */
+.fh-main-scroll{overflow-y:auto}
+/* 列表卡片:吃掉主区剩余高度,卡片内的列表/网格自己滚 */
+.fh-listcard{flex:1;min-height:0;display:flex;flex-direction:column}
+.fh-listcard > .crumbs{flex:none}
 @media (max-width:768px){
   .fh-side{position:fixed;left:0;right:0;bottom:0;z-index:58;width:auto;
     background:var(--color-card);box-shadow:var(--shadow-card);border-radius:16px 16px 0 0;
@@ -30,6 +41,8 @@
 .side-entry .cnt{margin-left:auto;font-size:var(--fs-cap);font-weight:700;background:var(--color-border-soft);
   color:var(--color-text-2);min-width:20px;height:20px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;padding:0 6px}
 .side-entry.active .cnt{background:var(--color-primary);color:#fff}
+/* 传输任务的失败数徽标:失败比"进行中"更需要注意,用警示色 */
+.side-entry .cnt.warn{background:var(--color-warn-bg);color:var(--color-warn)}
 
 /* ---------- 工具条 ---------- */
 /* 工具条 / 批量条 / 搜索提示条三者互斥渲染(v-if/v-else),高度必须对齐:
@@ -105,7 +118,11 @@ tr:hover .row-ops,tr.sel .row-ops{opacity:1}
 .col-cb{width:44px}
 
 /* 网格视图 */
-.fgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:12px;padding:16px}
+/* 网格视图同样吃掉卡片剩余高度并在内部滚动(与列表视图一致,避免整页再出一条滚动条)。
+   align-content:start 必须有:网格容器被拉高后,默认 align-content(normal=stretch)会把
+   多出来的高度摊给各行,表现为"每个文件之间的垂直间距被拉得很大" */
+.fgrid{flex:1;min-height:0;overflow-y:auto;align-content:start;
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:12px;padding:16px}
 .fgrid .gcell{border:1.5px solid transparent;border-radius:var(--r-md);padding:12px 8px;display:flex;flex-direction:column;align-items:center;gap:8px;
   cursor:default;text-align:center;transition:background var(--dur-fast),border-color var(--dur-fast),transform var(--dur-fast) var(--ease)}
 .fgrid .gcell:hover{background:var(--color-primary-soft);transform:translateY(-2px)}
@@ -124,19 +141,15 @@ tr:hover .row-ops,tr.sel .row-ops{opacity:1}
 .drop-hint b{font-size:var(--fs-h2);color:var(--color-primary)}
 
 /* ---------- 任务面板 ---------- */
-/* 悬浮组件按视口定位,需自行让开壳层底部的特效带(--fx-h),否则会压到带子上 */
-.task-fab{position:fixed;right:20px;bottom:calc(var(--fx-h) + 20px);z-index:550;display:flex;align-items:center;gap:9px;height:46px;padding:0 18px;
-  border-radius:var(--r-pill);background:var(--grad-brand);color:#fff;font-weight:700;box-shadow:var(--shadow-pop);cursor:pointer;
-  transition:transform var(--dur-fast) var(--ease),box-shadow var(--dur);border:none}
-.task-fab:hover{transform:translateY(-2px)}
-.task-fab:active{transform:scale(.96)}
-.task-fab.idle{background:var(--color-card);color:var(--color-text-2);border:1px solid var(--color-border-soft);box-shadow:var(--shadow-card)}
-.task-fab .badge{background:#fff;color:var(--sky-600)}
-.task-fab.idle .badge{background:var(--color-border-soft);color:var(--color-text-2)}
-.task-panel{position:fixed;right:20px;bottom:calc(var(--fx-h) + 76px);z-index:551;width:410px;max-width:calc(100vw - 24px);max-height:min(72vh,640px);
+/* 入口已移到侧栏「传输任务」,面板仍按视口右下悬浮,需自行让开壳层底部的特效带(--fx-h) */
+.task-panel{position:fixed;right:20px;bottom:calc(var(--fx-h) + 20px);z-index:551;width:410px;max-width:calc(100vw - 24px);max-height:min(72vh,640px);
   display:flex;flex-direction:column;background:var(--color-card);border:1px solid var(--color-border-soft);border-radius:var(--r-xl);
   box-shadow:var(--shadow-lg)}
-.task-head{display:flex;align-items:center;gap:10px;padding:16px 20px;border-bottom:1px solid var(--color-border-soft)}
+.task-head{display:flex;align-items:center;gap:10px;padding:16px 20px;border-bottom:1px solid var(--color-border-soft);
+  cursor:grab;user-select:none}
+.task-panel.dragging .task-head{cursor:grabbing}
+/* 标题栏内的按钮仍是指针(别继承成"可拖动"的手型) */
+.task-head button{cursor:pointer}
 .task-head b{font-size:var(--fs-h2)}
 .task-tabs{display:flex;gap:2px;margin-left:auto}
 .task-tabs button{height:30px;padding:0 12px;border-radius:9px;font-size:var(--fs-cap);font-weight:700;color:var(--color-text-3);border:none;background:none}
@@ -158,8 +171,7 @@ tr:hover .row-ops,tr.sel .row-ops{opacity:1}
 .st-chip.ok{background:var(--color-ok-bg);color:var(--color-ok)}
 .st-chip.fail{background:var(--color-err-bg);color:var(--color-err)}
 .st-chip.stop{background:var(--color-warn-bg);color:var(--color-warn)}
-.t-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 20px;border-top:1px solid var(--color-border-soft)}
-.t-foot .hint{font-size:var(--fs-cap);color:var(--color-text-3)}
+.t-foot{display:flex;align-items:center;justify-content:flex-end;gap:12px;padding:12px 20px;border-top:1px solid var(--color-border-soft)}
 .grp-label{display:flex;align-items:center;gap:8px;font-size:var(--fs-cap);font-weight:700;color:var(--color-text-3);padding:10px 12px 4px}
 
 /* ---------- 目录树选择器 ---------- */

@@ -323,6 +323,9 @@ select.input{cursor:pointer;appearance:auto}
 .menu-item:hover{background:var(--color-border-soft);color:var(--color-text)}
 .menu-item.danger{color:var(--color-err)}
 .menu-item.danger:hover{background:var(--color-err-bg)}
+/* 禁用项(如根目录下的"返回上一级目录"):不可点,悬停也不给反馈 */
+.menu-item:disabled{opacity:.45;cursor:not-allowed}
+.menu-item:disabled:hover{background:none;color:var(--color-text-2)}
 .menu-sep{height:1px;background:var(--color-border-soft);margin:6px 4px}
 
 /* ---------- 11.5 布局/排版小工具(多处复用,勿在组件里重复定义) ---------- */

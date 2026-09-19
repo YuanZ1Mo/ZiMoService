@@ -4,7 +4,7 @@
 import { ref, watch } from 'vue'
 import Modal from '../../components/Modal.vue'
 import DirTreeNode from './DirTreeNode.vue'
-import { filehubApi, fmtSize } from '../../api/filehub'
+import { filehubApi, fmtSize, nodeBytes } from '../../api/filehub'
 
 const props = defineProps({
   show: { type: Boolean, default: false },
@@ -81,7 +81,9 @@ async function confirm() {
     else emit('done', { __error: e })
   } finally { busy.value = false }
 }
-const totalSize = () => props.targets.reduce((a, t) => a + (Number(t.type) === 2 ? Number(t.size) : 0), 0)
+// 待操作体积:文件取 size、目录取服务端下发的子树字节(目录自身 size 恒为 0,
+// 只累加文件会把整个文件夹算成 0)
+const totalSize = () => props.targets.reduce((a, t) => a + nodeBytes(t), 0)
 </script>
 
 <template>

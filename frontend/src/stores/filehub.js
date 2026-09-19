@@ -8,6 +8,12 @@ import { filehubApi, downloadByUrl } from '../api/filehub'
 //   ③ 页面切走(onDeactivated)停,回前台(onActivated)立即刷新一次
 //   ④ 上传进度为客户端视角(已完成字节),服务端 done_size 在合并阶段更新,两者不必一致
 
+// 任务终态(与服务端 zm_file 的 kTask* 一致)
+const PACK_DONE = 3                              // 已完成
+const PACK_TERMINAL = [3, 4, 5, 6]               // 已完成/失败/已取消/已中断
+// 自动下载的跟踪上限:逐秒查一次,30 分钟仍未结束就放弃(打包 20GB 上限足够宽裕)
+const PACK_WATCH_MAX = 1800
+
 export const useFilehubStore = defineStore('filehub', {
   state: () => ({
     // 服务端任务(tasks/active 轮询结果:task_no/type/name/status/done_size/size/done_items/total_items)
@@ -18,7 +24,9 @@ export const useFilehubStore = defineStore('filehub', {
     history: [],
     historyTotal: 0,
     panelOpen: false,
-    polling: false
+    polling: false,
+    // 待自动下载的打包任务号:打包完成后自动换取直链并触发一次下载(见 watchPackDone)
+    pendingPacks: []
   }),
   getters: {
     activeCount: (s) => s.serverTasks.length + s.uploads.filter(u => u.status === 'run' || u.status === 'wait').length,
@@ -68,6 +76,42 @@ export const useFilehubStore = defineStore('filehub', {
     togglePanel(open) {
       this.panelOpen = open === undefined ? !this.panelOpen : open
       if (this.panelOpen) { this.refreshActive(); this.ensurePolling() }
+    },
+    /** 登记一个打包任务:完成后自动换取直链并触发一次下载 */
+    queuePackDownload(taskNo) {
+      if (!taskNo || this.pendingPacks.includes(taskNo)) return
+      this.pendingPacks.push(taskNo)
+      this.watchPackDone()
+    },
+    /**
+     * 跟踪队首打包任务,完成即自动触发下载
+     *
+     * 与任务面板的 1.5s 轮询相互独立(那条只管"进行中"列表,任务一完成就消失了,
+     * 拿不到最终状态),这里按 task_no 逐秒查详情,直到进入终态。
+     *
+     * @param tries 已重试次数(网络抖动/任务未结束都算,超过上限即放弃跟踪)
+     */
+    async watchPackDone(tries = 0) {
+      const taskNo = this.pendingPacks[0]
+      if (!taskNo) return
+      let status = 0
+      try {
+        status = Number((await filehubApi.taskDetail(taskNo)).status)
+      } catch (e) {
+        // 记录已不在(被删除/清历史):没什么可等的,停止跟踪
+        if (e && e.status === 404) { this.pendingPacks.shift(); return }
+        if (tries < PACK_WATCH_MAX) setTimeout(() => this.watchPackDone(tries + 1), 1000)
+        else this.pendingPacks.shift()
+        return
+      }
+      if (status !== PACK_DONE && !PACK_TERMINAL.includes(status)) {
+        if (tries < PACK_WATCH_MAX) setTimeout(() => this.watchPackDone(tries + 1), 1000)
+        else this.pendingPacks.shift()
+        return
+      }
+      this.pendingPacks.shift()
+      // 只有"完成"才自动下载;失败/取消的终态由任务面板展示,不打扰用户
+      if (status === PACK_DONE) this.downloadZip(taskNo).catch(() => {})
     },
     // ── 上传队列(并发 3,顺序 = 用户选择顺序,§3.8.1) ──
     // dirOf:可选。文件夹上传时按文件返回各自的目标目录 id(缺省用 dirId)

@@ -4,7 +4,7 @@
 // 交互:单击选中 / 双击进目录或下载 / 行尾 ⋯ 菜单 / 行拖拽到文件夹移动 / 系统文件拖入上传
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import FileIcon from './FileIcon.vue'
-import { fmtSize, fmtTime, kindLabel, highlightText } from '../../api/filehub'
+import { fmtNodeSize, fmtTime, kindLabel, highlightText } from '../../api/filehub'
 import { collectDropItems } from '../../api/drop-entries'
 
 const props = defineProps({
@@ -86,6 +86,12 @@ function onResize() { measure(scroller.value) }
 watch(() => props.items, () => nextTick(() => measure(scroller.value)))
 onBeforeUnmount(() => window.removeEventListener('resize', onResize))
 
+// ── 右键菜单触发源(交给父组件决定作用对象) ──
+//   row  = 右键某一行:行在选中集内则操作整批,否则收敛为它
+//   dots = 行尾 ⋯:只操作该行(单选语义)
+//   area = 右键列表空白区:操作当前选中集;没有选中项时父组件不弹菜单
+function onAreaCtx(e) { emit('ctx', e, null, 'area') }
+
 // ── 拖拽(内部:拖条目 → 悬停文件夹行移动) ──
 const dragOverId = ref(0)
 function onDragStart(e, node) {
@@ -122,7 +128,7 @@ async function onDropFiles(e) {
 
 <template>
   <div class="ftbl-wrap" style="position:relative;border-radius:var(--r-lg);overflow:hidden;border:none"
-       @dragover.prevent @drop.prevent="onDropFiles">
+       @dragover.prevent @drop.prevent="onDropFiles" @contextmenu.prevent="onAreaCtx">
     <!-- 列表视图 -->
     <div v-show="view === 'list'" ref="scroller" class="fh-vscroll" @scroll.passive="onScroll">
       <div :style="{ height: padTop + 'px' }"></div>
@@ -149,7 +155,7 @@ async function onDropFiles(e) {
               draggable="true"
               @click="emit('toggle', n, $event)"
               @dblclick="emit('open', n)"
-              @contextmenu.prevent="emit('ctx', $event, n)"
+              @contextmenu.prevent.stop="emit('ctx', $event, n, 'row')"
               @dragstart="onDragStart($event, n)"
               @dragover="onDragOverRow($event, n)"
               @dragleave="onDragLeaveRow(n)"
@@ -171,9 +177,9 @@ async function onDropFiles(e) {
               </div>
             </td>
             <td><span class="ftype">{{ kindLabel(n) }}</span></td>
-            <td style="min-width:80px">
+            <td style="min-width:110px">
               <span class="num" :class="{ 'items-num': Number(n.type) === 1 }">
-                {{ Number(n.type) === 1 ? `${n.items} 项` : fmtSize(n.size) }}
+                {{ fmtNodeSize(n) }}
               </span>
             </td>
             <td style="min-width:110px"><span class="num">{{ fmtTime(n.update_time) }}</span></td>
@@ -181,7 +187,7 @@ async function onDropFiles(e) {
             <td v-if="showPath"><span style="font-size:var(--fs-cap);color:var(--color-text-2)">{{ n.path || '(空间根)' }}</span></td>
             <td>
               <span class="row-ops">
-                <button class="dots-btn" type="button" aria-label="更多操作" @click.stop="emit('ctx', $event, n)">
+                <button class="dots-btn" type="button" aria-label="更多操作" @click.stop="emit('ctx', $event, n, 'dots')">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg>
                 </button>
               </span>
@@ -199,12 +205,12 @@ async function onDropFiles(e) {
     <!-- 网格视图 -->
     <div v-if="view === 'grid'" class="fgrid">
       <div v-for="n in items" :key="n.id" class="gcell" :class="{ sel: selected.has(n.id) }" draggable="true"
-           @click="emit('toggle', n, $event)" @dblclick="emit('open', n)" @contextmenu.prevent="emit('ctx', $event, n)"
+           @click="emit('toggle', n, $event)" @dblclick="emit('open', n)" @contextmenu.prevent.stop="emit('ctx', $event, n, 'row')"
            @dragstart="onDragStart($event, n)"
            @dragover="onDragOverRow($event, n)" @dragleave="onDragLeaveRow(n)" @drop.prevent="onDropRow($event, n)">
         <FileIcon :node="n" />
         <span class="gname">{{ n.name }}</span>
-        <span class="gsub">{{ Number(n.type) === 1 ? `${n.items} 项` : fmtSize(n.size) }}</span>
+        <span class="gsub">{{ fmtNodeSize(n) }}</span>
       </div>
     </div>
 
@@ -218,7 +224,11 @@ async function onDropFiles(e) {
 </template>
 
 <style scoped>
-.fh-vscroll{overflow-y:auto;max-height:calc(100vh - 330px);min-height:240px}
+/* 列表根:吃掉卡片剩余高度,列表/网格在内部滚动。
+   高度不再由 calc(100vh - 常数) 猜(猜大会让模块区多出一条外部滚动条) */
+.ftbl-wrap{flex:1;min-height:0;display:flex;flex-direction:column}
+/* 空态覆盖在列表区上:列表为空时它不占位,否则 flex 会把提示挤到卡片底部 */
+.ftbl-wrap > .empty{position:absolute;inset:0;justify-content:center}
+.fh-vscroll{flex:1;min-height:120px;overflow-y:auto}
 .fcheck{width:16px;height:16px;accent-color:var(--color-primary);cursor:pointer}
-@media (max-width:768px){.fh-vscroll{max-height:60vh}}
 </style>

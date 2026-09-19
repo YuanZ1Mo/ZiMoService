@@ -133,6 +133,9 @@ class ZmFileHubModule
                                                            std::string            taskNo);
     drogon::Task<drogon::HttpResponsePtr> HandleTaskRetry(drogon::HttpRequestPtr req,
                                                           std::string            taskNo);
+    /// 删除单条传输任务记录(不动打包产物,产物由缓存回收处理)
+    drogon::Task<drogon::HttpResponsePtr> HandleTaskDelete(drogon::HttpRequestPtr req,
+                                                           std::string            taskNo);
     drogon::Task<drogon::HttpResponsePtr> HandleTasksClear(drogon::HttpRequestPtr req);
     // ── 分享(登录侧) ──
     drogon::Task<drogon::HttpResponsePtr> HandleShareCreate(drogon::HttpRequestPtr req);

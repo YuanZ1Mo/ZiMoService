@@ -22,13 +22,58 @@ using namespace drogon;
 namespace
 {
 /**
- * @brief 追加一个带参数的条件(cond 内的 '?' 依次编号为 ?N)
+ * @brief 给列表里本页的目录补上"子树文件字节数"(字段 bytes)
  *
- * @param where [in,out] WHERE 片段累积串
- * @param params [in,out] 参数累积
- * @param cond 条件模板(占位符用 '?')
- * @param vals 该条件的参数值(个数须与 '?' 一致)
+ * 目录在 nodes 里 size 恒为 0,列表只显示 "N 项"、看不出占多大;批量条/删除/打包/移动
+ * 复制的"共 X"也需要目录的体积。用**一次**递归 CTE 把本页所有目录一起算完,避免逐目录
+ * 查询(一页几十个目录就是几十条查询)。只算本页 —— 前端能选中的也只有本页条目。
+ *
+ * @param db   数据模块
+ * @param list [in,out] 列表行数组(NodeView 产物);目录行补 bytes
  */
+void FillDirBytes(ZmFileDbModule* db, ZMJSON& list)
+{
+    std::vector<int64_t> dirIds;
+    for (const auto& v : list)
+        if (zm_file_row_int(v, "type", 0) == zm_file::kTypeDir)
+            dirIds.push_back(zm_file_row_int(v, "id", 0));
+    if (dirIds.empty())
+        return;
+    std::sort(dirIds.begin(), dirIds.end());
+    dirIds.erase(std::unique(dirIds.begin(), dirIds.end()), dirIds.end());
+    std::string inList = "(";
+    for (size_t i = 0; i < dirIds.size(); ++i)
+    {
+        if (i)
+            inList += ",";
+        inList += std::to_string(dirIds[i]);
+    }
+    inList += ")";
+    // 每个根目录一棵子树,聚合出该目录下全部文件的字节总和(根目录自身 type=1 不计入 SUM)
+    ZMJSON agg = db->QueryRowsSync(
+        "WITH RECURSIVE sub(id, size, type, root, depth) AS ("
+        " SELECT id, size, type, id, 0 FROM nodes WHERE id IN " + inList +
+        "   AND type = 1 AND deleted = 0"
+        " UNION ALL"
+        " SELECT n.id, n.size, n.type, s.root, s.depth + 1 FROM nodes n"
+        " JOIN sub s ON n.parent_id = s.id AND n.deleted = 0 WHERE s.depth < 64)"
+        " SELECT root, COALESCE(SUM(CASE WHEN type = 2 THEN size ELSE 0 END), 0) AS bytes"
+        " FROM sub GROUP BY root;");
+    for (const auto& a : agg)
+    {
+        int64_t root = zm_file_row_int(a, "root", 0);
+        int64_t by   = zm_file_row_int(a, "bytes", 0);
+        for (auto& v : list)
+        {
+            if (zm_file_row_int(v, "id", 0) == root)
+            {
+                v["bytes"] = by;
+                break;
+            }
+        }
+    }
+}
+
 void AddCond(std::string& where, std::vector<std::string>& params, const std::string& cond,
              const std::vector<std::string>& vals)
 {
@@ -426,6 +471,8 @@ ZMJSON ZmFileNodeModule::ListSync(int64_t space, int64_t dirId, const ZmListQuer
     ZMJSON list = ZMJSON::array();
     for (const auto& r : rows)
         list.push_back(NodeView(r));
+    // 目录补子树字节(需求 §3.1 原定"不实时计算",这里批量一次算完,展示与批量操作共用)
+    FillDirBytes(m_db, list);
 
     ZMJSON out   = ZMJSON::object();
     out["total"] = total;
@@ -551,6 +598,8 @@ ZMJSON ZmFileNodeModule::SearchSync(int64_t space, int64_t dirId, const std::str
             item["path"]     = prefix.empty() ? p : (prefix + "/" + p);
             list.push_back(std::move(item));
         }
+        // 命中本页的目录同样补子树字节(搜索结果也能被勾选后做批量操作)
+        FillDirBytes(m_db, list);
     }
     out["total"]     = total;
     out["truncated"] = truncated;
@@ -579,6 +628,14 @@ drogon::Task<ZMJSON> ZmFileNodeModule::Detail(int64_t nodeId)
                 return ZmFileError(zm_file_err::kNodeNotFound, 404, "条目不存在");
             ZMJSON item  = NodeView(row);
             item["path"] = RelPathSync(nodeId);
+            // 详情弹窗同样给目录带上子树字节(单条按需算,和列表口径一致)
+            if (zm_file_row_int(row, "type", 0) == zm_file::kTypeDir)
+            {
+                int64_t subItems = 0;
+                int64_t subBytes = 0;
+                SubtreeIdsSync(nodeId, &subBytes, &subItems);
+                item["bytes"] = subBytes;
+            }
             return item;
         });
 }

@@ -143,6 +143,8 @@ class ZmFileTaskModule
     drogon::Task<ZMJSON> Cancel(const std::string& taskNo, int64_t uid, bool adminAll);
     /// @brief 清除历史(终态任务;status ≤0 表示全部终态)
     drogon::Task<ZMJSON> Clear(int64_t uid, int status, bool adminAll);
+    /// @brief 删除单条任务记录(仅终态;进行中的须先取消)
+    drogon::Task<ZMJSON> Delete(const std::string& taskNo, int64_t uid, bool adminAll);
     /// @brief 重试:按原任务类型重建新任务并重新执行(不复活旧行)
     drogon::Task<ZMJSON> Retry(const std::string& taskNo, int64_t uid);
     /// @brief 登记某类型的重试执行体(未登记的类型重试返回明确失败)

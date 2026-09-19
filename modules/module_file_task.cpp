@@ -371,6 +371,31 @@ drogon::Task<ZMJSON> ZmFileTaskModule::Clear(int64_t uid, int status, bool admin
     co_return out;
 }
 
+drogon::Task<ZMJSON> ZmFileTaskModule::Delete(const std::string& taskNo, int64_t uid,
+                                              bool adminAll)
+{
+    co_return co_await ZmHttpServer::RunOnPool<ZMJSON>(
+        [this, taskNo, uid, adminAll]() -> ZMJSON
+        {
+            ZMJSON row =
+                m_db->QueryRowSync("SELECT * FROM transfer_tasks WHERE task_no = ?1", {taskNo});
+            if (row.empty())
+                return ZmFileError(zm_file_err::kNodeNotFound, 404, "任务不存在");
+            if (!adminAll && zm_file_row_int(row, "uid", 0) != uid)
+                return ZmFileError(zm_file_err::kNodeNotFound, 404, "任务不存在");
+            // 进行中的任务不能直接删:执行体还在按任务号回写进度,行没了会一路报错
+            if (zm_file_row_int(row, "status", 0) < zm_file::kTaskDone)
+                return ZmFileError(zm_file_err::kBadRequest, 400,
+                                   "进行中的任务不能删除,请先取消");
+            if (!m_db->ExecSync("DELETE FROM transfer_tasks WHERE task_no = ?1", {taskNo}))
+                return ZmFileError(zm_file_err::kInternal, 500, "删除任务失败");
+            DropRetryPayload(taskNo);
+            ZMJSON out     = ZMJSON::object();
+            out["deleted"] = 1;
+            return out;
+        });
+}
+
 drogon::Task<ZMJSON> ZmFileTaskModule::Retry(const std::string& taskNo, int64_t uid)
 {
     ZMJSON row =

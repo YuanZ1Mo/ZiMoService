@@ -454,6 +454,10 @@ void ZmFileHubModule::RegisterRoutes()
         std::string(k) + "/tasks/{1}/retry", HttpMethod::Post,
         [this](HttpRequestPtr req, std::string taskNo) -> Task<HttpResponsePtr>
         { return HandleTaskRetry(std::move(req), std::move(taskNo)); });
+    m_rest->RegisterCoroWithPathParams(
+        std::string(k) + "/tasks/{1}", HttpMethod::Delete,
+        [this](HttpRequestPtr req, std::string taskNo) -> Task<HttpResponsePtr>
+        { return HandleTaskDelete(std::move(req), std::move(taskNo)); });
     // 分享(登录侧)
     m_rest->RegisterCoro(std::string(k) + "/shares", HttpMethod::Post,
                          [this](HttpRequestPtr req) -> Task<HttpResponsePtr>
@@ -1339,6 +1343,18 @@ drogon::Task<HttpResponsePtr> ZmFileHubModule::HandleTaskRetry(HttpRequestPtr re
     if (!gate.ok)
         co_return ZmAuthGateModule::ApiError(gate.status, gate.code, gate.message);
     ZMJSON out = co_await m_task->Retry(taskNo, gate.ctx.uid);
+    co_return Respond(out);
+}
+
+drogon::Task<HttpResponsePtr> ZmFileHubModule::HandleTaskDelete(HttpRequestPtr req,
+                                                                std::string    taskNo)
+{
+    auto gate = co_await Authorize(req);
+    if (!gate.ok)
+        co_return ZmAuthGateModule::ApiError(gate.status, gate.code, gate.message);
+    // 只删记录,不动打包产物:压缩包是缓存文件,由缓存回收统一处理(空闲 30 分钟 /
+    // 每日兜底 / 容量阈值),与"清除历史"同一口径 —— 记录与产物各有各的生命周期
+    ZMJSON out = co_await m_task->Delete(taskNo, gate.ctx.uid, false);
     co_return Respond(out);
 }
 

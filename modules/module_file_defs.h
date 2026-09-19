@@ -35,9 +35,13 @@ inline constexpr int64_t kEnsurePathMax   = 1024;        ///< ensure 单条相�
 inline constexpr int64_t kMaxPathChars    = 240;         ///< 物理路径字符上限
 inline constexpr int64_t kMaxDepth        = 32;          ///< 路径深度上限
 inline constexpr int64_t kTrashRetainDays = 30;          ///< 回收站保留天数
-inline constexpr int64_t kCacheIdleSec    = 1800;        ///< 压缩包空闲清理阈值(秒)
-inline constexpr int64_t kCacheKeepSec    = 24LL * 3600; ///< 缓存兜底清理阈值(秒)
-inline constexpr int64_t kCacheQuotaBytes = 50LL * 1024 * 1024 * 1024; ///< 缓存区总占用阈值(超阈值按最久未访问删到 80%)
+// 打包压缩包是缓存:最后一次访问后空闲即回收(下载会把时间推到现在,相当于续期),
+// 另有 24 小时兜底与容量阈值。产物可能比任务记录(终态 7 天)先被回收,此时历史里
+// 仍显示"已完成"、点下载会提示已被清理,需重新打包 —— 这是缓存定位下的预期行为
+inline constexpr int64_t kCacheIdleSec    = 3LL * 3600;  ///< 压缩包空闲清理阈值(秒;从最后一次访问起算)
+inline constexpr int64_t kCacheKeepSec    = 24LL * 3600; ///< 压缩包兜底清理阈值(秒)
+inline constexpr int64_t kCacheChunkKeepSec = 24LL * 3600; ///< 上传分片临时目录兜底清理阈值(秒;与打包无关,仍按天级回收)
+inline constexpr int64_t kCacheQuotaBytes = 500LL * 1024 * 1024 * 1024; ///< 缓存区总占用阈值(超阈值按最久未访问删到 80%)
 inline constexpr int64_t kShareMaxPerUser = 200;         ///< 单用户有效分享上限
 inline constexpr int64_t kShareCredTtlSec = 2LL * 3600;  ///< 分享访问凭证有效期
 inline constexpr int64_t kSharePwdFailMax = 5;           ///< 提取码连续失败上限

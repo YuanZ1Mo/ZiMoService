@@ -5,7 +5,7 @@
 import { ref, reactive, computed, watch, nextTick, onMounted, onBeforeUnmount, onActivated, onDeactivated, inject } from 'vue'
 import { useSessionStore } from '../../stores/session'
 import { useFilehubStore } from '../../stores/filehub'
-import { filehubApi, fmtSize, fmtTime, kindOf, FILE_KINDS, nextSelection } from '../../api/filehub'
+import { filehubApi, fmtSize, fmtNodeSize, fmtTime, kindOf, FILE_KINDS, nextSelection, nodeBytes } from '../../api/filehub'
 import FileList from './FileList.vue'
 import TrashView from './TrashView.vue'
 import TaskPanel from './TaskPanel.vue'
@@ -116,6 +116,8 @@ let refreshTimer = null
 
 // ── 搜索(当前目录及子目录,§3.2) ──
 const searchInput = ref('')
+// 搜索态面包屑会被清空,"返回上一级目录"仍需要它:进入搜索时留一份快照
+let bcBeforeSearch = []
 async function doSearch() {
   const kw = searchInput.value.trim()
   if (!kw) { exitSearch(); return }
@@ -125,6 +127,7 @@ async function doSearch() {
     return
   }
   query.searching = true
+  bcBeforeSearch = [...breadcrumb.value]   // 快照当前目录链,供"返回上一级目录"使用
   loading.value = true
   try {
     const d = await filehubApi.search({ space: space.value, dir_id: dirId.value, keyword: kw, page: 1, size: 500 })
@@ -168,15 +171,12 @@ function clearSel() { selected.value = new Set(); lastIdx = -1 }
 // 表头全选框(FileList 抛出):勾选=全选当前已加载条目,取消=清空
 function onToggleAll(checked) { checked ? selectAll() : clearSel() }
 const selTargets = computed(() => items.value.filter(x => selected.value.has(x.id)))
-// 选中项的体积只累加"文件":目录在 nodes 里 size 恒为 0(目录不占字节),
-// 其子树体积需服务端递归统计、列表接口不下发 —— 把 0 混进来会显示成"共 0 B"的假体积
-const selBytes = computed(() => selTargets.value.filter(x => Number(x.type) === 2)
-  .reduce((a, x) => a + Number(x.size || 0), 0))
+// 选中项体积:文件取 size、目录取服务端下发的子树字节(bytes),两者统一口径
+const selBytes = computed(() => selTargets.value.reduce((a, x) => a + nodeBytes(x), 0))
 const selDirCount = computed(() => selTargets.value.filter(x => Number(x.type) === 1).length)
-// 批量条上的构成说明:精确文件体积 + 文件夹个数(文件夹内容大小以服务端统计为准,不在此虚报)
+// 批量条上的构成说明:总体积 + 文件夹个数(个数用于提示"其中几个是文件夹")
 const selSummary = computed(() => {
-  const parts = []
-  if (selBytes.value) parts.push(fmtSize(selBytes.value))
+  const parts = [fmtSize(selBytes.value)]
   if (selDirCount.value) parts.push(`${selDirCount.value} 个文件夹`)
   return parts.join(' · ')
 })
@@ -210,33 +210,83 @@ function openNode(n) {
 }
 
 // ── 右键 / 行尾菜单 ──
-const ctxMenu = reactive({ show: false, x: 0, y: 0, node: null })
-function openCtx(e, node) {
-  if (!selected.value.has(node.id)) toggleSel(node, null)
-  ctxMenu.node = node
-  ctxMenu.show = true
-  // mh 按实际条目估(8 项×38px + 2 条分隔 + 内边距):贴到视口底部时改为向上弹,
-  // 否则菜单底部会被窗口裁掉(原先只做了 y 方向钳制,钳完仍在视口外)
-  const mw = 200, mh = 350
+// 触发源(source)决定"作用对象":row=右键行、dots=行尾 ⋯、area=列表空白区
+// blank=true 表示空白处菜单(与条目菜单互斥)
+const ctxMenu = reactive({ show: false, x: 0, y: 0, node: null, multi: false, blank: false })
+/// 单选态的作用对象:row/dots 用 ctxMenu.node;area 触发时取选中集里的唯一项
+const ctxTarget = computed(() => ctxMenu.node || selTargets.value[0] || null)
+const ctxIsDir = computed(() => !!ctxTarget.value && Number(ctxTarget.value.type) === 1)
+/**
+ * 菜单定位:贴到视口底部时改为向上弹
+ *
+ * 原先只做了 x 方向钳制,菜单底部会被窗口裁掉。
+ *
+ * @param e   触发事件(取 clientX / clientY)
+ * @param mh  菜单估算高度
+ */
+function placeMenu(e, mh) {
+  const mw = 200
   ctxMenu.x = Math.min(e.clientX, window.innerWidth - mw - 8)
   ctxMenu.y = (e.clientY + mh + 8 > window.innerHeight) ? Math.max(8, e.clientY - mh)
                                                        : e.clientY
 }
-function closeCtx() { ctxMenu.show = false }
-function ctxAct(act) {
-  const n = ctxMenu.node
+function openCtx(e, node, source) {
+  ctxMenu.blank = false
+  if (source === 'area') {
+    // 空白处右键:有选中项 → 操作选中集;没有 → 空白处菜单(只有"返回上一级目录")
+    if (!selected.value.size) { openBlankCtx(e); return }
+  } else if (source === 'dots' || !selected.value.has(node.id)) {
+    // 行尾 ⋯ = 只操作该行;右键未选中行 = 把它设为唯一选中项
+    // (右键总能出菜单,否则用户会以为右键失灵)
+    selected.value = new Set([node.id]); lastIdx = -1
+  }
+  ctxMenu.node = source === 'area' ? null : node
+  ctxMenu.multi = selected.value.size > 1
+  ctxMenu.show = true
+  placeMenu(e, 350)   // 最多 8 项×38px + 2 条分隔 + 内边距
+}
+/// 空白处菜单:作用于"当前位置"而非某个条目
+function openBlankCtx(e) {
+  ctxMenu.node = null; ctxMenu.multi = false; ctxMenu.blank = true; ctxMenu.show = true
+  placeMenu(e, 60)
+}
+/**
+ * 返回上一级目录(空白处菜单)
+ *
+ * 面包屑 = 祖先链 + 当前目录(服务端下发),倒数第二级即父目录;
+ * 当前目录直属空间根时没有倒数第二级,父目录取 0(空间根)。
+ * 搜索态下面包屑被清空(结果跨子目录,显示当前路径会误导),改用进入搜索时的快照。
+ * 已在空间根(dirId=0)时无上级,菜单项禁用。
+ */
+function goParent() {
   closeCtx()
-  // 与"打包下载/删除"同一口径:多选时作用于整个选中集(多条目由服务端转打包任务)
-  if (act === 'download')
-    store.download((selTargets.value.length > 1 ? selTargets.value : [n]).map(x => x.id))
-         .catch(e => toast(e.message || '下载失败', 'err'))
-  else if (act === 'pack') doPack(selTargets.value.length > 1 ? selTargets.value : [n])
-  else if (act === 'rename') openRename(n)
-  else if (act === 'move') openMove([n])
-  else if (act === 'copy') openCopy([n])
+  if (!dirId.value) return
+  const bc = query.searching ? bcBeforeSearch : breadcrumb.value
+  const parent = bc.length >= 2 ? Number(bc[bc.length - 2].id) : 0
+  if (query.searching) { query.searching = false; query.truncated = false; searchInput.value = '' }
+  dirId.value = parent
+  selected.value = new Set()
+  lastIdx = -1
+  load()
+}
+function closeCtx() { ctxMenu.show = false }
+/// 菜单当前作用的对象集:多选 = 整个选中集,单选 = 那一条
+const ctxTargets = computed(() => ctxMenu.multi ? selTargets.value
+                                                : (ctxTarget.value ? [ctxTarget.value] : []))
+function ctxAct(act) {
+  const n = ctxTarget.value
+  const targets = ctxTargets.value.slice()
+  closeCtx()
+  if (!targets.length) return
+  if (act === 'open') openNode(n)
+  else if (act === 'download') store.download(targets.map(x => x.id)).catch(e => toast(e.message || '下载失败', 'err'))
+  else if (act === 'pack') doPack(targets)
+  else if (act === 'rename') targets.length > 1 ? openBatchRename(targets) : openRename(n)
+  else if (act === 'move') openMove(targets)
+  else if (act === 'copy') openCopy(targets)
   else if (act === 'share') openShare(n)
-  else if (act === 'delete') doDelete(selTargets.value.length > 1 ? selTargets.value : [n])
-  else if (act === 'detail') openDetail(n)
+  else if (act === 'delete') doDelete(targets)
+  else if (act === 'detail') targets.length > 1 ? openBatchDetail(targets) : openDetail(n)
 }
 
 // ── 操作:新建/重命名/删除/打包 ──
@@ -269,20 +319,63 @@ async function submitName() {
     nameDlg.err = e.message || '操作失败'
   } finally { nameDlg.busy = false }
 }
+
+// ── 批量重命名(多选):逐行改名,左列原名只读、右列可编辑 ──
+const batchRename = reactive({ show: false, rows: [], busy: false })
+function openBatchRename(targets) {
+  batchRename.rows = targets.map(t => ({
+    id: t.id, old: t.name, name: t.name,
+    isDir: Number(t.type) === 1, oldExt: (t.ext || '').toLowerCase()
+  }))
+  batchRename.busy = false
+  batchRename.show = true
+}
+/**
+ * 该行是否改了扩展名(仅提示用,不拦截)
+ * @param row  批量重命名的一行
+ */
+function extWarn(row) {
+  if (row.isDir) return false
+  const i = row.name.lastIndexOf('.')
+  return i > 0 && row.name.slice(i + 1).toLowerCase() !== row.oldExt
+}
+async function submitBatchRename() {
+  const rows = batchRename.rows.filter(r => r.name.trim() && r.name.trim() !== r.old)
+  if (!rows.length) { toast('没有需要修改的名称', 'warn'); return }
+  batchRename.busy = true
+  let ok = 0
+  const fails = []
+  // 逐条串行:并发改名会让"部分失败"的定位变难,且同名冲突的判定依赖服务端逐条返回
+  for (const r of rows) {
+    try { await filehubApi.rename(r.id, r.name.trim()); ok++ }
+    catch (e) { fails.push(`${r.old}(${e.message || '失败'})`) }
+  }
+  batchRename.busy = false
+  batchRename.show = false
+  if (fails.length) {
+    toast(`重命名完成:${ok} 项成功,${fails.length} 项失败 —— ${fails.slice(0, 3).join(';')}${fails.length > 3 ? ' 等' : ''}`, 'warn')
+  } else toast(`已重命名 ${ok} 项`, 'ok')
+  clearSel(); load()
+}
+
+// ── 批量详情(多选):只汇总条目数与总体积,逐条字段没有公共值,统一显示 - ──
+const batchDetail = reactive({ show: false, count: 0, dirs: 0, bytes: 0 })
+function openBatchDetail(targets) {
+  batchDetail.count = targets.length
+  batchDetail.dirs = targets.filter(t => Number(t.type) === 1).length
+  batchDetail.bytes = targets.reduce((a, t) => a + nodeBytes(t), 0)
+  batchDetail.show = true
+}
 const confirmBox = reactive({ show: false, title: '', html: '', fn: null })
 function askConfirm(title, html, fn) { confirmBox.title = title; confirmBox.html = html; confirmBox.fn = fn; confirmBox.show = true }
 function doDelete(targets) {
   if (!targets.length) return
   const dirCount = targets.filter(t => Number(t.type) === 1).length
-  const fileBytes = targets.filter(t => Number(t.type) === 2).reduce((a, t) => a + Number(t.size || 0), 0)
-  // 体积只对"纯文件"报:含目录时目录的 size 恒为 0,报"共 0 B"是假信息;
-  // 且删除是软删除(进回收站、不释放空间),体积本非关键,条目数与子项数才是
+  // 体积按统一口径累加(目录用子树字节);文件夹另注明"连同子项删除",避免只看到总数不知影响面
+  const bytes = targets.reduce((a, t) => a + nodeBytes(t), 0)
   const body = `将移入回收站并保留 30 天`
-    + (dirCount
-      ? `,其中 ${dirCount} 个文件夹将连同其全部子项一并删除`
-        + (fileBytes ? `(文件共 ${fmtSize(fileBytes)})` : '')
-      : `;共 ${fmtSize(fileBytes)}`)
-    + '。'
+    + (dirCount ? `,其中 ${dirCount} 个文件夹将连同其全部子项一并删除` : '')
+    + `;共 ${fmtSize(bytes)}。`
   askConfirm(`删除 ${targets.length} 项?`, body,
     async () => {
       try {
@@ -294,24 +387,20 @@ function doDelete(targets) {
 }
 async function doPack(targets) {
   if (!targets.length) return
-  // 打包前预估:文件体积精确;目录的子树体积需服务端递归统计(列表接口不下发),
-  // 故含目录时只报条目数并说明"文件夹内容一并打包",不把目录的 0 当体积报出去
-  // (真正的条目数/体积上限由服务端 400 PACK_TOO_LARGE 兜底,§3.10.1)
-  const dirCount = targets.filter(t => Number(t.type) === 1).length
-  let items = 0, fileBytes = 0
+  // 打包前预估:体积按统一口径累加(目录用服务端下发的子树字节);
+  // 条目数是粗估(目录只按直接子项数展开),真正上限由服务端 400 PACK_TOO_LARGE 兜底(§3.10.1)
+  let items = 0, bytes = 0
   for (const t of targets) {
-    if (Number(t.type) === 1) items += 1 + Number(t.items || 0)
-    else { items++; fileBytes += Number(t.size || 0) }
+    items += Number(t.type) === 1 ? 1 + Number(t.items || 0) : 1
+    bytes += nodeBytes(t)
   }
-  const sizePart = dirCount
-    ? (fileBytes ? `,其中文件共 ${fmtSize(fileBytes)},文件夹内容一并打包` : ',文件夹内容一并打包')
-    : `,共 ${fmtSize(fileBytes)}`
   askConfirm('打包下载?',
-    `将打包 <b>${targets.length}</b> 个条目(约 ${items} 项${sizePart})为 zip 并转入任务面板,完成后可下载。`,
+    `将打包 <b>${targets.length}</b> 个条目(约 ${items} 项,共 ${fmtSize(bytes)})为 zip 并转入任务面板,完成后可下载。`,
     async () => {
       try {
-        await filehubApi.pack(space.value, targets.map(t => t.id))
-        store.togglePanel(true)
+        const r = await filehubApi.pack(space.value, targets.map(t => t.id))
+        if (r && r.task_no) store.queuePackDownload(r.task_no)   // 打包完成自动触发下载
+        else store.togglePanel(true)                             // 兜底:进任务面板手动取
       } catch (e) { toast(e.message || '创建打包任务失败', 'err') }
     })
 }
@@ -570,7 +659,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div>
+  <div class="fh-page">
     <div class="page-head">
       <h1>文件中心</h1>
       <p class="page-sub">双空间文件浏览与传输 · 把文件拖到列表即可上传</p>
@@ -612,6 +701,15 @@ onMounted(() => {
               我的分享
               <span class="cnt num">{{ shares.length }}</span>
             </button>
+            <!-- 传输任务入口:原先做成右下角悬浮球,会盖住列表最后一行右侧的 ⋯ 操作;
+                 移进侧栏后不再与任何行重叠,进行中/失败数用徽标常驻可见 -->
+            <button type="button" class="side-entry" :class="{ active: store.panelOpen }"
+                    @click="store.togglePanel(!store.panelOpen)">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v12m0 0-4-4m4 4 4-4"/><path d="M4 17v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1"/></svg>
+              传输任务
+              <span v-if="store.activeCount" class="cnt num">{{ store.activeCount }}</span>
+              <span v-else-if="store.failedCount" class="cnt warn num">{{ store.failedCount }}</span>
+            </button>
             <button type="button" class="side-entry" :class="{ active: view === 'trash' }" @click="view = 'trash'">
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M9 10h6M10 3h4v3h-4z"/></svg>
               回收站
@@ -621,11 +719,12 @@ onMounted(() => {
         </aside>
 
         <!-- 主区 -->
-        <div class="fh-main">
+        <!-- 回收站/我的分享没有自己的滚动容器,交给主区滚;文件浏览则把高度让给列表 -->
+        <div class="fh-main" :class="{ 'fh-main-scroll': view !== 'files' }">
           <!-- 文件浏览 -->
           <template v-if="view === 'files'">
-            <!-- 工具条 / 批量条 -->
-            <div v-if="!selected.size" class="card fh-toolbar">
+            <!-- 工具条 / 批量统计条 -->
+            <div v-if="selected.size < 2" class="card fh-toolbar">
               <div class="seg" style="width:196px">
                 <button v-for="s in spaces" :key="s.space" type="button" class="seg-item"
                         :class="{ active: space === s.space }" @click="switchSpace(s.space)">{{ s.name }}</button>
@@ -659,7 +758,8 @@ onMounted(() => {
                 <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.6-6.3M21 3v6h-6"/></svg>
               </button>
             </div>
-            <!-- 批量条:复用 .fh-toolbar 的最小高度,避免替换工具条时下方列表跳动 -->
+            <!-- 批量统计条:仅多选(≥2 项)时替换工具条;操作统一走右键菜单,这里只做汇总与取消
+                 复用 .fh-toolbar 的最小高度,避免替换工具条时下方列表跳动 -->
             <div v-else class="card fh-toolbar batch-bar">
               <button class="icon-btn" type="button" aria-label="取消选择" @click="clearSel">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
@@ -667,10 +767,7 @@ onMounted(() => {
               <span class="sel-num num">已选 {{ selected.size }} 项</span>
               <span v-if="selSummary" class="cap num" style="color:var(--color-text-3)">{{ selSummary }}</span>
               <span style="flex:1"></span>
-              <button class="btn btn-secondary btn-sm" type="button" @click="doPack(selTargets)">打包下载</button>
-              <button class="btn btn-secondary btn-sm" type="button" @click="openMove(selTargets)">移动</button>
-              <button class="btn btn-secondary btn-sm" type="button" @click="openCopy(selTargets)">复制</button>
-              <button class="btn btn-danger-soft btn-sm" type="button" @click="doDelete(selTargets)">删除</button>
+              <span class="cap" style="color:var(--color-text-3)">在列表内右键,可对选中项执行操作</span>
             </div>
 
             <!-- 搜索提示条 -->
@@ -682,7 +779,7 @@ onMounted(() => {
             </div>
 
             <!-- 列表 -->
-            <div class="card" style="padding:0;overflow:hidden;position:relative">
+            <div class="card fh-listcard" style="padding:0;overflow:hidden;position:relative">
               <div v-if="!query.searching" class="crumbs">
                 <button type="button" @click="dirId = 0; selected = new Set(); load()">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>
@@ -815,19 +912,29 @@ onMounted(() => {
       </div>
 
       <div v-if="ctxMenu.show" style="position:fixed;inset:0;z-index:890" @click="closeCtx" @contextmenu.prevent="closeCtx"></div>
-      <div v-if="ctxMenu.show" class="menu" style="position:fixed;z-index:891;min-width:200px" :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }">
-        <button class="menu-item" type="button" @click="ctxAct('download')">
+      <!-- 空白处菜单(无选中项时右键列表空白区):作用于"当前位置",当前只有"返回上一级目录" -->
+      <div v-if="ctxMenu.show && ctxMenu.blank" class="menu" style="position:fixed;z-index:891;min-width:200px" :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }">
+        <button class="menu-item" type="button" :disabled="!dirId" @click="goParent">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 19V5m0 0-6 6m6-6 6 6"/></svg>返回上一级目录</button>
+      </div>
+      <div v-if="ctxMenu.show && !ctxMenu.blank" class="menu" style="position:fixed;z-index:891;min-width:200px" :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }">
+        <!-- 首项按状态区分:单选目录=打开、单选文件=下载、多选=打包下载 -->
+        <button v-if="!ctxMenu.multi && ctxIsDir" class="menu-item" type="button" @click="ctxAct('open')">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>打开</button>
+        <button v-if="!ctxMenu.multi && !ctxIsDir" class="menu-item" type="button" @click="ctxAct('download')">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4v12m0 0 4-4m-4 4-4-4"/><path d="M4 17v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1"/></svg>下载</button>
-        <button class="menu-item" type="button" @click="ctxAct('pack')">
+        <!-- 打包下载只给"多选"和"单选文件夹":单文件直接下载更直接,不必绕一层 zip -->
+        <button v-if="ctxMenu.multi || ctxIsDir" class="menu-item" type="button" @click="ctxAct('pack')">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5"/></svg>打包下载</button>
         <div class="menu-sep"></div>
         <button class="menu-item" type="button" @click="ctxAct('rename')">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>重命名</button>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>{{ ctxMenu.multi ? '批量重命名' : '重命名' }}</button>
         <button class="menu-item" type="button" @click="ctxAct('move')">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14m0 0-5-5m5 5-5 5"/></svg>移动</button>
         <button class="menu-item" type="button" @click="ctxAct('copy')">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>复制</button>
-        <button class="menu-item" type="button" @click="ctxAct('share')">
+        <!-- 分享只支持单条(一条分享绑定一个节点),多选时隐藏 -->
+        <button v-if="!ctxMenu.multi" class="menu-item" type="button" @click="ctxAct('share')">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg>分享</button>
         <div class="menu-sep"></div>
         <button class="menu-item danger" type="button" @click="ctxAct('delete')">
@@ -861,6 +968,53 @@ onMounted(() => {
       </template>
     </Modal>
 
+    <!-- 批量重命名(多选):左列原名只读、右列编辑目标名;扩展名变更逐行提示 -->
+    <Modal :show="batchRename.show" title="批量重命名" @close="batchRename.show = false">
+      <p class="form-hint" style="margin:0 0 10px">
+        共 {{ batchRename.rows.length }} 项,仅提交被修改的名称;重名冲突的行会单独报告失败。
+      </p>
+      <div style="max-height:46vh;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding-right:4px">
+        <div v-for="r in batchRename.rows" :key="r.id" class="row" style="gap:10px;align-items:flex-start">
+          <div style="flex:1;min-width:0">
+            <div class="form-label" style="margin:0">原名称</div>
+            <div style="font-size:var(--fs-cap);word-break:break-all;line-height:34px;color:var(--color-text-2)">{{ r.old }}</div>
+          </div>
+          <div style="flex:1;min-width:0">
+            <div class="form-label" style="margin:0">重命名为</div>
+            <input v-model.trim="r.name" class="input" maxlength="255" />
+            <span v-if="extWarn(r)" class="form-hint" style="color:var(--color-warn)">⚠ 扩展名已变更,文件可能无法被原程序打开</span>
+          </div>
+        </div>
+      </div>
+      <template #foot>
+        <button class="btn btn-ghost" type="button" @click="batchRename.show = false">取消</button>
+        <button class="btn btn-primary" type="button" :disabled="batchRename.busy" @click="submitBatchRename">
+          {{ batchRename.busy ? '提交中…' : '重命名' }}
+        </button>
+      </template>
+    </Modal>
+
+    <!-- 批量详情(多选):逐条字段没有公共值,只汇总条目数与总体积 -->
+    <Modal :show="batchDetail.show" title="批量详情" @close="batchDetail.show = false">
+      <table class="table" style="font-size:var(--fs-cap)">
+        <tbody>
+          <tr><td style="color:var(--color-text-3);width:80px">条目数</td>
+              <td><b class="num">{{ batchDetail.count }}</b> 项<span v-if="batchDetail.dirs">(含 {{ batchDetail.dirs }} 个文件夹)</span></td></tr>
+          <tr><td style="color:var(--color-text-3)">总大小</td><td class="num">{{ fmtSize(batchDetail.bytes) }}</td></tr>
+          <tr><td style="color:var(--color-text-3)">名称</td><td>—</td></tr>
+          <tr><td style="color:var(--color-text-3)">类型</td><td>—</td></tr>
+          <tr><td style="color:var(--color-text-3)">路径</td><td>—</td></tr>
+          <tr><td style="color:var(--color-text-3)">创建者</td><td>—</td></tr>
+          <tr><td style="color:var(--color-text-3)">创建时间</td><td>—</td></tr>
+          <tr><td style="color:var(--color-text-3)">修改时间</td><td>—</td></tr>
+        </tbody>
+      </table>
+      <p class="form-hint" style="margin-top:10px">多选时无法逐条展示名称、时间等字段,这里只汇总条目数与总体积(文件夹按子树字节计入)。</p>
+      <template #foot>
+        <button class="btn btn-primary" type="button" @click="batchDetail.show = false">关闭</button>
+      </template>
+    </Modal>
+
     <!-- 移动 / 复制 -->
     <MoveCopyDialog :show="mcDlg.show" :mode="mcDlg.mode" :targets="mcDlg.targets" :me-space="meSpace"
                     :space="space"
@@ -876,7 +1030,7 @@ onMounted(() => {
         <tbody>
           <tr><td style="color:var(--color-text-3);width:80px">名称</td><td><b>{{ detail.node.name }}</b></td></tr>
           <tr><td style="color:var(--color-text-3)">类型</td><td>{{ FILE_KINDS[kindOf(detail.node)].label }}</td></tr>
-          <tr><td style="color:var(--color-text-3)">大小</td><td class="num">{{ Number(detail.node.type) === 1 ? `${detail.node.items} 项` : fmtSize(detail.node.size) }}</td></tr>
+          <tr><td style="color:var(--color-text-3)">大小</td><td class="num">{{ fmtNodeSize(detail.node) }}</td></tr>
           <tr><td style="color:var(--color-text-3)">路径</td><td>{{ detail.node.path || '(空间根)' }}</td></tr>
           <tr><td style="color:var(--color-text-3)">创建者</td><td>{{ detail.node.owner_name }}</td></tr>
           <tr><td style="color:var(--color-text-3)">创建时间</td><td class="num">{{ fmtTime(detail.node.create_time) }}</td></tr>
