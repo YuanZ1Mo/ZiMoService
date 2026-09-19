@@ -615,6 +615,110 @@ drogon::Task<ZMJSON> ZmFileNodeModule::Search(int64_t space, int64_t dirId,
         { return SearchSync(space, dirId, keyword, q); });
 }
 
+ZMJSON ZmFileNodeModule::SearchInTreeSync(int64_t space, const std::vector<int64_t>& anchorIds,
+                                          const std::string&           keyword,
+                                          bool                         excludeAnchors,
+                                          const ZmListQuery&           q)
+{
+    ZMJSON out       = ZMJSON::object();
+    out["total"]     = 0;
+    out["page"]      = q.page;
+    out["size"]      = q.size;
+    out["truncated"] = false;
+    out["list"]      = ZMJSON::array();
+
+    std::string kw = TrimSpaces(keyword);
+    if (kw.empty() || kw.size() > static_cast<size_t>(zm_file::kSearchKwMax) || anchorIds.empty())
+        return out;
+
+    std::vector<std::string> params = {std::to_string(space)};
+    std::string anchors = IdPlaceholders(anchorIds, params);   // 参数自 ?2 起续号
+
+    // 锚点行:depth=0、所在目录为空。向下递归时把**父节点的名称**累进 dirpath ——
+    // 于是任一行的 dirpath 恰好是"它所在目录相对所属锚点"的路径:直接挂在锚点下的条目为空,
+    // 再深一层是父目录名,以此类推(s.name 取的是 CTE 里父节点那一行的名称)
+    std::string cte =
+        "WITH RECURSIVE sub(id, root_id, name, depth, dirpath) AS ("
+        " SELECT id, id, name, 0, '' FROM nodes"
+        " WHERE id IN (" + anchors +
+        ") AND space = ?1 AND deleted = 0"
+        " UNION ALL"
+        " SELECT n.id, s.root_id, n.name, s.depth + 1,"
+        " CASE WHEN s.depth = 0 THEN ''"
+        " WHEN s.dirpath = '' THEN s.name"
+        " ELSE s.dirpath || '/' || s.name END"
+        " FROM nodes n JOIN sub s ON n.parent_id = s.id"
+        " WHERE n.space = ?1 AND n.deleted = 0 AND s.depth < 64)";
+
+    std::string where = " WHERE 1=1";
+    if (excludeAnchors)
+        where += " AND s.depth > 0";
+    AddCond(where, params, "n.name LIKE ?", {"%" + kw + "%"});
+    where += TypeFilterClause(q, params);
+    if (q.mtimeFrom > 0)
+        AddCond(where, params, "n.update_time >= ?", {std::to_string(q.mtimeFrom)});
+    if (q.mtimeTo > 0)
+        AddCond(where, params, "n.update_time <= ?", {std::to_string(q.mtimeTo)});
+
+    std::string dir = (q.order == "desc") ? " DESC" : " ASC";
+    std::string order;
+    if (q.sort == "name")
+        order = " ORDER BY s.depth ASC, n.name" + dir;
+    else if (q.sort == "size")
+        order = " ORDER BY s.depth ASC, n.size" + dir;
+    else if (q.sort == "mtime")
+        order = " ORDER BY s.depth ASC, n.update_time" + dir;
+    else // 默认:所在层级由近及远,同级按修改时间倒序
+        order = " ORDER BY s.depth ASC, n.update_time DESC, n.id ASC";
+
+    ZMJSON totalRow = m_db->QueryRowSync(
+        cte + " SELECT COUNT(*) AS n FROM nodes n JOIN sub s ON n.id = s.id" + where, params);
+    int64_t total     = zm_file_row_int(totalRow, "n", 0);
+    bool    truncated = total > zm_file::kSearchLimit;
+    if (truncated)
+        total = zm_file::kSearchLimit;
+
+    int64_t offset = static_cast<int64_t>(q.page - 1) * q.size;
+    ZMJSON  list   = ZMJSON::array();
+    if (offset < total)
+    {
+        std::vector<std::string> lp = params;
+        lp.push_back(std::to_string(std::min<int64_t>(q.size, total - offset)));
+        lp.push_back(std::to_string(offset));
+        ZMJSON rows =
+            m_db->QueryRowsSync(cte + " SELECT n.*, s.root_id, s.depth, s.dirpath AS dir_path"
+                                      " FROM nodes n JOIN sub s ON n.id = s.id" + where + order +
+                                    " LIMIT ?" + std::to_string(lp.size() - 1) + " OFFSET ?" +
+                                    std::to_string(lp.size()),
+                                lp);
+        for (const auto& r : rows)
+        {
+            ZMJSON item      = NodeView(r);
+            item["path"]     = zm_file_row_str(r, "dir_path");
+            item["depth"]    = zm_file_row_int(r, "depth", 0);
+            item["root_id"]  = zm_file_row_int(r, "root_id", 0);
+            list.push_back(std::move(item));
+        }
+        // 命中本页的目录同样补子树字节(与常规列表同口径)
+        FillDirBytes(m_db, list);
+    }
+    out["total"]     = total;
+    out["truncated"] = truncated;
+    out["list"]      = std::move(list);
+    return out;
+}
+
+drogon::Task<ZMJSON> ZmFileNodeModule::SearchInTree(int64_t space,
+                                                    const std::vector<int64_t>& anchorIds,
+                                                    const std::string&          keyword,
+                                                    bool                        excludeAnchors,
+                                                    const ZmListQuery&          q)
+{
+    co_return co_await ZmHttpServer::RunOnPool<ZMJSON>(
+        [this, space, anchorIds, keyword, excludeAnchors, q]() -> ZMJSON
+        { return SearchInTreeSync(space, anchorIds, keyword, excludeAnchors, q); });
+}
+
 // ============================================================================
 // 详情 / 统计
 // ============================================================================

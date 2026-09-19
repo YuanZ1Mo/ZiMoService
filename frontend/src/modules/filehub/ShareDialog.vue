@@ -11,6 +11,7 @@ import { filehubApi, fmtSize } from '../../api/filehub'
 const props = defineProps({
   show: { type: Boolean, default: false },
   nodes: { type: Array, default: () => [] },  // 分享目标(1~N 条)
+  space: { type: Number, default: 0 },        // 目标所在空间(条目行不带 space,由调用方给)
   isPublic: { type: Boolean, default: true }  // 公共空间分享不提供"仅登录可见"开关(§3.12.2)
 })
 const emit = defineEmits(['close', 'created'])
@@ -42,7 +43,7 @@ async function create() {
   busy.value = true
   try {
     const r = await filehubApi.shareCreate({
-      space: props.nodes[0].space, node_ids: props.nodes.map(n => n.id),
+      space: props.space, node_ids: props.nodes.map(n => n.id),
       name: form.name.trim() || undefined,
       pwd: form.pwd.trim() || undefined,
       pwd_enabled: form.pwd_enabled, expire_days: Number(form.expire_days),
@@ -103,7 +104,7 @@ const expireOptions = EXPIRES.map(e => ({ value: e.v, label: e.n }))
         <label class="form-label">自定义提取码 <span class="opt">4 个字符;留空随机生成</span></label>
         <input v-model.trim="form.pwd" class="input" maxlength="4" placeholder="留空则由服务端随机生成" />
       </div>
-      <div class="row" style="gap:12px;flex-wrap:wrap">
+      <div class="row" style="gap:12px;flex-wrap:wrap;align-items:flex-start">
         <div class="form-item" style="flex:1;min-width:170px">
           <label class="form-label">有效期</label>
           <ZmSelect v-model="form.expire_days" :options="expireOptions" />

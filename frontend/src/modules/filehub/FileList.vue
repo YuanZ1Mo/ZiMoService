@@ -21,7 +21,8 @@ const props = defineProps({
   epoch: { type: Number, default: 0 },
   dirId: { type: Number, default: 0 },   /// 当前目录 id(拖入上传要明确目标,不再靠假值兜底)
   space: { type: Number, default: 0 },   /// 当前空间(0=公共;个人空间不展示"创建者"列)
-  variant: { type: String, default: 'space' },   /// space = 空间文件区;trash = 回收站
+  /// space = 空间文件区;trash = 回收站;share = 分享页(免登录只读)
+  variant: { type: String, default: 'space' },
   retainDays: { type: Number, default: 30 }      /// 回收站保留天数("剩余 N 天"按它推算)
 })
 const emit = defineEmits(['toggle', 'open', 'ctx', 'drag-to', 'files', 'sort', 'load-more', 'toggle-all'])
@@ -36,6 +37,9 @@ const SORT_W = { name: '220px', type: '90px', size: '130px', mtime: '130px', del
 //   列:修改时间换删除时间,多"剩余"与常驻"原位置"(空间里"位置"只在搜索时出现)
 //   手势:不接拖拽(回收站内不能移动、不能拖入上传),双击不触发动作(文件夹不下钻、文件不下载)
 const isTrash = computed(() => props.variant === 'trash')
+const isShare = computed(() => props.variant === 'share')
+// 只读视图(回收站 / 分享页)不接拖拽:既不能把条目拖进文件夹,也不能把系统文件拖进来上传
+const noDrag = computed(() => isTrash.value || isShare.value)
 // 回收站没有"修改时间"的语义,服务端按删除时间排;两边的键都必须落在服务端支持的范围内
 const SORTS_TRASH = [['name', '名称'], ['type', '类型'], ['size', '大小'], ['delete_time', '删除时间']]
 const sorts = computed(() => (isTrash.value ? SORTS_TRASH : SORTS))
@@ -61,9 +65,13 @@ function pathTip(n) {
 }
 const emptyTitle = computed(() => props.keyword ? '没有匹配的条目'
                                                 : (isTrash.value ? '回收站为空' : '此目录为空'))
-const emptySub = computed(() => props.keyword ? '换个关键词试试'
-                                              : (isTrash.value ? '你在此空间删除的条目会出现在这里'
-                                                               : '把文件拖到这里,或从上方"上传"开始'))
+const emptySub = computed(() => {
+  if (props.keyword) return '换个关键词试试'
+  if (isTrash.value) return '你在此空间删除的条目会出现在这里'
+  // 分享页没有上传入口,提示"拖到这里上传"会指向一个不存在的动作
+  if (isShare.value) return '分享者在这个目录下还没有放东西'
+  return '把文件拖到这里,或从上方"上传"开始'
+})
 /// 双击:空间里是"进目录 / 下载",回收站里不触发任何动作
 function onOpenRow(n) {
   if (isTrash.value) return
@@ -137,14 +145,14 @@ function onAreaCtx(e) { emit('ctx', e, null, 'area') }
 // ── 拖拽(内部:拖条目 → 悬停文件夹行移动) ──
 const dragOverId = ref(0)
 function onDragStart(e, node) {
-  if (isTrash.value) return   // 回收站内不能移动条目
+  if (noDrag.value) return   // 只读视图里条目不能移动
   // 带上当前选中集:拖选中项之一 = 移动整批
   const ids = props.selected.size && props.selected.has(node.id) ? [...props.selected] : [node.id]
   e.dataTransfer.setData('text/zimo-node-ids', JSON.stringify(ids))
   e.dataTransfer.effectAllowed = 'move'
 }
 function onDragOverRow(e, node) {
-  if (isTrash.value) return   // 回收站不是拖动目标
+  if (noDrag.value) return   // 只读视图不是拖动目标
   if (Number(node.type) !== 1) return
   e.preventDefault()
   dragOverId.value = node.id
@@ -152,7 +160,7 @@ function onDragOverRow(e, node) {
 function onDragLeaveRow(node) { if (dragOverId.value === node.id) dragOverId.value = 0 }
 async function onDropRow(e, node) {
   dragOverId.value = 0
-  if (isTrash.value) return
+  if (noDrag.value) return
   if (Number(node.type) !== 1) return
   e.stopPropagation()   // 行内处理,避免冒泡到容器再触发"上传到当前目录"
   const raw = e.dataTransfer.getData('text/zimo-node-ids')
@@ -164,7 +172,7 @@ async function onDropRow(e, node) {
 // 系统文件拖入空白区(上传到当前目录)
 async function onDropFiles(e) {
   dragOverId.value = 0
-  if (isTrash.value) return   // 回收站内不能拖入上传
+  if (noDrag.value) return   // 只读视图不能拖入上传
   const drop = await collectDropItems(e.dataTransfer)
   // 显式传当前目录 id(此前传 0 靠调用方的假值兜底才落到当前目录,是隐性约定)
   if (drop.files.length || drop.dirs.length) emit('files', { ...drop, dirId: props.dirId })
@@ -190,7 +198,8 @@ async function onDropFiles(e) {
                 :style="{ width: SORT_W[k] }" @click="emit('sort', k)">
               {{ label }}{{ sort === k ? (order === 'asc' ? ' ↑' : ' ↓') : '' }}
             </th>
-            <th v-if="!isTrash && Number(space) === 0" style="width:90px">创建者</th>
+            <!-- 创建者只在空间文件区给(分享页是免登录的,不该暴露文件是谁上传的) -->
+            <th v-if="!isTrash && !isShare && Number(space) === 0" style="width:90px">创建者</th>
             <th v-if="isTrash" style="width:96px">剩余</th>
             <th v-if="isTrash || showPath" style="width:190px">{{ isTrash ? '原位置' : '位置' }}</th>
             <th style="width:60px"></th>
@@ -199,7 +208,7 @@ async function onDropFiles(e) {
         <tbody>
           <tr v-for="n in vItems" :key="n.id"
               :class="{ sel: selected.has(n.id), 'drop-to': dragOverId === n.id }"
-              :draggable="!isTrash"
+              :draggable="!noDrag"
               @click="emit('toggle', n, $event)"
               @dblclick="onOpenRow(n)"
               @contextmenu.prevent.stop="emit('ctx', $event, n, 'row')"
@@ -232,7 +241,7 @@ async function onDropFiles(e) {
             <!-- 第 4 列随变体换字段:空间=修改时间,回收站=删除时间
                  (回收站接口不下发 update_time,写死会整列显示成"—") -->
             <td style="min-width:110px"><span class="num">{{ fmtTime(isTrash ? n.delete_time : n.update_time) }}</span></td>
-            <td v-if="!isTrash && Number(space) === 0" style="min-width:70px">{{ n.owner_name || '—' }}</td>
+            <td v-if="!isTrash && !isShare && Number(space) === 0" style="min-width:70px">{{ n.owner_name || '—' }}</td>
             <td v-if="isTrash"><span class="badge badge-warn num">剩 {{ remainDays(n) }} 天</span></td>
             <!-- 原位置三态:直接套空间的 `path || '(空间根)'` 会把"原目录已删除"错报成
                  "空间根" —— 两者恢复的去处不同,不能合并 -->
@@ -261,7 +270,7 @@ async function onDropFiles(e) {
 
     <!-- 网格视图 -->
     <div v-if="view === 'grid'" class="fgrid">
-      <div v-for="n in items" :key="n.id" class="gcell" :class="{ sel: selected.has(n.id) }" :draggable="!isTrash"
+      <div v-for="n in items" :key="n.id" class="gcell" :class="{ sel: selected.has(n.id) }" :draggable="!noDrag"
            @click="emit('toggle', n, $event)" @dblclick="onOpenRow(n)" @contextmenu.prevent.stop="emit('ctx', $event, n, 'row')"
            @dragstart="onDragStart($event, n)"
            @dragover="onDragOverRow($event, n)" @dragleave="onDragLeaveRow(n)" @drop.prevent="onDropRow($event, n)">

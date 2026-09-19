@@ -103,7 +103,9 @@
 .ftbl th.sortable:hover{color:var(--color-primary)}
 .ftbl th.sorted{color:var(--color-primary)}
 .ftbl td{padding:8px 12px;border-bottom:1px solid var(--color-border-soft);vertical-align:middle;white-space:nowrap}
-.ftbl tbody tr{transition:background var(--dur-fast)}
+/* 行是"点击目标"不是文本:不锁住选中,双击会先被浏览器当成选词(把文件名抹蓝)。
+   可拖拽的行本来就选不中,只读视图(回收站 / 分享页)没有 draggable 才露出来 —— 锁在这里两边一致 */
+.ftbl tbody tr{transition:background var(--dur-fast);user-select:none}
 .ftbl tbody tr.sel td{background:var(--color-primary-soft)}
 .ftbl tbody tr.sel td:first-child{box-shadow:inset 3px 0 0 var(--color-primary)}
 .ftbl tbody tr.drop-to td{background:var(--color-primary-soft);box-shadow:inset 0 0 0 2px var(--color-primary)}
@@ -126,7 +128,8 @@ tr:hover .row-ops,tr.sel .row-ops{opacity:1}
 .fgrid{flex:1;min-height:0;overflow-y:auto;align-content:start;
   display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:12px;padding:16px}
 .fgrid .gcell{border:1.5px solid transparent;border-radius:var(--r-md);padding:12px 8px;display:flex;flex-direction:column;align-items:center;gap:8px;
-  cursor:default;text-align:center;transition:background var(--dur-fast),border-color var(--dur-fast),transform var(--dur-fast) var(--ease)}
+  cursor:default;text-align:center;user-select:none;
+  transition:background var(--dur-fast),border-color var(--dur-fast),transform var(--dur-fast) var(--ease)}
 .fgrid .gcell:hover{background:var(--color-primary-soft);transform:translateY(-2px)}
 .fgrid .gcell.sel{border-color:var(--color-primary);background:var(--color-primary-soft)}
 .fgrid .gcell .ficon{width:52px;height:52px;border-radius:15px}

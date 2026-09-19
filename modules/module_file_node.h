@@ -104,6 +104,25 @@ class ZmFileNodeModule
     /// @return {total,page,size,truncated,list};list 条目附 path
     drogon::Task<ZMJSON> Search(int64_t space, int64_t dirId, const std::string& keyword,
                                 const ZmListQuery& q);
+    /**
+ * @brief 在若干基准的子树内递归搜索,给出每条"所在目录"
+ *
+ * 与 Search 的三点差别,都来自"一次搜索要跨多个并列的根":
+ *   · 基准可以给多个(多选分享的顶层是若干并列条目,结果要跨根合并);
+ *   · 返回的 path 是**所在目录**(相对所属基准,不含条目自身名称),空串表示就在基准之下 ——
+ *     分享页要按它显示"位置",不能带出分享者上层目录的名字,也不能重复条目自己的名称;
+ *   · 排序与分页由本方法一次做完;跨基准时 depth 各按自己的基准算,仍是由近及远。
+ *
+ * @param space          空间
+ * @param anchorIds      搜索基准(1~N 个条目;文件没有子项,只会作为自身参与匹配)
+ * @param keyword        关键词(1~64 字符;空 = 空结果)
+ * @param excludeAnchors true = 基准自身不作为结果(基准是访客正停留的那个目录时用)
+ * @param q              排序/分页/类型筛选
+ * @return {total,page,size,truncated,list};list 条目附 path(所在目录)、depth、root_id(命中所属基准)
+ */
+    drogon::Task<ZMJSON> SearchInTree(int64_t space, const std::vector<int64_t>& anchorIds,
+                                      const std::string& keyword, bool excludeAnchors,
+                                      const ZmListQuery& q);
     /// @brief 单条目详情(附相对空间根的路径)
     /// @param nodeId 条目 id
     /// @return 条目对象;不可见 → {error:{...}}
@@ -180,6 +199,16 @@ class ZmFileNodeModule
     static ZMJSON NodeView(const ZMJSON& row);
     /// @brief 列表里的目录行补子树字节(字段 bytes);跨模块构列表时复用
     static void FillDirBytes(ZmFileDbModule* db, ZMJSON& list);
+    /**
+ * @brief 列表排序子句(目录恒在前,末位以名称与 id 兜底保证分页稳定)
+ *
+ * 跨模块构列表时复用:分享页顶层的"虚拟根"是若干并列条目、不在同一条 SQL 里,
+ * 排序得另写查询,口径必须与本模块的列目录完全一致。
+ *
+ * @param q 排序键 name|size|mtime|type 与方向 asc|desc(其余取值按 name 处理)
+ * @return SQL 的 ORDER BY 片段
+ */
+    static std::string OrderByClause(const ZmListQuery& q);
 
     /// @brief 软删除(批量;只标记顶层条目)
     /// @return {success,failed,count}
@@ -263,6 +292,8 @@ class ZmFileNodeModule
     ZMJSON ListSync(int64_t space, int64_t dirId, const ZmListQuery& q);
     ZMJSON SearchSync(int64_t space, int64_t dirId, const std::string& keyword,
                       const ZmListQuery& q);
+    ZMJSON SearchInTreeSync(int64_t space, const std::vector<int64_t>& anchorIds,
+                            const std::string& keyword, bool excludeAnchors, const ZmListQuery& q);
     ZMJSON MkdirSync(int64_t space, int64_t parentId, const std::string& name,
                      const ZmOpCtx& ctx);
     ZMJSON RenameSync(int64_t nodeId, const std::string& name, const ZmOpCtx& ctx);
@@ -284,8 +315,6 @@ class ZmFileNodeModule
     ZMJSON EnsureDirsSync(int64_t space, int64_t parentId,
                           const std::vector<std::string>& paths, bool batch,
                           const ZmOpCtx& ctx);
-    /// @brief 排序子句(目录恒在前)
-    static std::string OrderByClause(const ZmListQuery& q);
     /// @brief 类型筛选的扩展名清单集合(SQL IN 片段,调用方负责绑定参数)
     static std::string TypeFilterClause(const ZmListQuery&        q,
                                         std::vector<std::string>& params);

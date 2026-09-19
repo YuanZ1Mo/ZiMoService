@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>文件中心 · 分享页向空间靠拢 — ZiMo 文件空间设计稿</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="filehub.css">
+<style>
+  .wrap{max-width:1300px;margin:0 auto;padding:var(--sp-6) var(--sp-6) var(--sp-12)}
+  .vp{height:740px;border:1px solid var(--color-border-soft);border-radius:var(--r-lg);overflow:hidden;box-shadow:var(--shadow-sm);position:relative}
+  .vp.tall{height:820px}
+  .vp.short{height:470px}
+  .vp .share-page{position:absolute;inset:0;overflow:hidden}
+  /* 分享页内容区:从 760px 放宽到 1080px —— 表头列多了(位置列)且名称列要长名截断 */
+  .sheet{width:1080px;max-width:100%;display:flex;flex-direction:column;gap:12px}
+  /* 设计稿里让行尾 ⋯ 常显,不进 hover 才看得到(实现仍按 hover/选中显示) */
+  .vp .row-ops{opacity:1}
+  .vp .fh-toolbar{gap:8px}
+  .batch-bar .spacer{flex:1}
+  .share-name{font-weight:800}
+  /* 菜单四态并排:每个小格里放一段"被右键的行"+ 浮出的菜单 */
+  .menu-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(252px,1fr));gap:var(--sp-4)}
+  .menu-demo{border:1px solid var(--color-border-soft);border-radius:var(--r-lg);background:var(--color-card);box-shadow:var(--shadow-sm);padding:var(--sp-4);position:relative}
+  .menu-demo>h4{font-size:var(--fs-body);margin-bottom:2px}
+  .menu-demo>.hint{font-size:var(--fs-cap);color:var(--color-text-3);margin-bottom:var(--sp-3);min-height:34px}
+  .menu-demo .menu{position:relative;right:auto;top:auto;box-shadow:var(--shadow-md)}
+  /* 弹窗在预览稿里直接摊在卡片内,不走遮罩的淡入位移 */
+  .menu-demo .modal{transform:none}
+  .menu-demo .fgrid{overflow:hidden}
+  .mini-row{display:flex;align-items:center;gap:8px;height:34px;padding:0 10px;border-radius:var(--r-sm);
+    font-size:var(--fs-cap);font-weight:600;color:var(--color-text-2);background:var(--color-primary-soft);
+    box-shadow:inset 3px 0 0 var(--color-primary);margin-bottom:8px}
+  .mini-row .ficon{width:22px;height:22px;border-radius:7px}
+  .mini-row .ficon svg{width:13px;height:13px}
+  .cmp{width:100%;border-collapse:separate;border-spacing:0;font-size:var(--fs-cap)}
+  .cmp th{text-align:left;padding:10px 12px;background:var(--color-border-soft);color:var(--color-text-2);
+    font-weight:700;border-bottom:1px solid var(--color-border)}
+  .cmp td{padding:10px 12px;border-bottom:1px solid var(--color-border-soft);vertical-align:top;line-height:19px}
+  .cmp tr:last-child td{border-bottom:none}
+  .cmp .was{color:var(--color-text-3)}
+  .cmp .now{color:var(--color-text)}
+  .cmp td:first-child{font-weight:700;color:var(--color-text-2);white-space:nowrap;width:92px}
+  .kv-tbl{width:100%;border-collapse:separate;border-spacing:0;font-size:var(--fs-cap)}
+  .kv-tbl td{padding:9px 0;border-bottom:1px solid var(--color-border-soft);vertical-align:top;line-height:20px}
+  .kv-tbl tr:last-child td{border-bottom:none}
+  .kv-tbl td:first-child{color:var(--color-text-3);width:76px;white-space:nowrap}
+</style>
+</head>
+<body>
+<div class="mock-bar">
+  <span class="pg">文件中心 · 07 分享页改造(向空间靠拢)</span><span class="path">/s/:token · meta.public</span>
+  <span class="spacer"></span>
+  <a href="05-share.html">← 现分享页</a>
+  <a href="01-filehub-main.html">空间主列表 →</a>
+  <button class="theme-btn" onclick="toggleTheme()">🌗 亮/暗</button>
+</div>
+
+<div class="wrap">
+  <div class="page-head">
+    <div>
+      <h1>分享页 · 浏览区向空间靠拢</h1>
+      <div class="sub">列表改用与空间文件区同一套组件;补搜索、视图切换、单选/多选、右键菜单、详情。下载动作从信息卡移到工具条与右键菜单</div>
+    </div>
+  </div>
+
+  <div class="frame" style="margin-top:var(--sp-5)">
+    <div class="annotate">
+      <b>改造要点(先看这一页的四个"搬过来"与两个"新加的")</b><br>
+      <b>搬过来</b>:① 列表 = 空间文件区那份 <code>FileList</code>(虚拟滚动、列表/网格、表头全选半选、行尾 ⋯、排序表头);② 选中手势 = 单击单选 / Ctrl 加选 / Shift 连选 / Ctrl+A 全选 / Esc 取消;③ 批量条 = ≥2 项时替换工具条;④ 面包屑 = 空间同款(首级是分享名)。<br>
+      <b>新加的</b>:⑤ 顶部搜索框(搜当前目录及子目录,结果标红并多一列"位置");⑥ 右键 → 详情;⑦ 顶部品牌条右侧的亮/暗切换。<br>
+      <b>不改的</b>:页面仍是免登录独立全屏页,顶部品牌条、分享信息卡、提取码/需登录/失效三个状态、底部标识全部保持原样。
+    </div>
+  </div>
+
+  <!-- ============ ① 浏览态 ============ -->
+  <div class="frame">
+    <h3><span class="idx">①</span>浏览态 · 默认(整页)</h3>
+    <p class="fdesc">
+      信息卡只留"分享身份 + 剩余有效期 / 下载次数 / 暂不可用数",原来钉在卡片右侧的下载按钮移到工具条。
+      列表卡片内是<b>面包屑 + 与空间页逐列相同的表格</b>(名称 / 类型 / 大小 / 修改时间 / 行尾 ⋯),表头可点排序。
+    </p>
+    <div class="vp tall">
+      <div class="share-page">
+        <div class="share-top">
+          <div class="brand"><span class="brand-logo">Z</span>ZiMo 文件中心</div>
+          <span class="grow"></span>
+          <span class="badge badge-neutral">免登录访问</span>
+          <!-- 门户壳里由 ThemeSwitch 统一落 data-theme;分享页不在壳内,得自己带一个 -->
+          <button class="icon-btn" onclick="toggleTheme()" aria-label="切换主题" title="主题">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>
+          </button>
+        </div>
+        <div class="share-mid">
+          <div class="sheet">
+            <!-- 信息卡 -->
+            <div class="card" style="padding:16px 20px">
+              <div class="share-owner">
+                <span class="avatar">张</span>
+                <div class="grow">
+                  <div><b>张三</b> 分享了文件夹 · <span class="share-name">产品发布方案</span></div>
+                  <div class="cap faint">剩 6 天 · 已下载 3/10 次 · 另有 2 项暂不可用</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 工具条 -->
+            <div class="card fh-toolbar">
+              <div class="input-wrap fh-search grow">
+                <input class="input" style="height:38px" placeholder="搜索当前目录及子目录…" aria-label="搜索分享内容">
+              </div>
+              <button class="btn btn-grad" onclick="toast('下载当前目录:打包 → 换直链下载','info')">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4v12m0 0 4-4m-4 4-4-4"/><path d="M4 17v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1"/></svg>
+                下载全部
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" style="margin-left:3px"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+              <div class="vseg">
+                <button class="on" title="列表视图" aria-label="列表视图"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+                <button title="网格视图" aria-label="网格视图"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg></button>
+              </div>
+              <button class="icon-btn" title="刷新" aria-label="刷新" onclick="toast('重新拉取当前目录','info')">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.6-6.3M21 3v6h-6"/></svg>
+              </button>
+            </div>
+
+            <!-- 列表卡 -->
+            <div class="card" style="padding:0;overflow:hidden">
+              <div class="crumbs">
+                <a class="c-home"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>产品发布方案</a>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg>
+                <span class="here">图片</span>
+                <span class="grow"></span>
+                <span class="cap faint num">共 12 项</span>
+              </div>
+              <div class="ftbl-wrap">
+                <table class="ftbl">
+                  <thead>
+                    <tr>
+                      <th class="col-cb"><input type="checkbox" class="fcheck" aria-label="全选"></th>
+                      <th class="sortable" style="width:220px">名称</th>
+                      <th class="sortable" style="width:90px">类型</th>
+                      <th class="sortable" style="width:130px">大小</th>
+                      <th class="sortable sorted" style="width:130px">修改时间<span class="sort-ico">↑</span></th>
+                      <th style="width:60px"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td class="col-cb"><input type="checkbox" class="fcheck" aria-label="选择 封面"></td>
+                      <td><div class="fcell"><span class="ficon f-folder"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6a2 2 0 0 1 2-2h4.6a2 2 0 0 1 1.4.6L13.4 6H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/></svg></span><span class="fname">封面</span></div></td>
+                      <td><span class="ftype">文件夹</span></td>
+                      <td><span class="num items-num">4 项 · 2.6 MB</span></td>
+                      <td><span class="num">09-18 21:07</span></td>
+                      <td><span class="row-ops"><button class="dots-btn" aria-label="更多操作"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg></button></span></td>
+                    </tr>
+                    <tr class="selected">
+                      <td class="col-cb"><input type="checkbox" class="fcheck" checked aria-label="选择 发布会现场合影.jpg"></td>
+                      <td><div class="fcell"><span class="ficon f-img"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.6" fill="currentColor" stroke="none"/><path d="m5 18 5.2-5.2a1.4 1.4 0 0 1 2 0L19 19"/></svg></span><span class="fname">发布会现场合影.jpg</span></div></td>
+                      <td><span class="ftype">图片</span></td>
+                      <td><span class="num">8.6 MB</span></td>
+                      <td><span class="num">09-18 20:41</span></td>
+                      <td><span class="row-ops"><button class="dots-btn" aria-label="更多操作"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg></button></span></td>
+                    </tr>
+                    <tr>
+                      <td class="col-cb"><input type="checkbox" class="fcheck" aria-label="选择 封面终稿.png"></td>
+                      <td><div class="fcell"><span class="ficon f-img"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.6" fill="currentColor" stroke="none"/><path d="m5 18 5.2-5.2a1.4 1.4 0 0 1 2 0L19 19"/></svg></span><span class="fname">封面终稿.png</span></div></td>
+                      <td><span class="ftype">图片</span></td>
+                      <td><span class="num">2.4 MB</span></td>
+                      <td><span class="num">09-18 20:12</span></td>
+                      <td><span class="row-ops"><button class="dots-btn" aria-label="更多操作"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg></button></span></td>
+                    </tr>
+                    <tr>
+                      <td class="col-cb"><input type="checkbox" class="fcheck" aria-label="选择 宣传片.mp4"></td>
+                      <td><div class="fcell"><span class="ficon f-vid"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9.5 5 2.5-5 2.5Z" fill="currentColor" stroke="none"/></svg><span class="ext">MP4</span></span><span class="fname">宣传片-初稿.mp4</span></div></td>
+                      <td><span class="ftype">视频</span></td>
+                      <td><span class="num">128 MB</span></td>
+                      <td><span class="num">09-17 16:30</span></td>
+                      <td><span class="row-ops"><button class="dots-btn" aria-label="更多操作"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg></button></span></td>
+                    </tr>
+                    <tr>
+                      <td class="col-cb"><input type="checkbox" class="fcheck" aria-label="选择 细节特写.jpg"></td>
+                      <td><div class="fcell"><span class="ficon f-img"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.6" fill="currentColor" stroke="none"/><path d="m5 18 5.2-5.2a1.4 1.4 0 0 1 2 0L19 19"/></svg></span><span class="fname">细节特写-工位.jpg</span></div></td>
+                      <td><span class="ftype">图片</span></td>
+                      <td><span class="num">5.1 MB</span></td>
+                      <td><span class="num">09-17 15:02</span></td>
+                      <td><span class="row-ops"><button class="dots-btn" aria-label="更多操作"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg></button></span></td>
+                    </tr>
+                    <tr>
+                      <td class="col-cb"><input type="checkbox" class="fcheck" aria-label="选择 旧版封面"></td>
+                      <td><div class="fcell"><span class="ficon f-oth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5"/></svg></span><span class="fname">旧版封面.psd</span></div></td>
+                      <td><span class="ftype">其他</span></td>
+                      <td><span class="num">46.2 MB</span></td>
+                      <td><span class="num">09-16 11:48</span></td>
+                      <td><span class="row-ops"><button class="dots-btn" aria-label="更多操作"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg></button></span></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="share-foot">由 ZiMo 文件中心提供 · 仅可浏览与下载</div>
+      </div>
+    </div>
+    <div class="annotate" style="margin-top:var(--sp-4)">
+      <b>与现状的差别</b>:① 现在表格是 ShareView 自己写的(列固定、无排序、无虚拟滚动),改后与空间文件区共用同一份列表;② 结构列从"名称/类型/大小/修改时间/一个文字按钮"变成"名称/类型/大小/修改时间/行尾 ⋯";③ 内容区宽度 760px → 1080px —— 名称列要长名截断、搜索结果要多一列"位置",760px 放不下。
+    </div>
+  </div>
+
+  <!-- ============ ② 搜索态 ============ -->
+  <div class="frame">
+    <h3><span class="idx">②</span>搜索态 · 搜当前目录及子目录</h3>
+    <p class="fdesc">
+      与空间页搜索同一套:键入停止 400ms 自动搜(输入中文时等输入法组字结束)、命中标红、多一列"位置"、右侧"退出搜索"。
+      搜索期间不可再下钻(结果是跨子目录的),这一点与空间页一致。
+    </p>
+    <div class="vp">
+      <div class="share-page">
+        <div class="share-top">
+          <div class="brand"><span class="brand-logo">Z</span>ZiMo 文件中心</div>
+          <span class="grow"></span>
+          <span class="badge badge-neutral">免登录访问</span>
+          <!-- 门户壳里由 ThemeSwitch 统一落 data-theme;分享页不在壳内,得自己带一个 -->
+          <button class="icon-btn" onclick="toggleTheme()" aria-label="切换主题" title="主题">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>
+          </button>
+        </div>
+        <div class="share-mid">
+          <div class="sheet">
+            <div class="card" style="padding:16px 20px">
+              <div class="share-owner">
+                <span class="avatar">张</span>
+                <div class="grow">
+                  <div><b>张三</b> 分享了文件夹 · <span class="share-name">产品发布方案</span></div>
+                  <div class="cap faint">剩 6 天 · 已下载 3/10 次</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card fh-toolbar">
+              <div class="input-wrap fh-search grow">
+                <input class="input" style="height:38px" value="封面" aria-label="搜索分享内容">
+                <span class="input-suffix">
+                  <button class="icon-btn" title="清空" aria-label="清空搜索"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+                </span>
+              </div>
+              <button class="btn btn-grad">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4v12m0 0 4-4m-4 4-4-4"/><path d="M4 17v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1"/></svg>
+                下载全部
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" style="margin-left:3px"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+              <div class="vseg">
+                <button class="on" aria-label="列表视图"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+                <button aria-label="网格视图"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg></button>
+              </div>
+              <button class="icon-btn" title="刷新" aria-label="刷新"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.6-6.3M21 3v6h-6"/></svg></button>
+            </div>
+
+            <!-- 搜索提示条(与空间页同款) -->
+            <div class="card fh-toolbar" style="padding:8px 16px">
+              <span class="cap faint">搜索"封面" · 当前目录及全部子目录 · 共 <b class="num">5</b> 条</span>
+              <span class="grow"></span>
+              <button class="btn btn-ghost btn-sm" onclick="toast('退出搜索,回到所在目录','info')">退出搜索</button>
+            </div>
+
+            <div class="card" style="padding:0;overflow:hidden">
+              <div class="ftbl-wrap">
+                <table class="ftbl">
+                  <thead>
+                    <tr>
+                      <th class="col-cb"><input type="checkbox" class="fcheck" aria-label="全选"></th>
+                      <th class="sortable" style="width:220px">名称</th>
+                      <th class="sortable" style="width:90px">类型</th>
+                      <th class="sortable" style="width:130px">大小</th>
+                      <th class="sortable sorted" style="width:130px">修改时间<span class="sort-ico">↑</span></th>
+                      <th style="width:230px">位置</th>
+                      <th style="width:60px"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td class="col-cb"><input type="checkbox" class="fcheck" aria-label="选择 封面"></td>
+                      <td><div class="fcell"><span class="ficon f-folder"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6a2 2 0 0 1 2-2h4.6a2 2 0 0 1 1.4.6L13.4 6H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/></svg></span><span class="fname"><mark>封面</mark></span></div></td>
+                      <td><span class="ftype">文件夹</span></td>
+                      <td><span class="num items-num">4 项 · 2.6 MB</span></td>
+                      <td><span class="num">09-18 21:07</span></td>
+                      <td><span class="cap faint">产品发布方案</span></td>
+                      <td><span class="row-ops"><button class="dots-btn" aria-label="更多操作"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg></button></span></td>
+                    </tr>
+                    <tr>
+                      <td class="col-cb"><input type="checkbox" class="fcheck" aria-label="选择 封面终稿.png"></td>
+                      <td><div class="fcell"><span class="ficon f-img"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.6" fill="currentColor" stroke="none"/><path d="m5 18 5.2-5.2a1.4 1.4 0 0 1 2 0L19 19"/></svg></span><span class="fname"><mark>封面</mark>终稿.png</span></div></td>
+                      <td><span class="ftype">图片</span></td>
+                      <td><span class="num">2.4 MB</span></td>
+                      <td><span class="num">09-18 20:12</span></td>
+                      <td><span class="cap faint">产品发布方案 / 图片</span></td>
+                      <td><span class="row-ops"><button class="dots-btn" aria-label="更多操作"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg></button></span></td>
+                    </tr>
+                    <tr>
+                      <td class="col-cb"><input type="checkbox" class="fcheck" aria-label="选择 旧版封面.psd"></td>
+                      <td><div class="fcell"><span class="ficon f-oth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5"/></svg></span><span class="fname">旧版<mark>封面</mark>.psd</span></div></td>
+                      <td><span class="ftype">其他</span></td>
+                      <td><span class="num">46.2 MB</span></td>
+                      <td><span class="num">09-16 11:48</span></td>
+                      <td><span class="cap faint">产品发布方案 / 图片</span></td>
+                      <td><span class="row-ops"><button class="dots-btn" aria-label="更多操作"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg></button></span></td>
+                    </tr>
+                    <tr>
+                      <td class="col-cb"><input type="checkbox" class="fcheck" aria-label="选择 封面-竖版.png"></td>
+                      <td><div class="fcell"><span class="ficon f-img"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.6" fill="currentColor" stroke="none"/><path d="m5 18 5.2-5.2a1.4 1.4 0 0 1 2 0L19 19"/></svg></span><span class="fname"><mark>封面</mark>-竖版.png</span></div></td>
+                      <td><span class="ftype">图片</span></td>
+                      <td><span class="num">1.8 MB</span></td>
+                      <td><span class="num">09-15 09:20</span></td>
+                      <td><span class="cap faint">产品发布方案 / 图片 / 封面</span></td>
+                      <td><span class="row-ops"><button class="dots-btn" aria-label="更多操作"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg></button></span></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="share-foot">由 ZiMo 文件中心提供 · 仅可浏览与下载</div>
+      </div>
+    </div>
+    <div class="annotate" style="margin-top:var(--sp-4)">
+      <b>"位置"列只显示分享内的相对路径</b>,首段是分享名。空间页显示的是空间内的完整路径 —— 直接搬过来会把分享者根目录往上的目录名一起露给任何拿到链接的人(免登录也能看),所以按分享根裁掉前面几级。
+    </div>
+  </div>
+
+  <!-- ============ ③ 多选与批量条 ============ -->
+  <div class="frame">
+    <h3><span class="idx">③</span>多选 · 批量条替换工具条</h3>
+    <p class="fdesc">
+      与空间页同规则:选中 <b>≥2 项</b>时工具条整条换成批量条(只做汇总与取消),操作统一走右键菜单;选中 1 项时工具条不变,行保持高亮。
+      批量条与工具条<b>最小高度锁成一致</b>,避免选中/取消时下方列表上下跳。
+    </p>
+    <div class="vp">
+      <div class="share-page">
+        <div class="share-top">
+          <div class="brand"><span class="brand-logo">Z</span>ZiMo 文件中心</div>
+          <span class="grow"></span>
+          <span class="badge badge-neutral">免登录访问</span>
+          <!-- 门户壳里由 ThemeSwitch 统一落 data-theme;分享页不在壳内,得自己带一个 -->
+          <button class="icon-btn" onclick="toggleTheme()" aria-label="切换主题" title="主题">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>
+          </button>
+        </div>
+        <div class="share-mid">
+          <div class="sheet">
+            <div class="card" style="padding:16px 20px">
+              <div class="share-owner">
+                <span class="avatar">张</span>
+                <div class="grow">
+                  <div><b>张三</b> 分享了文件夹 · <span class="share-name">产品发布方案</span></div>
+                  <div class="cap faint">剩 6 天 · 已下载 3/10 次</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 批量条 -->
+            <div class="card fh-toolbar batch-bar">
+              <button class="icon-btn" aria-label="取消选择" onclick="toast('已取消选择','info')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+              <span class="sel-num num">已选 3 项</span>
+              <span class="cap faint num">137.9 MB · 1 个文件夹</span>
+              <span class="spacer"></span>
+              <span class="cap faint">在列表内右键,可对选中项执行操作</span>
+            </div>
+
+            <div class="card" style="padding:0;overflow:hidden">
+              <div class="crumbs">
+                <a class="c-home"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>产品发布方案</a>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg>
+                <span class="here">图片</span>
+                <span class="grow"></span>
+                <span class="cap faint num">共 12 项</span>
+              </div>
+              <div class="ftbl-wrap">
+                <table class="ftbl">
+                  <thead>
+                    <tr>
+                      <th class="col-cb"><input type="checkbox" class="fcheck" aria-label="全选"></th>
+                      <th class="sortable" style="width:220px">名称</th>
+                      <th class="sortable" style="width:90px">类型</th>
+                      <th class="sortable" style="width:130px">大小</th>
+                      <th class="sortable sorted" style="width:130px">修改时间<span class="sort-ico">↑</span></th>
+                      <th style="width:60px"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="selected">
+                      <td class="col-cb"><input type="checkbox" class="fcheck" checked aria-label="选择 封面"></td>
+                      <td><div class="fcell"><span class="ficon f-folder"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6a2 2 0 0 1 2-2h4.6a2 2 0 0 1 1.4.6L13.4 6H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/></svg></span><span class="fname">封面</span></div></td>
+                      <td><span class="ftype">文件夹</span></td>
+                      <td><span class="num items-num">4 项 · 2.6 MB</span></td>
+                      <td><span class="num">09-18 21:07</span></td>
+                      <td><span class="row-ops"><button class="dots-btn" aria-label="更多操作"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg></button></span></td>
+                    </tr>
+                    <tr class="selected">
+                      <td class="col-cb"><input type="checkbox" class="fcheck" checked aria-label="选择 发布会现场合影.jpg"></td>
+                      <td><div class="fcell"><span class="ficon f-img"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.6" fill="currentColor" stroke="none"/><path d="m5 18 5.2-5.2a1.4 1.4 0 0 1 2 0L19 19"/></svg></span><span class="fname">发布会现场合影.jpg</span></div></td>
+                      <td><span class="ftype">图片</span></td>
+                      <td><span class="num">8.6 MB</span></td>
+                      <td><span class="num">09-18 20:41</span></td>
+                      <td><span class="row-ops"><button class="dots-btn" aria-label="更多操作"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg></button></span></td>
+                    </tr>
+                    <tr class="selected">
+                      <td class="col-cb"><input type="checkbox" class="fcheck" checked aria-label="选择 宣传片.mp4"></td>
+                      <td><div class="fcell"><span class="ficon f-vid"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9.5 5 2.5-5 2.5Z" fill="currentColor" stroke="none"/></svg><span class="ext">MP4</span></span><span class="fname">宣传片-初稿.mp4</span></div></td>
+                      <td><span class="ftype">视频</span></td>
+                      <td><span class="num">128 MB</span></td>
+                      <td><span class="num">09-17 16:30</span></td>
+                      <td><span class="row-ops"><button class="dots-btn" aria-label="更多操作"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg></button></span></td>
+                    </tr>
+                    <tr>
+                      <td class="col-cb"><input type="checkbox" class="fcheck" aria-label="选择 细节特写.jpg"></td>
+                      <td><div class="fcell"><span class="ficon f-img"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.6" fill="currentColor" stroke="none"/><path d="m5 18 5.2-5.2a1.4 1.4 0 0 1 2 0L19 19"/></svg></span><span class="fname">细节特写-工位.jpg</span></div></td>
+                      <td><span class="ftype">图片</span></td>
+                      <td><span class="num">5.1 MB</span></td>
+                      <td><span class="num">09-17 15:02</span></td>
+                      <td><span class="row-ops"><button class="dots-btn" aria-label="更多操作"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg></button></span></td>
+                    </tr>
+                    <tr>
+                      <td class="col-cb"><input type="checkbox" class="fcheck" aria-label="选择 旧版封面.psd"></td>
+                      <td><div class="fcell"><span class="ficon f-oth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5"/></svg></span><span class="fname">旧版封面.psd</span></div></td>
+                      <td><span class="ftype">其他</span></td>
+                      <td><span class="num">46.2 MB</span></td>
+                      <td><span class="num">09-16 11:48</span></td>
+                      <td><span class="row-ops"><button class="dots-btn" aria-label="更多操作"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg></button></span></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="share-foot">由 ZiMo 文件中心提供 · 仅可浏览与下载</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ ④ 右键菜单四态 ============ -->
+  <div class="frame">
+    <h3><span class="idx">④</span>右键菜单 · 四种触发场景</h3>
+    <p class="fdesc">
+      菜单项只保留只读动作(打开 / 下载 / 打包下载 / 详情),空间页里的重命名、移动、复制、分享、删除在免登录页不存在。
+      首项按"作用对象"变字:选中多项时是<b>下载所选(N)</b>,单选文件是<b>下载</b>,单选文件夹是<b>打开</b> + <b>打包下载</b>。
+      行尾 ⋯ 与右键走同一个菜单(⋯ 只作用于该行)。
+    </p>
+    <div class="menu-grid">
+      <div class="menu-demo">
+        <h4>单选 · 文件</h4>
+        <div class="hint">右击已选中的文件行,或点它的行尾 ⋯</div>
+        <div class="mini-row"><span class="ficon f-doc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg></span>产品发布方案 v2.docx</div>
+        <div class="menu" style="min-width:200px">
+          <div class="menu-item"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4v12m0 0 4-4m-4 4-4-4"/><path d="M4 17v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1"/></svg>下载</div>
+          <div class="menu-sep"></div>
+          <div class="menu-item"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>详情</div>
+        </div>
+      </div>
+
+      <div class="menu-demo">
+        <h4>单选 · 文件夹</h4>
+        <div class="hint">文件夹多给一项"打开" —— 与空间页一致,进目录浏览</div>
+        <div class="mini-row"><span class="ficon f-folder"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6a2 2 0 0 1 2-2h4.6a2 2 0 0 1 1.4.6L13.4 6H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/></svg></span>图片</div>
+        <div class="menu" style="min-width:200px">
+          <div class="menu-item"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>打开</div>
+          <div class="menu-item"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5"/></svg>打包下载</div>
+          <div class="menu-sep"></div>
+          <div class="menu-item"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>详情</div>
+        </div>
+      </div>
+
+      <div class="menu-demo">
+        <h4>多选(≥2 项)</h4>
+        <div class="hint">右击选中集里的任意一行,或列表空白处 —— 都作用于整批</div>
+        <div class="mini-row"><span class="ficon f-img"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.6" fill="currentColor" stroke="none"/><path d="m5 18 5.2-5.2a1.4 1.4 0 0 1 2 0L19 19"/></svg></span>已选 3 项</div>
+        <div class="menu" style="min-width:200px">
+          <div class="menu-item"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5"/></svg>下载所选(3)</div>
+          <div class="menu-sep"></div>
+          <div class="menu-item"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>详情</div>
+        </div>
+      </div>
+
+      <div class="menu-demo">
+        <h4>空白处右键</h4>
+        <div class="hint">没有选中项时应作用于"当前位置",不弹条目菜单</div>
+        <div class="mini-row" style="background:var(--color-border-soft);box-shadow:none;color:var(--color-text-3)">列表空白区</div>
+        <div class="menu" style="min-width:200px">
+          <div class="menu-item"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 19V5m0 0-6 6m6-6 6 6"/></svg>返回上一级目录</div>
+        </div>
+      </div>
+    </div>
+    <div class="annotate" style="margin-top:var(--sp-4)">
+      <b>你提的这条已落到菜单里</b>:多选显示"下载所选(N)",单选显示"下载"。另外把<b>单选文件夹</b>补成"打开 + 打包下载"两项 —— 只给"下载"的话,访客就没法像在空间里那样点进目录看内容了;若你希望文件夹也只给"下载",这里去掉"打开"即可。
+    </div>
+  </div>
+
+  <!-- ============ ⑤ 详情 ============ -->
+  <div class="frame">
+    <h3><span class="idx">⑤</span>详情弹窗(新增)</h3>
+    <p class="fdesc">
+      字段表与空间页对齐,只动两处:去掉"创建者"(免登录页不该暴露文件是谁上传的),把空间内的完整路径换成<b>分享内位置</b>。
+      多选时给批量详情(条目数 / 含几个文件夹 / 总大小),逐条字段没有公共值,与空间页一样用"—"占位。
+    </p>
+    <div class="menu-grid">
+      <div class="menu-demo" style="padding:0;overflow:hidden">
+        <div class="modal" style="width:auto;box-shadow:none;border-radius:0">
+          <div class="modal-head"><h3>条目详情</h3><button class="icon-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+          <div class="modal-body">
+            <table class="kv-tbl">
+              <tbody>
+                <tr><td>名称</td><td><b>产品发布方案 v2.docx</b></td></tr>
+                <tr><td>类型</td><td>文档</td></tr>
+                <tr><td>大小</td><td class="num">386 KB</td></tr>
+                <tr><td>位置</td><td>产品发布方案 / 文档 / <span class="faint">(文件名)</span></td></tr>
+                <tr><td>创建时间</td><td class="num">2026-02-11 10:22</td></tr>
+                <tr><td>修改时间</td><td class="num">2026-09-18 21:07</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="modal-foot"><button class="btn btn-primary">关闭</button></div>
+        </div>
+      </div>
+      <div class="menu-demo" style="padding:0;overflow:hidden">
+        <div class="modal" style="width:auto;box-shadow:none;border-radius:0">
+          <div class="modal-head"><h3>批量详情</h3><button class="icon-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+          <div class="modal-body">
+            <table class="kv-tbl">
+              <tbody>
+                <tr><td>条目数</td><td><b class="num">3</b> 项(含 1 个文件夹)</td></tr>
+                <tr><td>总大小</td><td class="num">137.9 MB</td></tr>
+                <tr><td>名称</td><td>—</td></tr>
+                <tr><td>类型</td><td>—</td></tr>
+                <tr><td>位置</td><td>—</td></tr>
+                <tr><td>创建时间</td><td>—</td></tr>
+                <tr><td>修改时间</td><td>—</td></tr>
+              </tbody>
+            </table>
+            <p class="cap faint" style="margin-top:10px">多选时无法逐条展示名称、时间等字段,这里只汇总条目数与总体积(文件夹按子树字节计入)。</p>
+          </div>
+          <div class="modal-foot"><button class="btn btn-primary">关闭</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ ⑥ 网格视图 + ⑦ 下载全部下拉 ============ -->
+  <div class="frame">
+    <h3><span class="idx">⑥</span>网格视图 / <span class="idx">⑦</span>"下载全部"下拉</h3>
+    <p class="fdesc">右侧两个按钮格式直接复刻空间页:视图切换(列表/网格)+ 刷新;主动作按钮从信息卡移到这里。</p>
+    <div class="menu-grid" style="grid-template-columns:1.35fr 1fr">
+      <div class="menu-demo" style="padding:0;overflow:hidden">
+        <div class="card" style="box-shadow:none;border:none;border-radius:0;padding:0">
+          <div class="crumbs">
+            <a class="c-home"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>产品发布方案</a>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg>
+            <span class="here">图片</span>
+            <span class="grow"></span>
+            <span class="cap faint num">共 12 项</span>
+          </div>
+          <div class="fgrid" style="max-height:300px">
+            <div class="gcell selected"><span class="ficon f-folder" style="width:52px;height:52px;border-radius:15px"><svg viewBox="0 0 24 24" fill="currentColor" style="width:28px;height:28px"><path d="M4 6a2 2 0 0 1 2-2h4.6a2 2 0 0 1 1.4.6L13.4 6H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/></svg></span><span class="gname">封面</span><span class="gsub">4 项 · 2.6 MB</span></div>
+            <div class="gcell"><span class="ficon f-img" style="width:52px;height:52px;border-radius:15px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" style="width:28px;height:28px"><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.6" fill="currentColor" stroke="none"/><path d="m5 18 5.2-5.2a1.4 1.4 0 0 1 2 0L19 19"/></svg></span><span class="gname">发布会现场合影.jpg</span><span class="gsub">8.6 MB</span></div>
+            <div class="gcell"><span class="ficon f-img" style="width:52px;height:52px;border-radius:15px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" style="width:28px;height:28px"><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.6" fill="currentColor" stroke="none"/><path d="m5 18 5.2-5.2a1.4 1.4 0 0 1 2 0L19 19"/></svg></span><span class="gname">封面终稿.png</span><span class="gsub">2.4 MB</span></div>
+            <div class="gcell"><span class="ficon f-vid" style="width:52px;height:52px;border-radius:15px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" style="width:28px;height:28px"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9.5 5 2.5-5 2.5Z" fill="currentColor" stroke="none"/></svg></span><span class="gname">宣传片-初稿.mp4</span><span class="gsub">128 MB</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="menu-demo" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px">
+        <button class="btn btn-grad btn-lg">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4v12m0 0 4-4m-4 4-4-4"/><path d="M4 17v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1"/></svg>
+          下载全部
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" style="margin-left:4px"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div class="menu" style="position:relative;right:auto;top:auto;min-width:250px">
+          <div class="menu-item"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>下载当前目录(12 项)</div>
+          <div class="menu-item"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5"/></svg>下载整个分享</div>
+        </div>
+        <p class="cap faint" style="text-align:center;margin:0">主键 = 当前目录(与原"下载全部"行为一致);<br>下拉第二项 = 整个分享,等价于从分享根打包一次</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ ⑧ 单文件分享 ============ -->
+  <div class="frame">
+    <h3><span class="idx">⑧</span>单文件分享 · 同样走列表</h3>
+    <p class="fdesc">
+      现在单文件分享是一个孤立的"卡片 + 下载按钮";改后它就是这个列表里的唯一一行 —— 详情、行尾 ⋯ 菜单直接可用,不再需要另一套样式。
+      这种分享没有可搜、可切换视图、可打包的内容,所以工具条只剩一个"下载"按钮:行尾 ⋯ 要悬停才出现,把页面唯一的动作藏进去等于没有入口。
+    </p>
+    <div class="vp short">
+      <div class="share-page">
+        <div class="share-top">
+          <div class="brand"><span class="brand-logo">Z</span>ZiMo 文件中心</div>
+          <span class="grow"></span>
+          <span class="badge badge-neutral">免登录访问</span>
+          <!-- 门户壳里由 ThemeSwitch 统一落 data-theme;分享页不在壳内,得自己带一个 -->
+          <button class="icon-btn" onclick="toggleTheme()" aria-label="切换主题" title="主题">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>
+          </button>
+        </div>
+        <div class="share-mid">
+          <div class="sheet">
+            <div class="card" style="padding:16px 20px">
+              <div class="share-owner">
+                <span class="avatar">张</span>
+                <div class="grow">
+                  <div><b>张三</b> 分享了文件 · <span class="share-name">产品发布方案 v2.docx</span></div>
+                  <div class="cap faint">剩 6 天 · 已下载 3/10 次</div>
+                </div>
+              </div>
+            </div>
+            <!-- 工具条只剩一个下载按钮:搜索、视图、打包在这里都没有意义 -->
+            <div class="card fh-toolbar">
+              <span class="spacer"></span>
+              <button class="btn btn-grad" onclick="toast('换取下载直链并跳转','info')">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4v12m0 0 4-4m-4 4-4-4"/><path d="M4 17v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1"/></svg>
+                下载
+              </button>
+            </div>
+            <div class="card" style="padding:0;overflow:hidden">
+              <div class="ftbl-wrap">
+                <table class="ftbl">
+                  <thead>
+                    <tr>
+                      <th style="width:44px"></th>
+                      <th style="width:220px">名称</th>
+                      <th style="width:90px">类型</th>
+                      <th style="width:130px">大小</th>
+                      <th style="width:130px">修改时间</th>
+                      <th style="width:60px"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td></td>
+                      <td><div class="fcell"><span class="ficon f-doc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg></span><span class="fname">产品发布方案 v2.docx</span></div></td>
+                      <td><span class="ftype">文档</span></td>
+                      <td><span class="num">386 KB</span></td>
+                      <td><span class="num">09-18 21:07</span></td>
+                      <td><span class="row-ops"><button class="dots-btn" aria-label="更多操作"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg></button></span></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="share-foot">由 ZiMo 文件中心提供 · 仅可浏览与下载</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ ⑨ 改动点对照 ============ -->
+  <div class="frame">
+    <h3><span class="idx">⑨</span>逐条对照</h3>
+    <div class="card" style="overflow:hidden">
+      <table class="cmp">
+        <thead>
+          <tr><th></th><th style="width:46%">现在</th><th>改后</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>列表</td>
+            <td class="was">ShareView 自己写的表格:列写死、无排序、无虚拟滚动、无网格</td>
+            <td class="now">直接用空间文件区那份 <b>FileList</b>:虚拟滚动(&gt;300 行)、列表/网格双视图、表头点击排序、长名截断</td>
+          </tr>
+          <tr>
+            <td>选中</td>
+            <td class="was">单击 = 切换一项;没有加选、连选、全选、Esc</td>
+            <td class="now">单击单选 / <b>Ctrl(Cmd) 加选</b> / <b>Shift 连选</b> / <b>Ctrl+A 全选</b> / Esc 取消;表头复选框三态(全选、半选、清空)</td>
+          </tr>
+          <tr>
+            <td>批量</td>
+            <td class="was">无批量条;选中数只反映在顶部按钮文字上</td>
+            <td class="now">选中 ≥2 项时工具条换成<b>批量条</b>:已选 N 项 · 总大小 · N 个文件夹 + 取消;操作走右键菜单</td>
+          </tr>
+          <tr>
+            <td>行操作</td>
+            <td class="was">行右侧一个"打开/下载"文字按钮</td>
+            <td class="now">行右侧<b>⋯</b>按钮(悬停/选中时出现),与右键同一份菜单</td>
+          </tr>
+          <tr>
+            <td>左键</td>
+            <td class="was">双击文件夹 = 进入;双击文件 = 直接下载(无反馈)</td>
+            <td class="now">双击文件夹继续下钻;双击文件下载(与空间页一致);文件夹名可点进</td>
+          </tr>
+          <tr>
+            <td>右键</td>
+            <td class="was">无菜单(浏览器默认菜单)</td>
+            <td class="now">条目:打开 / 下载 / 打包下载 / 详情;空白处:返回上一级目录;菜单贴底时自动向上弹</td>
+          </tr>
+          <tr>
+            <td>顶部</td>
+            <td class="was">只有分享信息卡 + 一个下载按钮</td>
+            <td class="now">信息卡(身份与有效期)<b>+ 工具条</b>(搜索框 / 下载全部 ▾ / 列表-网格 / 刷新);下载动作移出信息卡</td>
+          </tr>
+          <tr>
+            <td>搜索</td>
+            <td class="was">无</td>
+            <td class="now">搜<b>当前目录及子目录</b>;键入停止 400ms 自动搜、命中标红、多一列"位置"、可一键退出</td>
+          </tr>
+          <tr>
+            <td>下载</td>
+            <td class="was">"下载全部(zip)"与"下载所选(N)"挤在同一个按钮上,靠有没有选中来变字</td>
+            <td class="now">工具条"<b>下载全部 ▾</b>"(当前目录 / 整个分享);选中项走右键菜单的"下载 / 下载所选(N)"</td>
+          </tr>
+          <tr>
+            <td>详情</td>
+            <td class="was">无</td>
+            <td class="now">右键 → 详情:单条给字段表(名称/类型/大小/位置/创建时间/修改时间),多选给汇总(条目数 / 文件夹数 / 总大小)</td>
+          </tr>
+          <tr>
+            <td>不改</td>
+            <td class="was">—</td>
+            <td class="now">品牌条、分享信息卡、提取码 / 需登录 / 已失效 / 暂不可用四个状态、底部标识、免登录访问方式</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="annotate" style="margin-top:var(--sp-5)">
+      <b>需要后端配合的两处(前端做不到)</b><br>
+      ① <b>分享内搜索</b>:公开面列目录接口目前只认排序与分页,没有关键词。要按空间页那种"搜当前目录及子目录"来搜,得给分享的列目录加一条搜索分支 —— 单条目分享可以直接复用空间那份子树搜索;多条目分享的"虚拟根"要逐个分享根搜完再合并,并且每条把路径里分享根往上那几级裁掉(否则会漏出分享者的上层目录名)。<br>
+      ② <b>虚拟根排序</b>:多条目分享的顶层现在是"按绑定顺序平铺",点表头排序不会生效。要么在那里补上排序,要么干脆让虚拟根的表头不可排序(与"平面平铺"的语义也更自洽)。
+    </div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+<script>
+function toggleTheme(){const d=document.documentElement;d.dataset.theme=d.dataset.theme==='dark'?'light':'dark';localStorage.setItem('mock-theme',d.dataset.theme)}
+const __tp=new URLSearchParams(location.search).get('theme');
+if(__tp)document.documentElement.dataset.theme=__tp;else if(localStorage.getItem('mock-theme'))document.documentElement.dataset.theme=localStorage.getItem('mock-theme');
+function toast(msg,type='success',title='提示'){
+  const t=document.createElement('div');t.className='toast '+type;
+  t.innerHTML=`<span>${type==='success'?'✓':type==='error'?'✕':type==='warning'?'⚠':'ℹ'}</span><div><div class="t-title">${title}</div><div class="t-msg">${msg}</div></div>`;
+  document.getElementById('toasts').appendChild(t);setTimeout(()=>t.remove(),3200);
+}
+</script>
+</body>
+</html>

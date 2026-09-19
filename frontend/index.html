@@ -6,6 +6,22 @@
     <meta name="color-scheme" content="light dark" />
     <link rel="icon" href="/svg/favicon.svg" />
     <title>ZiMo 门户</title>
+    <!-- 首屏就落 data-theme。
+         主题此前只由 ThemeSwitch 在组件挂载后写,而浏览器在那之前早就按亮色令牌画过一帧了 ——
+         暗色主题下刷新页面会闪一次白光。这里是同步脚本,在首次绘制前执行,口径与 ThemeSwitch
+         完全一致(本地偏好优先,没有则跟随系统)。 -->
+    <script>
+      ;(function () {
+        try {
+          var t = localStorage.getItem('zimo-theme')
+          if (t !== 'light' && t !== 'dark')
+            t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+          document.documentElement.dataset.theme = t
+        } catch (e) {
+          /* 隐私模式等取不到 localStorage 的场景:交给 ThemeSwitch 挂载时再落一次 */
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="app"></div>

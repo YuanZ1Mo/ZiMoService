@@ -1549,8 +1549,11 @@ drogon::Task<HttpResponsePtr> ZmFileHubModule::HandleShareInfo(HttpRequestPtr re
                 viewerUid = ctx.uid;
         }
     }
-    ZMJSON out = co_await m_share->Info(token, viewerUid, ZmAuthGateModule::ClientIp(req),
-                                        req->getHeader("User-Agent"));
+    // 提取码凭证带上就直接进浏览态:刷新页面不该把人打回输入提取码那一步
+    bool   credOk = m_share->CreditValid(token, req->getCookie("zm_share"));
+    ZMJSON out    = co_await m_share->Info(token, credOk, viewerUid,
+                                           ZmAuthGateModule::ClientIp(req),
+                                           req->getHeader("User-Agent"));
     if (!ZmFileHasError(out))
     {
         ZMJSON list = ZMJSON::array();
@@ -1586,6 +1589,7 @@ drogon::Task<HttpResponsePtr> ZmFileHubModule::HandleShareListDir(HttpRequestPtr
     bool        credOk    = m_share->CreditValid(token, cred);
     int64_t     dirId     = QueryI64(req, "dir_id", 0);
     ZmListQuery q         = ListQueryOf(req, 200);
+    q.keyword             = QueryStr(req, "keyword");   // 非空 = 搜当前目录及子目录
     int64_t     viewerUid = 0;
     {
         const std::string cookie = req->getCookie(ZmSessionModule::CookieName());

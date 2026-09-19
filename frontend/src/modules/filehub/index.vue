@@ -1226,7 +1226,9 @@ onMounted(() => {
                           <input type="checkbox" class="fcheck" :checked="shareSel.has(s.id)"
                                  @click.stop="toggleShareSel(s, $event, true)" :aria-label="`选择 ${s.name}`" />
                         </td>
-                        <td><span class="fname" style="font-weight:600">{{ s.name }}{{ Number(s.node_count) > 1 ? ` 等 ${s.node_count} 项` : '' }}</span></td>
+                        <!-- 名称列只显示展示名本身:绑了几项在"类型"列已有(「N 项」),
+                             再往名字后面缀一句会把自定义展示名改样 —— 用户填什么就显示什么 -->
+                        <td><span class="fname" style="font-weight:600">{{ s.name }}</span></td>
                         <td>
                           <!-- 多选分享按条目数显示「N 项」(单条仍按类型) -->
                           <span class="ftype">{{ Number(s.node_count) > 1 ? `${s.node_count} 项` : (Number(s.node_type) === 1 ? '文件夹' : '文件') }}</span>
@@ -1360,27 +1362,13 @@ onMounted(() => {
         </template>
       </div>
 
-      <!-- 修改分享属性:有效期是"从现在起重新算 N 天",不是改原到期日,故只给重设不给回显 -->
+      <!-- 修改分享属性:字段、顺序、控件形态与创建分享(ShareDialog)对齐,只保留两处语义差异 ——
+           有效期是"从现在起重新算 N 天"而非改原到期日,提取码留空是"保持不变"而非随机生成 -->
       <Modal :show="shareEdit.show" title="修改分享属性" @close="shareEdit.show = false">
         <div class="form-item">
-          <label class="form-label">分享名称</label>
-          <input v-model.trim="shareEdit.name" class="input" maxlength="255" placeholder="分享页上显示的标题" />
+          <label class="form-label">分享名称 <span class="opt">分享页上显示的标题</span></label>
+          <input v-model.trim="shareEdit.name" class="input" maxlength="255" placeholder="留空则沿用当前名称" />
           <span class="form-hint">只影响分享页标题与列表,不改文件名</span>
-        </div>
-        <div class="form-item">
-          <label class="form-label">有效期</label>
-          <ZmSelect v-model="shareEdit.expire_days" :options="EDIT_EXPIRES" />
-          <span class="form-hint" style="color:var(--color-warn)">选完从现在起重新计时,不是改原来的到期日</span>
-        </div>
-        <div class="form-item">
-          <label class="form-label">下载次数上限</label>
-          <input v-model.number="shareEdit.max_downloads" class="input" type="number" min="0" placeholder="0 = 不限" />
-        </div>
-        <div class="form-item" v-if="Number(shareSpace) !== 0">
-          <label class="row" style="gap:8px;cursor:pointer">
-            <input v-model="shareEdit.login_only" type="checkbox" class="fcheck" />
-            <span>仅登录用户可见</span>
-          </label>
         </div>
         <!-- 提取码开关常显(原本没有的能加上、原本有的能去掉)。
              用与创建分享同款的开关 + 固定文案:文案不随状态变字 ——
@@ -1392,11 +1380,33 @@ onMounted(() => {
             <button type="button" class="switch" :class="{ on: shareEdit.pwd_enabled }" aria-label="提取码开关"
                     @click="shareEdit.pwd_enabled = !shareEdit.pwd_enabled"></button>
           </div>
+          <span class="form-hint">要换新码用右键菜单的「重置提取码」</span>
         </div>
-        <div class="form-item" v-if="shareEdit.pwd_enabled">
-          <label class="form-label">提取码内容 <span class="opt">4 个字符</span></label>
+        <div v-if="shareEdit.pwd_enabled" class="form-item" style="margin-top:-6px">
+          <label class="form-label">自定义提取码 <span class="opt">4 个字符;留空保持不变</span></label>
           <input v-model.trim="shareEdit.pwd" class="input" maxlength="4"
-                 :placeholder="shareEdit.had_pwd ? '留空保持不变' : '留空则随机生成'" />
+                 :placeholder="shareEdit.had_pwd ? '留空保持不变' : '留空则由服务端随机生成'" />
+        </div>
+        <!-- flex-start:右列没有提示文字,默认的 center 会把它整体压低,两列的标签就不在同一水平线 -->
+        <div class="row" style="gap:12px;flex-wrap:wrap;align-items:flex-start">
+          <div class="form-item" style="flex:1;min-width:170px">
+            <label class="form-label">有效期</label>
+            <ZmSelect v-model="shareEdit.expire_days" :options="EDIT_EXPIRES" />
+            <span class="form-hint" style="color:var(--color-warn)">选完从现在起重新计时</span>
+          </div>
+          <div class="form-item" style="flex:1;min-width:170px">
+            <label class="form-label">下载次数上限 <span class="opt">0 = 不限</span></label>
+            <input v-model.number="shareEdit.max_downloads" class="input" type="number" min="0" step="1" />
+          </div>
+        </div>
+        <div v-if="Number(shareSpace) !== 0" class="row between"
+             style="background:var(--color-bg);border:1px solid var(--color-border-soft);border-radius:var(--r-md);padding:10px 14px">
+          <div>
+            <b style="font-size:var(--fs-body)">仅登录可见</b>
+            <div class="form-hint">开启后未登录访客先跳登录,登录后回到分享页</div>
+          </div>
+          <button type="button" class="switch" :class="{ on: shareEdit.login_only }" aria-label="仅登录可见开关"
+                  @click="shareEdit.login_only = !shareEdit.login_only"></button>
         </div>
         <template #foot>
           <button class="btn btn-ghost" type="button" @click="shareEdit.show = false">取消</button>
@@ -1481,8 +1491,10 @@ onMounted(() => {
                     @close="mcDlg.show = false" @done="onMcDone" />
 
     <!-- 分享 -->
-    <ShareDialog :show="shareDlg.show" :nodes="shareDlg.nodes"
-                 :is-public="!shareDlg.nodes.length || Number(shareDlg.nodes[0].space) === 0"
+    <!-- is-public 取"当前所在空间":列表条目的 NodeView 不下发 space,按 nodes[0].space 判会
+         恒为 false,于是公共空间的分享也会出现"仅登录可见"开关(§3.12.2 规定公共空间不提供) -->
+    <ShareDialog :show="shareDlg.show" :nodes="shareDlg.nodes" :space="Number(space)"
+                 :is-public="Number(space) === 0"
                  @close="shareDlg.show = false" @created="loadShares" />
 
     <!-- 详情 -->
