@@ -70,7 +70,7 @@ bool NetDock::Init()
     opts.idleTimeoutSec = 90;              // keep-alive 空闲 90s 回收;调大可减少复用死连接型 NoHttpResponse
     opts.keepaliveRequests = 0;            // 单连接累计请求上限:0 = 不限次数回收(压测不触发次数回收竞态)
     opts.enableRequestStream = true;       // 上传流式落盘依赖,勿关
-    opts.workPoolSize = 8;                 // 业务阻塞工作池线程数(DB/磁盘/CPU 型 handler),高并发可调大
+    opts.workPoolSize = 8;                 // 业务阻塞工作池线初始程数(DB/磁盘/CPU 型 handler),高并发可调大, 线程池中的线程动态扩张
     opts.gzipStatic = true;                // 静态 gzip:只找 <file>.gz 孪生优先发送(非现场压缩,补 Content-Encoding 头);
     bool hasCert = std::filesystem::exists(certFile) && std::filesystem::exists(keyFile);
     if (hasCert)

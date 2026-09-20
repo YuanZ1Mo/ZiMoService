@@ -354,6 +354,28 @@ ZMJSON ZmFileNodeModule::SubtreeIdsSync(int64_t nodeId, int64_t* bytes, int64_t*
     return ids;
 }
 
+int64_t ZmFileNodeModule::SubtreeMaxUpdateSync(const std::vector<int64_t>& ids)
+{
+    if (ids.empty())
+        return 0;
+    std::string in;
+    for (size_t i = 0; i < ids.size(); ++i)
+    {
+        if (i)
+            in += ",";
+        in += std::to_string(ids[i]);
+    }
+    ZMJSON row = m_db->QueryRowSync(
+        "WITH RECURSIVE sub(id, update_time, depth) AS ("
+        " SELECT id, update_time, 0 FROM nodes WHERE id IN (" + in + ")"
+        " UNION ALL"
+        " SELECT n.id, n.update_time, s.depth + 1 FROM nodes n JOIN sub s"
+        " ON n.parent_id = s.id WHERE s.depth < 64)"
+        " SELECT COALESCE(MAX(update_time), 0) AS t FROM sub;",
+        {});
+    return zm_file_row_int(row, "t", 0);
+}
+
 bool ZmFileNodeModule::QuotaOkSync(int64_t space, int64_t addBytes)
 {
     if (space == 0)

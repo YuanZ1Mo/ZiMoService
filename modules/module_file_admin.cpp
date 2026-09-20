@@ -577,7 +577,11 @@ ZMJSON ZmFileAdminModule::SyncDirSync(int64_t space, int64_t dirId, bool dryRun,
                              d.name, std::to_string(d.size), ext,
                              std::to_string(d.mtime > 0 ? d.mtime : now)}))
                         return false;
-                    return ZmFileDbModule::ApplyUsageSync(db, space, d.isDir ? 0 : d.size, 1);
+                    if (!ZmFileDbModule::ApplyUsageSync(db, space, d.isDir ? 0 : d.size, 1))
+                        return false;
+                    // 父目录的 items/update_time 随之更新(与业务路径同一口径:
+                    // items 是直接子项数,update_time 同时充当打包缓存的"内容指纹")
+                    return ZmFileNodeModule::TouchParentSync(db, dirId, 1);
                 });
         }
         report["added"] = zm_file_row_int(report, "added", 0) + 1;
@@ -639,7 +643,8 @@ ZMJSON ZmFileAdminModule::SyncDirSync(int64_t space, int64_t dirId, bool dryRun,
                             if (!ZmFileDbModule::ApplyUsageSync(db, space, -size, -1))
                                 return false;
                         }
-                        return true;
+                        // 少了一个直接子项:父目录计数与时间戳随动
+                        return ZmFileNodeModule::TouchParentSync(db, dirId, -1);
                     });
             }
             report["removed"] = zm_file_row_int(report, "removed", 0) + 1;
@@ -658,17 +663,20 @@ ZMJSON ZmFileAdminModule::SyncDirSync(int64_t space, int64_t dirId, bool dryRun,
                                          {std::to_string(id)}))
                             return false;
                         std::string ext = hit->isDir ? "" : ZmFileNodeModule::ExtOf(hit->name);
-                        return db.ExecSync(
-                            "INSERT INTO "
-                            "nodes(space,parent_id,type,name,size,ext,hash,owner_uid,"
-                            "items,create_time,update_time,deleted,delete_time,origin_parent_"
-                            "id,"
-                            "del_owner_uid) VALUES(?1,?2,?3,?4,?5,?6,'',0,0,?7,?7,0,0,0,0)",
-                            {std::to_string(space), std::to_string(dirId),
-                             std::to_string(hit->isDir ? zm_file::kTypeDir
-                                                       : zm_file::kTypeFile),
-                             hit->name, std::to_string(hit->size), ext,
-                             std::to_string(hit->mtime)});
+                        if (!db.ExecSync(
+                                "INSERT INTO "
+                                "nodes(space,parent_id,type,name,size,ext,hash,owner_uid,"
+                                "items,create_time,update_time,deleted,delete_time,origin_parent_"
+                                "id,"
+                                "del_owner_uid) VALUES(?1,?2,?3,?4,?5,?6,'',0,0,?7,?7,0,0,0,0)",
+                                {std::to_string(space), std::to_string(dirId),
+                                 std::to_string(hit->isDir ? zm_file::kTypeDir
+                                                           : zm_file::kTypeFile),
+                                 hit->name, std::to_string(hit->size), ext,
+                                 std::to_string(hit->mtime)}))
+                            return false;
+                        // 类型变了但直接子项数没变:只顶父目录的 update_time(内容指纹)
+                        return ZmFileNodeModule::TouchParentSync(db, dirId, 0);
                     });
             }
             report["fixed"] = zm_file_row_int(report, "fixed", 0) + 1;
@@ -679,8 +687,10 @@ ZMJSON ZmFileAdminModule::SyncDirSync(int64_t space, int64_t dirId, bool dryRun,
         {
             if (!dryRun)
             {
-                m_db->ExecSync("UPDATE nodes SET name = ?1 WHERE id = ?2",
-                               {hit->name, std::to_string(id)});
+                // 顶起 update_time:这一行确实被改过,打包缓存的"内容指纹"靠它发现
+                m_db->ExecSync("UPDATE nodes SET name = ?1, update_time = ?2 WHERE id = ?3",
+                               {hit->name, std::to_string(ZmSqliteDb::Now()),
+                                std::to_string(id)});
             }
             report["fixed"] = zm_file_row_int(report, "fixed", 0) + 1;
         }
@@ -690,11 +700,14 @@ ZMJSON ZmFileAdminModule::SyncDirSync(int64_t space, int64_t dirId, bool dryRun,
             if (!dryRun)
             {
                 int64_t oldSize = zm_file_row_int(r, "size", 0);
+                int64_t now     = ZmSqliteDb::Now();
                 m_db->WithTxSync(
                     [&](ZmSqliteDb& db) -> bool
                     {
-                        if (!db.ExecSync("UPDATE nodes SET size = ?1 WHERE id = ?2",
-                                         {std::to_string(hit->size), std::to_string(id)}))
+                        if (!db.ExecSync("UPDATE nodes SET size = ?1, update_time = ?2 "
+                                         "WHERE id = ?3",
+                                         {std::to_string(hit->size), std::to_string(now),
+                                          std::to_string(id)}))
                             return false;
                         return ZmFileDbModule::ApplyUsageSync(db, space, hit->size - oldSize,
                                                               0);

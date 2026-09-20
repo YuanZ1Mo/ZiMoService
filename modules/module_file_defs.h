@@ -35,6 +35,10 @@ inline constexpr int64_t kNameMaxBytes    = 255;                      ///< 名�
 inline constexpr int64_t kEnsurePathMax   = 1024;        ///< ensure 单条相对路径长度上限
 inline constexpr int64_t kMaxPathChars    = 240;         ///< 物理路径字符上限
 inline constexpr int64_t kMaxDepth        = 32;          ///< 路径深度上限
+// 物理侧递归(删除/复制/统计/打包)的深度上限:逻辑层级最多 32,留一倍余量。
+// 目录联接(junction)或符号链接指回上层会让递归成环 → 无限递归 → 栈溢出崩溃,
+// 所以物理遍历必须自带上限,不能只信逻辑层级。
+inline constexpr int     kMaxTreeDepth    = 64;          ///< 物理递归深度上限
 inline constexpr int64_t kTrashRetainDays = 30;          ///< 回收站保留天数
 // 打包压缩包是缓存:最后一次访问后空闲即回收(下载会把时间推到现在,相当于续期),
 // 另有 24 小时兜底与容量阈值。产物可能比任务记录(终态 7 天)先被回收,此时历史里

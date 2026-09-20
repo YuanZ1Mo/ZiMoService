@@ -1328,23 +1328,35 @@ drogon::Task<ZMJSON> ZmFileShareModule::Download(const std::string&          tok
                         { return m_store->Exists(m_store->ZipDir(space) + "\\" + zipName); });
                     if (exists)
                     {
-                        std::string existNo = zm_file_row_str(trow, "task_no");
-                        ZMJSON      t       = co_await m_token->IssuePack(ownerUid, existNo);
-                        if (!ZmFileHasError(t))
+                        // 幂等键只认条目 id:目录里的内容换了、id 不会变,旧包就不再代表
+                        // 当前内容。复用前比一次内容指纹(子树内最新 update_time)与打包完成时刻,
+                        // 内容变过就重新打包 —— 否则用户会拿到"删改之前"打的那个包。
+                        // 时间戳是秒级:相等即按"变过"处理 —— 宁可多打一次,也不能把
+                        // 同一秒内完成的改动当成没发生(那正是"删了文件还下到旧包"的成因)
+                        int64_t endTime = zm_file_row_int(trow, "end_time", 0);
+                        int64_t touched = co_await ZmHttpServer::RunOnPool<int64_t>(
+                            [this, ids]() -> int64_t
+                            { return m_node->SubtreeMaxUpdateSync(ids); });
+                        if (touched < endTime)
                         {
-                            co_await m_db->Exec(
-                                "UPDATE shares SET download_count = download_count + 1 "
-                                "WHERE id = ?1",
-                                {std::to_string(shareId)});
-                            if (m_audit)
-                                co_await m_audit->RecordShareAccess(
-                                    shareId, token, zm_file::kShareLogPack, 1, viewerUid, ip,
-                                    ua, "打包下载");
-                            ZMJSON out         = ZMJSON::object();
-                            out["token"]       = zm_file_row_str(t, "token");
-                            out["expire_time"] = zm_file_row_int(t, "expire_time", 0);
-                            out["name"]        = zm_file_row_str(t, "name");
-                            co_return out;
+                            std::string existNo = zm_file_row_str(trow, "task_no");
+                            ZMJSON      t       = co_await m_token->IssuePack(ownerUid, existNo);
+                            if (!ZmFileHasError(t))
+                            {
+                                co_await m_db->Exec(
+                                    "UPDATE shares SET download_count = download_count + 1 "
+                                    "WHERE id = ?1",
+                                    {std::to_string(shareId)});
+                                if (m_audit)
+                                    co_await m_audit->RecordShareAccess(
+                                        shareId, token, zm_file::kShareLogPack, 1, viewerUid,
+                                        ip, ua, "打包下载");
+                                ZMJSON out         = ZMJSON::object();
+                                out["token"]       = zm_file_row_str(t, "token");
+                                out["expire_time"] = zm_file_row_int(t, "expire_time", 0);
+                                out["name"]        = zm_file_row_str(t, "name");
+                                co_return out;
+                            }
                         }
                     }
                 }

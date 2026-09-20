@@ -308,8 +308,12 @@ ZmStoreResult ZmFileStoreModule::MovePath(const std::string& src, const std::str
                                "移动失败(错误码 " + std::to_string(err) + ")");
 }
 
-ZmStoreResult ZmFileStoreModule::CopyTreeImpl(const std::string& src, const std::string& dst)
+ZmStoreResult ZmFileStoreModule::CopyTreeImpl(const std::string& src, const std::string& dst,
+                                              int depth)
 {
+    if (depth > zm_file::kMaxTreeDepth)
+        return ZmStoreResult::Fail(static_cast<int>(ZmErrCode::IoError),
+                                   "目录层级过深(超过 64 层),可能存在目录联接成环,已中止");
     std::wstring ws = Utf8ToWide(ToExtended(src));
     std::wstring wd = Utf8ToWide(ToExtended(dst));
     if (ws.empty() || wd.empty())
@@ -355,7 +359,7 @@ ZmStoreResult ZmFileStoreModule::CopyTreeImpl(const std::string& src, const std:
         return scan;
     for (const auto& c : children)
     {
-        ZmStoreResult one = CopyTreeImpl(src + "\\" + c.name, dst + "\\" + c.name);
+        ZmStoreResult one = CopyTreeImpl(src + "\\" + c.name, dst + "\\" + c.name, depth + 1);
         if (!one.ok)
             return one;
     }
@@ -387,8 +391,11 @@ bool ZmFileStoreModule::IsCopyTempName(const std::string& name)
     return true;
 }
 
-ZmStoreResult ZmFileStoreModule::RemoveTreeImpl(const std::string& path)
+ZmStoreResult ZmFileStoreModule::RemoveTreeImpl(const std::string& path, int depth)
 {
+    if (depth > zm_file::kMaxTreeDepth)
+        return ZmStoreResult::Fail(static_cast<int>(ZmErrCode::IoError),
+                                   "目录层级过深(超过 64 层),可能存在目录联接成环,已中止");
     std::wstring w = Utf8ToWide(ToExtended(path));
     if (w.empty())
         return ZmStoreResult::Fail(static_cast<int>(ZmErrCode::IoError), "路径编码失败");
@@ -419,7 +426,7 @@ ZmStoreResult ZmFileStoreModule::RemoveTreeImpl(const std::string& path)
         return scan;
     for (const auto& c : children)
     {
-        ZmStoreResult one = RemoveTreeImpl(path + "\\" + c.name);
+        ZmStoreResult one = RemoveTreeImpl(path + "\\" + c.name, depth + 1);
         if (!one.ok)
             return one;
     }
@@ -695,6 +702,18 @@ void ZmFileStoreModule::TreeSizeSync(const std::string& path, int64_t& bytes,
 {
     bytes = 0;
     items = 0;
+    TreeSizeImpl(path, bytes, items, 0);
+}
+
+void ZmFileStoreModule::TreeSizeImpl(const std::string& path, int64_t& bytes, int64_t& items,
+                                     int depth) const
+{
+    // 深度到顶只记一条警告:占用统计是展示口径,不该因为一个环把整个统计弄成失败
+    if (depth > zm_file::kMaxTreeDepth)
+    {
+        DEFAULT_LOG_WARN("目录占用统计到深度上限,疑似目录联接成环: {}", path);
+        return;
+    }
     std::vector<ZmDiskEntry> children;
     ZmStoreResult r = const_cast<ZmFileStoreModule*>(this)->ScanDirSync(path, children);
     if (!r.ok)
@@ -703,7 +722,7 @@ void ZmFileStoreModule::TreeSizeSync(const std::string& path, int64_t& bytes,
     {
         ++items;
         if (c.isDir)
-            TreeSizeSync(path + "\\" + c.name, bytes, items);
+            TreeSizeImpl(path + "\\" + c.name, bytes, items, depth + 1);
         else
             bytes += c.size;
     }

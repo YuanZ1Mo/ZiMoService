@@ -58,10 +58,18 @@ struct PackCtx
  * @param c 打包上下文
  * @param physPath 源物理路径
  * @param entryName zip 内条目名(以 / 分隔)
+ * @param depth 已下钻层数(超过 kMaxTreeDepth 即中止,防目录联接成环)
  * @return true 成功;false 失败(原因写 c.error)
  */
-bool AddPathToZip(PackCtx& c, const std::string& physPath, const std::string& entryName)
+bool AddPathToZip(PackCtx& c, const std::string& physPath, const std::string& entryName,
+                  int depth)
 {
+    // 物理递归带深度上限:目录联接成环时打包会无限展开,必须到此为止并如实报错
+    if (depth > zm_file::kMaxTreeDepth)
+    {
+        c.error = "目录层级过深(超过 64 层),可能存在目录联接成环,已中止打包";
+        return false;
+    }
     if (c.handle && c.handle->Cancelled())
     {
         c.cancelled = true;
@@ -130,7 +138,7 @@ bool AddPathToZip(PackCtx& c, const std::string& physPath, const std::string& en
     }
     for (const auto& ch : children)
     {
-        if (!AddPathToZip(c, physPath + "\\" + ch.name, entryName + "/" + ch.name))
+        if (!AddPathToZip(c, physPath + "\\" + ch.name, entryName + "/" + ch.name, depth + 1))
             return false;
     }
     return true;
@@ -419,7 +427,7 @@ void ZmFilePackModule::RunPack(const std::string& taskNo)
     // 单条目且是目录时:以目录名作为 zip 根的顶级目录,天然由 entry 名体现
     for (const auto& e : entries)
     {
-        if (!AddPathToZip(c, e.phys, e.entry))
+        if (!AddPathToZip(c, e.phys, e.entry, 0))
         {
             ok = false;
             break;

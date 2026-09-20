@@ -287,6 +287,17 @@ class ZmFileNodeModule
     /// @brief 子树展开(含自身;返回 id 列表与规模)
     /// @param bytes [out] 子树文件字节总数;items [out] 子孙条目数
     ZMJSON SubtreeIdsSync(int64_t nodeId, int64_t* bytes = nullptr, int64_t* items = nullptr);
+    /**
+ * @brief 一批条目子树内最新的 update_time(内容指纹)
+ *
+ * 用于判断"缓存下来的东西是否还代表当前内容":子树里任何一条被增删改都会顶起
+ * 相关行的 update_time(父目录由 TouchParentSync 随动),取整棵子树的最大值即可
+ * 发现深层改动。
+ *
+ * @param ids 条目 id 列表
+ * @return 子树内 MAX(update_time);ids 为空或都不可见返回 0
+ */
+    int64_t SubtreeMaxUpdateSync(const std::vector<int64_t>& ids);
     /// @brief 目标空间配额预检(个人空间)
     /// @param addBytes 本次将新增的字节数
     /// @return true 配额足够(公共空间或不限量恒 true)

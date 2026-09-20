@@ -159,6 +159,8 @@ class ZmFileStoreModule
     void Touch(const std::string& path) const;
 
     /// @brief 统计目录占用(递归;返回字节数与条目数)
+    ///
+    /// 物理递归带深度上限(kMaxTreeDepth):目录联接成环时到此为止,不再往下钻。
     void TreeSizeSync(const std::string& path, int64_t& bytes, int64_t& items) const;
 
     // ── 文件读写(工作池线程内;上传落盘与分片合并用) ──
@@ -186,10 +188,12 @@ class ZmFileStoreModule
   private:
     /// @brief Win32 错误码 → ZmErrCode
     static int MapWin32Error(unsigned long err);
-    /// @brief 递归删除实现(工作池线程内)
-    ZmStoreResult RemoveTreeImpl(const std::string& path);
-    /// @brief 递归复制实现(工作池线程内)
-    ZmStoreResult CopyTreeImpl(const std::string& src, const std::string& dst);
+    /// @brief 递归删除实现(工作池线程内;depth 为已下钻层数,超过 kMaxTreeDepth 中止)
+    ZmStoreResult RemoveTreeImpl(const std::string& path, int depth = 0);
+    /// @brief 递归复制实现(工作池线程内;depth 同上)
+    ZmStoreResult CopyTreeImpl(const std::string& src, const std::string& dst, int depth = 0);
+    /// @brief 目录占用统计的递归实现(工作池线程内;depth 同上)
+    void TreeSizeImpl(const std::string& path, int64_t& bytes, int64_t& items, int depth) const;
 
     ZmFileDbModule* m_db = nullptr;
     std::string     m_rootDir; ///< 文件中心根目录(不带尾部分隔符)
