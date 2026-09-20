@@ -604,9 +604,9 @@ void ZmFileHubModule::RegisterRetryExecs()
             int64_t space   = zm_file_row_int(t, "space", 0);
             ZMJSON  created = co_await m_task->Start(
                 zm_file::kTaskStat, uid, space, zm_file_row_str(t, "name"), "", 0, 0, "",
-                [this, ids](ZmTaskHandle& h)
+                [this, ids, uid](ZmTaskHandle& h)
                 {
-                    ZMJSON r = m_node->StatExec(ids, &h);
+                    ZMJSON r = m_node->StatExec(ids, uid, false, &h);
                     if (ZmFileHasError(r))
                         h.Finish(zm_file::kTaskFailed, ZmFileErrorMessage(r));
                     else
@@ -767,7 +767,7 @@ drogon::Task<HttpResponsePtr> ZmFileHubModule::HandleNode(HttpRequestPtr req,
     {
         co_return ZmAuthGateModule::ApiError(400, zm_file_err::kBadRequest, "条目 id 非法");
     }
-    ZMJSON out = co_await m_node->Detail(id);
+    ZMJSON out = co_await m_node->Detail(id, gate.ctx.uid, false);
     if (!ZmFileHasError(out))
     {
         ZMJSON list = ZMJSON::array();
@@ -791,14 +791,15 @@ drogon::Task<HttpResponsePtr> ZmFileHubModule::HandleStat(HttpRequestPtr req)
     if (ids.empty())
         co_return ZmAuthGateModule::ApiError(400, zm_file_err::kBadRequest, "未指定条目");
     ZmOpCtx ctx     = OpOf(gate.ctx, req);
+    int64_t uid     = gate.ctx.uid;
     ZMJSON  payload = ZMJSON::object();
     payload["ids"]  = ids;
     ZMJSON created =
         co_await m_task->Start(zm_file::kTaskStat, gate.ctx.uid, space,
                                "统计 " + std::to_string(ids.size()) + " 项", "", 0, 0, "",
-                               [this, ids](ZmTaskHandle& h)
+                               [this, ids, uid](ZmTaskHandle& h)
                                {
-                                   ZMJSON r = m_node->StatExec(ids, &h);
+                                   ZMJSON r = m_node->StatExec(ids, uid, false, &h);
                                    if (ZmFileHasError(r))
                                        h.Finish(zm_file::kTaskFailed, ZmFileErrorMessage(r));
                                    else
@@ -1202,7 +1203,7 @@ drogon::Task<HttpResponsePtr> ZmFileHubModule::HandleDownloadToken(HttpRequestPt
         co_return ZmAuthGateModule::ApiError(400, zm_file_err::kBadRequest, "未指定条目");
     if (ids.size() == 1)
     {
-        ZMJSON detail = co_await m_node->Detail(ids[0]);
+        ZMJSON detail = co_await m_node->Detail(ids[0], gate.ctx.uid, false);
         if (ZmFileHasError(detail))
             co_return Respond(detail);
         if (zm_file_row_int(detail, "type", 0) == zm_file::kTypeFile)
@@ -1217,8 +1218,11 @@ drogon::Task<HttpResponsePtr> ZmFileHubModule::HandleDownloadToken(HttpRequestPt
             co_return Respond(out);
         }
     }
-    // 多文件或目录:转打包任务
-    int64_t space   = zm_file_row_int(co_await m_node->Detail(ids[0]), "space", 0);
+    // 多文件或目录:转打包任务(空间以首条目的真实归属为准,不能用客户端给的值)
+    ZMJSON first = co_await m_node->Detail(ids[0], gate.ctx.uid, false);
+    if (ZmFileHasError(first))
+        co_return Respond(first);
+    int64_t space   = zm_file_row_int(first, "space", 0);
     ZMJSON  created = co_await m_pack->Create(space, ids, OpOf(gate.ctx, req));
     co_return Respond(created);
 }
@@ -1239,16 +1243,16 @@ ZmFileHubModule::HandleDownload(HttpRequestPtr req, std::string token, std::stri
     // ETag 带上条目 id:同名同大小同时间的两个条目不应共用缓存标识
     if (target.nodeId > 0)
         opts.etagKey = std::to_string(target.nodeId);
-    opts.onFinish     = [this, token]() {
+    opts.onFinish     = [this, slot = target.slotId]() {
         // 传完 / 客户端断开 / 读失败 / 对端停滞:四条路径都汇到这里,名额在此归还
-        m_token->Release(token);
+        m_token->ReleaseSlot(slot);
     };
-    m_token->TrackTransfer(token, req->getConnectionPtr());
+    m_token->TrackTransfer(target.slotId, req->getConnectionPtr());
     auto resp = co_await m_rest->SendFileStreamCoro(req, target.path, target.name, opts);
     // 只有"会走流式发送"的响应才由结束回调归还名额:框架在发送阶段才创建流,
     // 而 304 / 416 / 文件缺失等早退路径根本不建流,结束回调不会触发 —— 这些路径立即归还
     if (!resp || !resp->asyncStreamCallback())
-        m_token->Release(token);
+        m_token->ReleaseSlot(target.slotId);
     if (target.kind == ZmTokenKind::Node || target.kind == ZmTokenKind::Share)
     {
         // 下载行为记审计(只读行为,独立异步写,失败只记警告)

@@ -1,5 +1,8 @@
 #include "modules/module_file_node.h"
 
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
 #include "modules/util/dir_lock.h"
 #include "modules/module_file_audit.h"
 #include "modules/module_file_db.h"
@@ -830,6 +833,13 @@ ZMJSON ZmFileNodeModule::MoveSync(const std::vector<int64_t>& idsIn, int64_t tar
                                              "(SELECT id FROM sub WHERE depth > 0);",
                                          {std::to_string(s.id), std::to_string(targetSpace)}))
                         return false;
+                    // 分享行里记着创建时的空间:主条目换空间后跟着改,
+                    // 否则"我的分享"按空间筛会把它归到旧空间下
+                    if (!db.ExecSync("UPDATE shares SET space = ?1, update_time = ?2 "
+                                     "WHERE node_id = ?3",
+                                     {std::to_string(targetSpace), std::to_string(now),
+                                      std::to_string(s.id)}))
+                        return false;
                 }
                 if (!ZmFileDbModule::ApplyUsageSync(db, s.space, -subBytes, -subItems))
                     return false;
@@ -1113,10 +1123,42 @@ ZMJSON ZmFileNodeModule::CopySync(const std::vector<int64_t>& idsIn, int64_t tar
         std::string dstPath =
             DirPhysicalPath(m_db, m_store, targetSpace, targetDir) + "\\" + finalName;
 
+        // 覆盖语义:同名目标由新副本顶替(裁决阶段已确认双方都是文件)
+        bool    overwrite = hasDup && finalName == s.name &&
+                            conflict == zm_file_conflict::kOverwrite;
+        int64_t dupSize   = 0;
+        if (overwrite)
+        {
+            ZMJSON dupRow = m_db->NodeRowSync(dupId);
+            dupSize       = zm_file_row_int(dupRow, "size", 0);
+        }
+
+        // 覆盖前把目标先搬成同目录临时名(.zmtmp 后缀,一致性同步会跳过),
+        // 复制或落库失败时搬回来 —— 否则回滚只能删掉"已被换成新内容"的目标,
+        // 用户原来的文件就没了
+        std::string backup;
+        if (overwrite)
+        {
+            backup = dstPath + ".zmtmp" + std::to_string(GetCurrentProcessId()) + "." +
+                     std::to_string(GetTickCount64());
+            ZmStoreResult mv = m_store->MovePath(dstPath, backup);
+            if (!mv.ok)
+            {
+                ZMJSON f  = ZMJSON::object();
+                f["id"]   = s.id;
+                f["name"] = s.name;
+                f["code"] = zm_file_err::kFileLocked;
+                failed.push_back(std::move(f));
+                continue;
+            }
+        }
+
         // 物理先复制(空目录同样被复制,不丢层级)
         ZmStoreResult cp = m_store->CopyTreeSync(srcPath, dstPath);
         if (!cp.ok)
         {
+            if (!backup.empty())
+                m_store->MovePath(backup, dstPath);
             m_db->WithTxSync(
                 [&](ZmSqliteDb& db) -> bool
                 {
@@ -1139,12 +1181,6 @@ ZMJSON ZmFileNodeModule::CopySync(const std::vector<int64_t>& idsIn, int64_t tar
         int64_t subItems = 0;
         int64_t subBytes = 0;
         SubtreeStat(m_db, s.id, subItems, subBytes);
-        int64_t overwriteSize = 0;
-        if (hasDup && finalName == s.name && conflict == zm_file_conflict::kOverwrite)
-        {
-            ZMJSON dupRow = m_db->NodeRowSync(dupId);
-            overwriteSize = zm_file_row_int(dupRow, "size", 0);
-        }
         int64_t     now       = ZmSqliteDb::Now();
         std::string fromRel   = ToSlash(RelPathSync(s.id));
         int64_t     newRootId = 0;
@@ -1152,6 +1188,16 @@ ZMJSON ZmFileNodeModule::CopySync(const std::vector<int64_t>& idsIn, int64_t tar
         bool        ok        = m_db->WithTxSync(
             [&](ZmSqliteDb& db) -> bool
             {
+                // 覆盖:先删目标行再插副本 —— 顺序反了会撞 idx_nodes_uniq
+                // (space, parent_id, name WHERE deleted = 0),整笔复制失败
+                if (overwrite)
+                {
+                    if (!db.ExecSync("DELETE FROM nodes WHERE id = ?1",
+                                     {std::to_string(dupId)}))
+                        return false;
+                    if (!ZmFileDbModule::ApplyUsageSync(db, targetSpace, -dupSize, -1))
+                        return false;
+                }
                 std::map<int64_t, int64_t> idMap;
                 for (const auto& r : subRows)
                 {
@@ -1187,16 +1233,6 @@ ZMJSON ZmFileNodeModule::CopySync(const std::vector<int64_t>& idsIn, int64_t tar
                     if (isRoot)
                         newRootId = newId;
                 }
-                if (overwriteSize > 0)
-                {
-                    // 覆盖:目标文件的行与占用一并清除,由新副本顶替
-                    if (!db.ExecSync("DELETE FROM nodes WHERE id = ?1",
-                                                   {std::to_string(dupId)}))
-                        return false;
-                    if (!ZmFileDbModule::ApplyUsageSync(db, targetSpace, -overwriteSize, -1))
-                        return false;
-                    subItems -= 1;
-                }
                 if (!ZmFileDbModule::ApplyUsageSync(db, targetSpace, subBytes, subItems))
                     return false;
                 if (!TouchParentSync(db, targetDir, 1))
@@ -1212,10 +1248,16 @@ ZMJSON ZmFileNodeModule::CopySync(const std::vector<int64_t>& idsIn, int64_t tar
             });
         if (!ok)
         {
-            // 库没落成:把刚复制出来的物理副本清掉
+            // 库没落成:把刚复制出来的物理副本清掉;覆盖场景再把原目标搬回来
             ZmStoreResult back = m_store->RemoveTreeSync(dstPath);
             if (!back.ok)
                 DEFAULT_LOG_ERROR("复制回滚失败 node={} {}", s.id, back.message);
+            if (!backup.empty())
+            {
+                ZmStoreResult rs = m_store->MovePath(backup, dstPath);
+                if (!rs.ok)
+                    DEFAULT_LOG_ERROR("复制回滚还原目标失败 node={} {}", s.id, rs.message);
+            }
             ZMJSON f  = ZMJSON::object();
             f["id"]   = s.id;
             f["name"] = s.name;
@@ -1223,6 +1265,8 @@ ZMJSON ZmFileNodeModule::CopySync(const std::vector<int64_t>& idsIn, int64_t tar
             failed.push_back(std::move(f));
             continue;
         }
+        if (!backup.empty())
+            m_store->RemoveTreeSync(backup); // 覆盖已落库:临时备份无用
         copied.push_back(s.id);
         doneItems += subItems;
         doneBytes += subBytes;

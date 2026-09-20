@@ -118,7 +118,10 @@ drogon::Task<ZMJSON> ZmFileTokenModule::IssueNode(int64_t uid, int64_t nodeId)
                 return ZmFileError(zm_file_err::kFileNotFound, 404, "文件不存在");
             if (zm_file_row_int(row, "type", 0) != zm_file::kTypeFile)
                 return ZmFileError(zm_file_err::kBadRequest, 400, "目录请走打包下载");
-            int64_t       space = zm_file_row_int(row, "space", 0);
+            int64_t space = zm_file_row_int(row, "space", 0);
+            // 令牌只签发给"本人可写空间"里的文件:否则拿到 id 就能换直链下载他人文件
+            if (!ZmFileNodeModule::SpaceWritable(space, uid))
+                return ZmFileError(zm_file_err::kFileNotFound, 404, "文件不存在");
             std::string   path;
             int64_t       sp = space;
             ZmStoreResult pr = m_store->PhysicalPathSync(nodeId, sp, path);
@@ -238,9 +241,9 @@ bool ZmFileTokenModule::Find(const std::string& token, Rec& out)
     return true;
 }
 
-int ZmFileTokenModule::AcquireSlot(Rec& rec)
+int ZmFileTokenModule::AcquireSlot(const std::string& token, Rec& rec, uint64_t& slotOut)
 {
-    // 令牌级与全局闸门(:全局并发直链下载必须有上限,
+    // 令牌级与全局闸门(全局并发直链下载必须有上限,
     // 否则事件循环上的分块读盘会把所有接口一起拖慢)
     if (rec.conns >= zm_file::kTokenMaxConn)
         return 503;
@@ -248,17 +251,23 @@ int ZmFileTokenModule::AcquireSlot(Rec& rec)
         return 503;
     ++rec.conns;
     ++m_activeDownloads;
+    // 每个占用登记一条在途名额:归还按句柄一一对应,
+    // 同一令牌的多条连接各有各的句柄,不会互相顶替
+    Slot s;
+    s.token          = token;
+    s.issuedAt       = ZmSqliteDb::Now();
+    slotOut          = ++m_slotSeq;
+    m_slots[slotOut] = std::move(s);
     return 0;
 }
 
-void ZmFileTokenModule::Release(const std::string& token)
+void ZmFileTokenModule::ReleaseSlotLocked(uint64_t slotId)
 {
-    std::lock_guard<std::mutex> lk(m_mtx);
-    // 先摘在途登记:名额只归还一次(发送结束回调与巡检兜底可能先后到达)
-    auto flight = m_inflight.find(token);
-    if (flight == m_inflight.end())
-        return;
-    m_inflight.erase(flight);
+    auto slot = m_slots.find(slotId);
+    if (slot == m_slots.end())
+        return; // 已归还:重复调用到此为止,计数不会多减
+    const std::string token = slot->second.token;
+    m_slots.erase(slot);
     auto it = m_tokens.find(token);
     if (it != m_tokens.end() && it->second.conns > 0)
         --it->second.conns;
@@ -266,32 +275,48 @@ void ZmFileTokenModule::Release(const std::string& token)
         --m_activeDownloads;
 }
 
-void ZmFileTokenModule::TrackTransfer(const std::string& token,
+void ZmFileTokenModule::ReleaseSlot(uint64_t slotId)
+{
+    if (slotId == 0)
+        return;
+    std::lock_guard<std::mutex> lk(m_mtx);
+    ReleaseSlotLocked(slotId);
+}
+
+void ZmFileTokenModule::TrackTransfer(uint64_t slotId,
                                       const std::weak_ptr<trantor::TcpConnection>& conn)
 {
     std::lock_guard<std::mutex> lk(m_mtx);
-    m_inflight[token] = InFlight{conn, ZmSqliteDb::Now()};
+    auto it = m_slots.find(slotId);
+    if (it != m_slots.end())
+        it->second.conn = conn;
 }
 
 void ZmFileTokenModule::SweepLeaks(int64_t now)
 {
     // 兜底:客户端在"响应开始发送"之前就断开时,平台的发送结束回调不会被触发
-    // (框架在发送阶段才创建流),此时按"连接已消失 / 超出兜底时限"回收名额
-    std::vector<std::string> dead;
+    // (框架在发送阶段才创建流),此时按"连接已消失"回收名额。
+    // 只看连接存活、不按时间判:大文件传输会远超令牌有效期,按时间判会放掉在途名额
+    std::vector<uint64_t> dead;
     {
         std::lock_guard<std::mutex> lk(m_mtx);
-        for (const auto& kv : m_inflight)
+        for (const auto& kv : m_slots)
         {
-            const InFlight& f = kv.second;
-            bool gone = f.conn.expired() || (now - f.issuedAt) > zm_file::kTokenTtlSec + 60;
-            if (gone)
+            const Slot& s = kv.second;
+            // 空登记(Resolve 完成、连接还没挂上)给 5 秒宽限,避免刚占用就被回收
+            if (s.conn.expired() && (now - s.issuedAt) > 5)
                 dead.push_back(kv.first);
         }
     }
-    for (const auto& t : dead)
+    for (uint64_t id : dead)
     {
-        DEFAULT_LOG_WARN("ZmFileTokenModule: 回收泄漏的下载名额 token={}", t.substr(0, 8));
-        Release(t);
+        std::lock_guard<std::mutex> lk(m_mtx);
+        auto it = m_slots.find(id);
+        if (it == m_slots.end())
+            continue;
+        DEFAULT_LOG_WARN("ZmFileTokenModule: 回收泄漏的下载名额 slot={} token={}", id,
+                         it->second.token.substr(0, 8));
+        ReleaseSlotLocked(id);
     }
 }
 
@@ -378,7 +403,8 @@ drogon::Task<ZmTokenTarget> ZmFileTokenModule::Resolve(const std::string& token)
         }
     }
 
-    int gate = 0;
+    int      gate = 0;
+    uint64_t slot = 0;
     {
         std::lock_guard<std::mutex> lk(m_mtx);
         auto                        it = m_tokens.find(token);
@@ -389,12 +415,10 @@ drogon::Task<ZmTokenTarget> ZmFileTokenModule::Resolve(const std::string& token)
             t.message = "下载链接已失效,请重新发起下载";
             co_return t;
         }
-        gate = AcquireSlot(it->second);
-        // 名额占用后立即登记在途:正常由"发送结束回调"归还,异常路径由 SweepLeaks 兜底。
+        gate = AcquireSlot(token, it->second, slot);
+        // 名额占用即登记在途(此处还没有连接,由 TrackTransfer 补挂):
+        // 正常由"发送结束回调"归还,异常路径由 SweepLeaks 兜底。
         // 这样闸门约束的是**在途传输**,而不是"处理中的请求"
-        if (gate == 0)
-            m_inflight[token] =
-                InFlight{std::weak_ptr<trantor::TcpConnection>(), ZmSqliteDb::Now()};
     }
     if (gate != 0)
     {
@@ -412,6 +436,7 @@ drogon::Task<ZmTokenTarget> ZmFileTokenModule::Resolve(const std::string& token)
     t.uid        = rec.uid;
     t.shareToken = rec.shareToken;
     t.taskNo     = rec.taskNo;
+    t.slotId     = slot;
     t.fileSize   = co_await ZmHttpServer::RunOnPool<int64_t>(
         [this, &rec]() -> int64_t { return m_store->FileSize(rec.path); });
     co_return t;
@@ -419,42 +444,18 @@ drogon::Task<ZmTokenTarget> ZmFileTokenModule::Resolve(const std::string& token)
 
 void ZmFileTokenModule::RevokeByPack(const std::string& taskNo)
 {
+    // 只摘令牌:在途传输的名额由各自的结束回调归还(句柄在,不会漏)
     std::lock_guard<std::mutex> lk(m_mtx);
     for (auto it = m_tokens.begin(); it != m_tokens.end();)
     {
         if (it->second.kind == ZmTokenKind::Pack && it->second.taskNo == taskNo)
-        {
-            if (m_activeDownloads > 0 && it->second.conns > 0)
-                m_activeDownloads -= it->second.conns;
             it = m_tokens.erase(it);
-        }
         else
-        {
             ++it;
-        }
     }
 }
 
 void ZmFileTokenModule::EraseLocked(const std::string& token)
 {
     m_tokens.erase(token);
-}
-
-void ZmFileTokenModule::Sweep()
-{
-    std::lock_guard<std::mutex> lk(m_mtx);
-    int64_t                     now = ZmSqliteDb::Now();
-    for (auto it = m_tokens.begin(); it != m_tokens.end();)
-    {
-        if (it->second.expire < now)
-        {
-            if (m_activeDownloads > 0 && it->second.conns > 0)
-                m_activeDownloads -= it->second.conns;
-            it = m_tokens.erase(it);
-        }
-        else
-        {
-            ++it;
-        }
-    }
 }

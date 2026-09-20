@@ -125,13 +125,18 @@ class ZmFileNodeModule
                                       const ZmListQuery& q);
     /// @brief 单条目详情(附相对空间根的路径)
     /// @param nodeId 条目 id
-    /// @return 条目对象;不可见 → {error:{...}}
-    drogon::Task<ZMJSON> Detail(int64_t nodeId);
+    /// @param viewerUid 查看者 uid;条目所属空间对其不可写时按"不存在"处理(不泄露名称与路径)
+    /// @param adminAll true = 不校验归属(管理端,或已另行校验过归属的调用方)
+    /// @return 条目对象;不可见或无权访问 → {error:{...}}
+    drogon::Task<ZMJSON> Detail(int64_t nodeId, int64_t viewerUid, bool adminAll);
     /// @brief 统计条目子树规模(任务执行体;由编排层建任务后在工作池内调用)
     /// @param ids 条目集合
+    /// @param viewerUid 操作者 uid;非本人空间的条目计入 skipped(规模不外泄)
+    /// @param adminAll true = 不校验归属
     /// @param handle 任务句柄(上报进度/响应取消;可为空 = 无任务)
-    /// @return {items,bytes}
-    ZMJSON StatExec(const std::vector<int64_t>& ids, ZmTaskHandle* handle);
+    /// @return {items,bytes,skipped}
+    ZMJSON StatExec(const std::vector<int64_t>& ids, int64_t viewerUid, bool adminAll,
+                    ZmTaskHandle* handle);
 
     // ── 结构变更 ──
     /// @brief 新建目录

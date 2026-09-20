@@ -722,13 +722,16 @@ drogon::Task<ZMJSON> ZmFileNodeModule::SearchInTree(int64_t space,
 // ============================================================================
 // 详情 / 统计
 // ============================================================================
-drogon::Task<ZMJSON> ZmFileNodeModule::Detail(int64_t nodeId)
+drogon::Task<ZMJSON> ZmFileNodeModule::Detail(int64_t nodeId, int64_t viewerUid, bool adminAll)
 {
     co_return co_await ZmHttpServer::RunOnPool<ZMJSON>(
-        [this, nodeId]() -> ZMJSON
+        [this, nodeId, viewerUid, adminAll]() -> ZMJSON
         {
             ZMJSON row;
             if (!VisibleSync(nodeId, row))
+                return ZmFileError(zm_file_err::kNodeNotFound, 404, "条目不存在");
+            // 条目 id 是全库自增的,不校验归属就能被逐个试出来:他人空间的条目与"不存在"同构
+            if (!adminAll && !SpaceWritable(zm_file_row_int(row, "space", 0), viewerUid))
                 return ZmFileError(zm_file_err::kNodeNotFound, 404, "条目不存在");
             ZMJSON item  = NodeView(row);
             item["path"] = RelPathSync(nodeId);
@@ -744,14 +747,22 @@ drogon::Task<ZMJSON> ZmFileNodeModule::Detail(int64_t nodeId)
         });
 }
 
-ZMJSON ZmFileNodeModule::StatExec(const std::vector<int64_t>& ids, ZmTaskHandle* handle)
+ZMJSON ZmFileNodeModule::StatExec(const std::vector<int64_t>& ids, int64_t viewerUid,
+                                  bool adminAll, ZmTaskHandle* handle)
 {
-    int64_t bytes = 0;
-    int64_t items = 0;
+    int64_t bytes   = 0;
+    int64_t items   = 0;
+    ZMJSON  skipped = ZMJSON::array();
     for (size_t i = 0; i < ids.size(); ++i)
     {
         if (handle && handle->Cancelled())
             return ZmFileError(zm_file_err::kBadRequest, 400, "任务已取消");
+        // 归属校验与详情同一口径:他人空间的条目只计数、不参与统计,避免规模外泄
+        if (!adminAll && !SpaceWritable(m_db->NodeSpaceSync(ids[i]), viewerUid))
+        {
+            skipped.push_back(ids[i]);
+            continue;
+        }
         int64_t subBytes = 0;
         ZMJSON  sub      = SubtreeIdsSync(ids[i], &subBytes, nullptr);
         items += static_cast<int64_t>(sub.size());
@@ -759,9 +770,10 @@ ZMJSON ZmFileNodeModule::StatExec(const std::vector<int64_t>& ids, ZmTaskHandle*
         if (handle)
             handle->Progress(bytes, static_cast<int64_t>(i + 1));
     }
-    ZMJSON out   = ZMJSON::object();
-    out["items"] = items;
-    out["bytes"] = bytes;
+    ZMJSON out     = ZMJSON::object();
+    out["items"]   = items;
+    out["bytes"]   = bytes;
+    out["skipped"] = std::move(skipped);
     return out;
 }
 

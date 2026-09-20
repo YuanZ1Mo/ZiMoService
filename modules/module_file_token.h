@@ -52,6 +52,7 @@ struct ZmTokenTarget
     std::string shareToken; ///< 分享标识(仅 Share)
     std::string taskNo;     ///< 任务号(仅 Pack)
     int64_t     fileSize = 0;
+    uint64_t    slotId   = 0; ///< 本次占用的名额句柄(归还时用;0 = 未占用)
 };
 
 class ZmFileTokenModule
@@ -81,36 +82,39 @@ class ZmFileTokenModule
     /**
  * @brief 解析令牌:有效期 + 并发闸门 + 目标复查(可见树 / 文件存在)
  *
- * 成功即占用一个连接名额,调用方**必须**在响应构造完成后调用 Release()。
+ * 成功即占用一个连接名额(结果里的 slotId 即该名额句柄),调用方**必须**在
+ * 响应构造完成后调用 ReleaseSlot(slotId) 归还。
  *
  * @param token 令牌串
  * @return 目标信息;失败经 status/code/message 表达
  */
     drogon::Task<ZmTokenTarget> Resolve(const std::string& token);
 
-    /// @brief 释放连接名额(与 Resolve 成对调用)
-    void Release(const std::string& token);
-
-    /// @brief 登记一次在途传输(供巡检回收;Resolve 成功后由调用方登记)
+    /// @brief 登记在途传输:把连接弱引用挂到名额上(供巡检回收)
     ///
     /// 正常路径靠"发送结束回调"归还名额;但若客户端在响应开始发送前就断开,
-    /// 回调不会被触发(框架在发送阶段才造流),名额会漏。这里记下连接弱引用与起始时刻,
-    /// 由 SweepLeaks 兜底回收。
+    /// 回调不会被触发(框架在发送阶段才造流),名额会漏。这里补上连接弱引用,
+    /// 由 SweepLeaks 按"连接是否还在"兜底回收。
     ///
-    /// @param token 令牌
-    /// @param conn  连接弱引用(连接所属事件循环之外只判存活,不读其状态)
-    void TrackTransfer(const std::string& token,
-                       const std::weak_ptr<trantor::TcpConnection>& conn);
+    /// @param slotId 名额句柄(Resolve 返回)
+    /// @param conn   连接弱引用(跨事件循环只判存活,不读其状态)
+    void TrackTransfer(uint64_t slotId, const std::weak_ptr<trantor::TcpConnection>& conn);
 
-    /// @brief 回收泄漏的名额:连接已断或超出兜底时限的在途登记(周期调用)
+    /// @brief 归还一个在途名额(幂等:同一句柄重复调用只归还一次)
+    /// @param slotId 名额句柄
+    void ReleaseSlot(uint64_t slotId);
+
+    /// @brief 回收泄漏的名额(周期调用)
+    ///
+    /// 判定只看"连接是否已消失":连接还在、传输还在跑,名额就该继续占着 ——
+    /// 大文件传输会远超令牌有效期,按时间判会把在途名额提前放掉。
+    /// 连接弱引用为空的登记(Resolve 之后、进入发送之前)给一段宽限期。
+    ///
     /// @param now 当前 unix 秒
     void SweepLeaks(int64_t now);
 
     /// @brief 吊销某打包任务的全部令牌(压缩包被清理时)
     void RevokeByPack(const std::string& taskNo);
-
-    /// @brief 清理过期令牌(周期调用;顺带回收计数)
-    void Sweep();
 
     /// @brief 拼直链地址
     /// @param base 站点基址(如 https://host:39441)
@@ -142,29 +146,37 @@ class ZmFileTokenModule
 
     /// @return 新令牌串(32 字符十六进制)
     static std::string NewToken();
-    /// @brief 占用名额(令牌级 ≤5、全局 ≤100)
+    /// @brief 占用名额(令牌级 ≤5、全局 ≤100),成功时登记一个在途名额
+    /// @param token 令牌(名额归还时按它回落令牌级计数)
+    /// @param rec 令牌记录
+    /// @param slotOut [out] 成功时填名额句柄
     /// @return 0 = 成功;否则 HTTP 状态码
-    int AcquireSlot(Rec& rec);
+    int AcquireSlot(const std::string& token, Rec& rec, uint64_t& slotOut);
     /// @brief 查找记录(不加名额);不存在返回 false
     bool Find(const std::string& token, Rec& out);
     /// @brief 定向找令牌名(用于按 taskNo 吊销)
     void EraseLocked(const std::string& token);
+    /// @brief 归还名额实现(调用方须持 m_mtx)
+    void ReleaseSlotLocked(uint64_t slotId);
 
     ZmFileStoreModule* m_store = nullptr;
     ZmFileNodeModule*  m_node  = nullptr;
     ZmFileTaskModule*  m_task  = nullptr;
 
-    /// 在途传输登记(令牌 → 连接弱引用 + 起始时刻)
-    struct InFlight
+    /// 在途名额:一个下载请求一条,一一对应归还(旧实现按令牌登记,
+    /// 同一令牌的多条连接会互相覆盖,导致除首条外的名额永不归还)
+    struct Slot
     {
+        std::string                           token;
         std::weak_ptr<trantor::TcpConnection> conn;
         int64_t                               issuedAt = 0;
     };
 
-    std::mutex                                m_mtx;
-    std::unordered_map<std::string, Rec>      m_tokens;
-    std::unordered_map<std::string, InFlight> m_inflight;
-    int                                       m_activeDownloads = 0; ///< 全局在服连接数
+    std::mutex                           m_mtx;
+    std::unordered_map<std::string, Rec> m_tokens;
+    std::unordered_map<uint64_t, Slot>   m_slots;
+    uint64_t                             m_slotSeq = 0; ///< 名额句柄发号
+    int                                  m_activeDownloads = 0; ///< 全局在服连接数
 };
 
 #endif // ZM_MODULE_FILE_TOKEN_H

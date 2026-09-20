@@ -941,7 +941,7 @@ drogon::Task<ZMJSON> ZmFileShareModule::ListDir(const std::string& token, int64_
     {
         ZMJSON gate = co_await ZmHttpServer::RunOnPool<ZMJSON>(
             [this, row, dirId, credOk, viewerUid, &code, &message, &roots, &multi,
-             &rootId]() -> ZMJSON
+             &rootId, &space]() -> ZMJSON
             {
                 ZMJSON o      = ZMJSON::object();
                 int    status = CheckUsableSync(row, code, message);
@@ -990,6 +990,11 @@ drogon::Task<ZMJSON> ZmFileShareModule::ListDir(const std::string& token, int64_
                         }
                     }
                 }
+                // 分享行里的 space 是创建时记下的:条目被移动到别的空间后就不作数了。
+                // 列目录按条目**当前**所属空间走,否则 List 会因空间不符直接 404
+                int64_t listId = (dirId == 0) ? rootId : dirId;
+                int64_t curSp  = m_db->NodeSpaceSync(listId);
+                space          = curSp >= 0 ? curSp : zm_file_row_int(row, "space", 0);
                 o["ok"] = true;
                 return o;
             });
@@ -997,7 +1002,6 @@ drogon::Task<ZMJSON> ZmFileShareModule::ListDir(const std::string& token, int64_
             co_return ZmFileError(
                 code.c_str(), static_cast<int>(zm_file_row_int(gate, "status", 404)), message);
         shareId = zm_file_row_int(row, "id", 0);
-        space   = zm_file_row_int(row, "space", 0);
     }
 
     ViewCtx v;
@@ -1253,20 +1257,24 @@ drogon::Task<ZMJSON> ZmFileShareModule::Download(const std::string&          tok
                     }
                 }
                 o["ok"] = true;
+                // 打包产物落在"条目当前所属空间"的缓存目录:分享行里的空间可能已陈旧
+                o["space"] = m_db->NodeSpaceSync(ids[0]);
                 return o;
             });
         if (!zm_json_get_bool(gate, "ok", false))
             co_return ZmFileError(
                 code.c_str(), static_cast<int>(zm_file_row_int(gate, "status", 404)), message);
         shareId  = zm_file_row_int(row, "id", 0);
-        space    = zm_file_row_int(row, "space", 0);
         ownerUid = zm_file_row_int(row, "uid", 0);
+        int64_t curSp = zm_file_row_int(gate, "space", -1);
+        space = curSp >= 0 ? curSp : zm_file_row_int(row, "space", 0);
     }
 
     // 单文件:直接换取下载令牌
     if (ids.size() == 1)
     {
-        ZMJSON detail = co_await m_node->Detail(ids[0]);
+        // 分享路径的归属已由 InShareTreeSync 校验过:这里不按查看者再判一次
+        ZMJSON detail = co_await m_node->Detail(ids[0], 0, true);
         if (ZmFileHasError(detail))
             co_return detail;
         if (zm_file_row_int(detail, "type", 0) == zm_file::kTypeFile)

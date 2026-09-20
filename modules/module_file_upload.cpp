@@ -182,6 +182,10 @@ ZMJSON ZmFileUploadModule::FinalizeSync(const ZmOpCtx& ctx, int64_t space, int64
     if (!ZmFileNodeModule::ValidateName(name, msg))
     {
         m_store->RemoveFileSync(tmpPath);
+        // 任务在本函数之前就已建行:每个提前返回都得收尾,否则它一直挂在"进行中",
+        // 白占单用户上传额度(三次之后该用户所有上传都被 429 挡住)
+        if (!taskNo.empty())
+            m_task->SetStatusSync(taskNo, zm_file::kTaskFailed, msg);
         return ZmFileError(zm_file_err::kNameInvalid, 400, msg);
     }
     if (dirId != 0)
@@ -342,6 +346,10 @@ drogon::Task<ZMJSON> ZmFileUploadModule::Simple(const ZmOpCtx& ctx, int64_t spac
         {
             if (!ZmFileNodeModule::SpaceWritable(space, ctx.uid))
                 return ZmFileError(zm_file_err::kPermDenied, 403, "无权写入该空间");
+            // 名称先校验:不合规就别建任务(建了再回退会留下挂着的"进行中"任务)
+            std::string nameMsg;
+            if (!ZmFileNodeModule::ValidateName(name, nameMsg))
+                return ZmFileError(zm_file_err::kNameInvalid, 400, nameMsg);
             if (static_cast<int64_t>(body.size()) > kSimpleMax)
                 return ZmFileError(zm_file_err::kFileTooLarge, 413, "文件过大,请使用分片上传");
             // 个人空间懒创建(行 + 目录):缺行会让配额校验失去依据
@@ -803,7 +811,7 @@ drogon::Task<ZMJSON> ZmFileUploadModule::Retry(const ZMJSON& oldTask)
 
 void ZmFileUploadModule::SweepStaleTasks(int64_t now)
 {
-    // 有 ref_id 的才是分片上传任务;Simple 的 ref_id 为空,不受影响
+    // 分片上传:会话已不在(过期/被清)而任务还挂着"排队中/进行中"的,置已中断
     m_db->ExecSync(
         "UPDATE transfer_tasks SET status = ?1, end_time = ?2, error = '上传已中断' "
         "WHERE type = ?3 AND status IN (?4,?5) AND ref_id <> '' AND ref_id NOT IN "
@@ -812,6 +820,15 @@ void ZmFileUploadModule::SweepStaleTasks(int64_t now)
          std::to_string(zm_file::kTaskUpload), std::to_string(zm_file::kTaskQueued),
          std::to_string(zm_file::kTaskRunning), std::to_string(zm_file::kUploadRunning),
          std::to_string(now)});
+    // 单请求上传(无 ref_id、无会话可查):按"远超有效期仍未收尾"兜底,
+    // 否则漏收尾的任务会一直占着单用户上传额度
+    m_db->ExecSync(
+        "UPDATE transfer_tasks SET status = ?1, end_time = ?2, error = '上传已中断' "
+        "WHERE type = ?3 AND status IN (?4,?5) AND ref_id = '' AND create_time < ?6",
+        {std::to_string(zm_file::kTaskInterrupted), std::to_string(now),
+         std::to_string(zm_file::kTaskUpload), std::to_string(zm_file::kTaskQueued),
+         std::to_string(zm_file::kTaskRunning),
+         std::to_string(now - zm_file::kUploadTtlSec)});
 }
 
 void ZmFileUploadModule::PurgeExpired(int64_t now)

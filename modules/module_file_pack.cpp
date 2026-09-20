@@ -221,15 +221,22 @@ drogon::Task<ZMJSON> ZmFilePackModule::Create(int64_t space, const std::vector<i
     if (uniq.empty())
         co_return ZmFileError(zm_file_err::kBadRequest, 400, "未指定待打包条目");
 
+    int64_t uid = ctx.uid;
     for (int64_t id : uniq)
     {
-        // 逐条可见性 + 子树规模(含目录在内的条目数,打包按条目推进)
+        // 逐条可见性 + 归属 + 子树规模(含目录在内的条目数,打包按条目推进)
         ZMJSON stat = co_await ZmHttpServer::RunOnPool<ZMJSON>(
-            [this, id]() -> ZMJSON
+            [this, id, uid]() -> ZMJSON
             {
                 ZMJSON row;
                 ZMJSON out = ZMJSON::object();
                 if (!m_node->VisibleSync(id, row))
+                {
+                    out["ok"] = false;
+                    return out;
+                }
+                // 逐条校验归属:入参 space 只是客户端的说法,条目真实空间才作数
+                if (!ZmFileNodeModule::SpaceWritable(zm_file_row_int(row, "space", 0), uid))
                 {
                     out["ok"] = false;
                     return out;
