@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>服务器音频 · 05 播放链路与规格 — ZiMo 服务器音频设计稿</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="audio.css">
+<style>
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(400px,1fr));gap:var(--sp-5);align-items:start}
+  /* 时间轴图 */
+  .tl{margin-top:var(--sp-4)}
+  .tl-bar{display:flex;height:38px;border-radius:var(--r-md);overflow:hidden;border:1px solid var(--color-border-soft)}
+  .tl-seg{display:flex;align-items:center;justify-content:center;font-size:var(--fs-cap);font-weight:700;color:#fff}
+  .tl-played{background:linear-gradient(135deg,#0369A1,#0284C7);flex:0 0 26%}
+  .tl-buf{background:rgba(6,182,212,.32);color:#0E7490;flex:0 0 48%;border-left:1px dashed rgba(255,255,255,.6);border-right:1px dashed rgba(255,255,255,.6)}
+  [data-theme="dark"] .tl-buf{color:#7DD3FC;background:rgba(56,189,248,.24)}
+  .tl-edge{background:linear-gradient(135deg,#06B6D4,#EC4899);flex:1}
+  .tl-legend{display:flex;justify-content:space-between;font-size:var(--fs-cap);color:var(--color-text-3);margin-top:6px}
+  .tl-note{margin-top:var(--sp-3);padding:8px 12px;border-radius:var(--r-md);background:var(--color-primary-soft);
+    color:var(--color-primary);font-size:var(--fs-cap);font-weight:600;display:flex;align-items:center;gap:8px}
+  /* 状态机 */
+  .sm{display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp-2);margin-top:var(--sp-3)}
+  .sm-node{padding:9px 13px;border-radius:var(--r-md);border:1.5px solid var(--color-border);background:var(--color-card);font-weight:700;font-size:var(--fs-cap)}
+  .sm-node.on{border-color:var(--color-primary);background:var(--color-primary-soft);color:var(--color-primary)}
+  .sm-node.err{border-color:var(--color-warning);background:var(--color-warning-bg);color:var(--color-warning)}
+  .sm-ar{cursor:default;color:var(--color-text-3);display:flex;align-items:center;gap:6px;font-size:var(--fs-cap)}
+  .risk{border-left:4px solid var(--color-warning);background:var(--color-warning-bg);border-radius:var(--r-md);padding:var(--sp-4)}
+  .risk b{color:var(--color-warning)}
+  .check{display:flex;gap:8px;align-items:flex-start;font-size:var(--fs-cap);color:var(--color-text-2);line-height:20px}
+  .check svg{flex:none;margin-top:2px}
+</style>
+</head>
+<body>
+<div class="mock-bar">
+  <span class="pg">服务器音频 · 05 播放链路与规格</span><span class="path">交接文档 §3 硬约束 / §6 播放器要点</span>
+  <span class="spacer"></span>
+  <a href="04-listeners.html">← 收听信息</a>
+  <a href="index.html">总览</a>
+  <button class="theme-btn" id="themeBtn">🌗 亮/暗</button>
+</div>
+
+<main class="workspace" style="margin-left:0">
+  <div class="page-head">
+    <div>
+      <h1>播放链路与规格</h1>
+      <div class="sub">界面只有一屏,难度全在播放器:用 MediaSource 喂分片、交给媒体元素播 —— 写错一处就失去后台/锁屏续播能力</div>
+    </div>
+    <div class="row gap-2"><span class="badge badge-info">零新依赖:原生 MSE + &lt;audio&gt; + MediaSession</span></div>
+  </div>
+
+  <!-- ============ 链路 ============ -->
+  <div class="card card-pad">
+    <div class="card-title mb-4" style="margin-bottom:var(--sp-4)">起播链路(顺序不能变)</div>
+    <div class="chain">
+      <div class="chain-step"><span class="no">1</span><div><b>握手 <code>GET /init</code></b><p>自写 <code>fetch</code> + <code>credentials:'include'</code>、<b>不设超时</b>(不走 client.js:它强制 JSON 且默认 15s)。响应体 = 二进制初始化段;流描述在响应头:<code>X-Stream-Id</code> / <code>X-Segment-Ms</code> / <code>X-Start-Seq</code> / <code>X-Live-Seq</code> / <code>X-Sample-Rate</code> / <code>X-Channels</code> / <code>X-Bitrate</code>。失败:503 / 401 / 403。</p></div></div>
+      <div class="chain-step"><span class="no">2</span><div><b>建媒体元素与 MediaSource</b><p><code>new MediaSource()</code> → <code>audio.src = URL.createObjectURL(ms)</code> → 等 <code>sourceopen</code>(once)→ <code>addSourceBuffer('audio/webm; codecs="opus"')</code>。能力检测在点开始之前:<code>MediaSource.isTypeSupported(...)</code>。</p></div></div>
+      <div class="chain-step"><span class="no">3</span><div><b>追加初始化段</b><p><code>sb.appendBuffer(init)</code>,等 <code>updateend</code> 再进下一步。追加前确认 <code>mediaSource.readyState === 'open'</code>。</p></div></div>
+      <div class="chain-step"><span class="no">4</span><div><b>拉片循环 <code>GET /segment</code></b><p>参数 <code>stream / seq / count(≤5) / keepalive / client</code>;<code>seq</code> 从 <code>X-Live-Seq</code> 起(<b>不是</b> X-Start-Seq:那会先听到十秒前的声音)。响应体拆批:<code>[片数 u32 LE][长度 u32 LE][片字节] × N</code>;N 可为 0(正常)。响应头给 <code>X-Live-Seq</code> / <code>X-Edge-Ms</code> / <code>X-Next-Poll-Ms</code>。</p></div></div>
+      <div class="chain-step"><span class="no">5</span><div><b>串行追加分片</b><p>逐片 <code>appendBuffer</code>,<b>等上一片 updateend 再追加下一片</b>(并发追加抛 InvalidStateError);<code>seq += N</code>,到边缘则按 <code>X-Next-Poll-Ms</code> 等待。</p></div></div>
+      <div class="chain-step"><span class="no">6</span><div><b>起播</b><p>缓冲够 2~3 片后:<code>audio.currentTime = audio.buffered.start(0)</code>(晚加入时缓冲起点不是 0)→ <code>play()</code>,且必须在<b>用户手势</b>内调用。随后挂 MediaSession 元数据与动作。</p></div></div>
+    </div>
+  </div>
+
+  <div class="grid2" style="margin-top:var(--sp-5)">
+    <!-- ============ 延迟与缓冲 ============ -->
+    <div class="card card-pad">
+      <div class="card-title mb-3">延迟口径与缓冲目标</div>
+      <div class="tl">
+        <div class="tl-bar">
+          <div class="tl-seg tl-played">已播 currentTime</div>
+          <div class="tl-seg tl-buf">已缓冲(已拉未播)</div>
+          <div class="tl-seg tl-edge">直播边缘 X-Edge-Ms</div>
+        </div>
+        <div class="tl-legend"><span>采集起点 0</span><span>同一时间基(毫秒)</span><span>片号 × 片长</span></div>
+        <div class="tl-note">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 7v5l4 2"/><circle cx="12" cy="12" r="9"/></svg>
+          延迟(ms) = <b>X-Edge-Ms − audio.currentTime × 1000</b> · 每秒刷新一次进入参数行;200~500ms 属正常
+        </div>
+      </div>
+      <table class="spec-tbl" style="margin-top:var(--sp-4)">
+        <thead><tr><th>场景</th><th>目标缓冲</th><th>count</th><th>keepalive</th><th>节奏</th></tr></thead>
+        <tbody>
+          <tr><td>前台播放</td><td>2~3 片(≈300ms)</td><td><code>3</code></td><td><code>5</code></td><td>按 <code>X-Next-Poll-Ms</code></td></tr>
+          <tr><td>切后台 / 锁屏</td><td>15~30s</td><td><code>5</code></td><td><code>45</code></td><td>拉到目标后每 3~5s 一轮</td></tr>
+          <tr><td>回到前台</td><td>削回 2~3 片</td><td><code>3</code></td><td><code>5</code></td><td>丢弃超出目标的已缓冲数据</td></tr>
+          <tr><td>暂停</td><td>—</td><td><code>1</code></td><td><code>60</code></td><td>不拉片,保留流</td></tr>
+          <tr><td>停止</td><td>—</td><td>—</td><td><code>0</code></td><td>离场并释放媒体元素</td></tr>
+        </tbody>
+      </table>
+      <div class="cap muted mt-3" style="line-height:20px">
+        <b>削缓冲退化</b>:<code>sourceBuffer.remove()</code> 与 append 交错报错时,退化为"保留数据、把 currentTime 跳到边缘附近"——
+        体验优先,不为削缓冲把播放搞崩。<b>X-Next-Poll-Ms 规则</b>:取完边缘=片长(100ms);取满 count=0(继续追平);落后超窗口一半=0,由客户端自行重排。
+      </div>
+    </div>
+
+    <!-- ============ 状态机 ============ -->
+    <div class="card card-pad">
+      <div class="card-title mb-3">播放状态机(界面文案的唯一来源)</div>
+      <div class="sm">
+        <span class="sm-node on">idle 聆听服务器</span>
+        <span class="sm-ar">—点击开始→</span>
+        <span class="sm-node">connecting 连接中…</span>
+        <span class="sm-ar">—playing 事件→</span>
+        <span class="sm-node on">playing 正在播放</span>
+      </div>
+      <div class="sm">
+        <span class="sm-node">paused 已暂停</span>
+        <span class="sm-ar">↔ 暂停 / 恢复(保留流,不重新握手)</span>
+      </div>
+      <div class="sm">
+        <span class="sm-node err">reconnecting 连接中断,重连中…</span>
+        <span class="sm-ar">←拉片连续失败— </span>
+        <span class="sm-node">playing</span>
+      </div>
+      <div class="sm">
+        <span class="sm-node err">no-device 服务器无可用音频设备</span>
+        <span class="sm-ar">←握手或拉片 503— · 回到空闲可重试</span>
+      </div>
+      <div class="annotate mt-4" style="margin-top:var(--sp-4)">
+        <b>为什么"暂停"不是第六个状态</b> · 需求把 paused 归入 playing 的缓冲策略(keepalive=60 保留流),
+        界面只多一行副文案"保留连接 · 60 秒内可无缝续听";状态机仍按五态实现,便于与验收表逐条对齐。
+      </div>
+      <div class="check mt-4" style="margin-top:var(--sp-4)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-success)" stroke-width="2.4" stroke-linecap="round"><path d="M4 12.6 9.4 18 20 6.4"/></svg>
+        <span>切走(keep-alive)不销毁页面:<b>播放必须继续</b>,<code>onDeactivated</code> 只停特效动画,<code>onActivated</code> 恢复并重算画布。</span>
+      </div>
+      <div class="check" style="margin-top:6px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-success)" stroke-width="2.4" stroke-linecap="round"><path d="M4 12.6 9.4 18 20 6.4"/></svg>
+        <span>释放路径固定:<code>ms.endOfStream()</code> → <code>audio.removeAttribute('src')</code> → <code>URL.revokeObjectURL()</code> → <code>audio.load()</code>。</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 硬约束 ============ -->
+  <div class="card card-pad" style="margin-top:var(--sp-5)">
+    <div class="card-title mb-3">硬约束速览(违反即打回)</div>
+    <div class="sa-tips-grid" style="grid-template-columns:repeat(auto-fit,minmax(300px,1fr))">
+      <div class="check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="2.6" stroke-linecap="round"><path d="M4 12.6 9.4 18 20 6.4"/></svg><span>路由 = 目录名:<code>modules/server-audio-stream/</code> 自动挂 <code>/portal/server-audio-stream</code>;权限点 <code>serverAudioStream</code>。</span></div>
+      <div class="check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="2.6" stroke-linecap="round"><path d="M4 12.6 9.4 18 20 6.4"/></svg><span>声音<b>必须</b>交给 <code>&lt;audio&gt;</code> 元素(MSE 喂分片);不许 WebCodecs 自解码。</span></div>
+      <div class="check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-danger)" stroke-width="2.6" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg><span>禁止 <code>AudioContext</code> / <code>createMediaElementSource</code> / <code>AnalyserNode</code> —— 接进 WebAudio 后台播放直接失效。</span></div>
+      <div class="check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="2.6" stroke-linecap="round"><path d="M4 12.6 9.4 18 20 6.4"/></svg><span><code>/init</code> 与 <code>/segment</code> 不走 <code>api/client.js</code>:自写 fetch 拿二进制与响应头,不设超时。</span></div>
+      <div class="check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="2.6" stroke-linecap="round"><path d="M4 12.6 9.4 18 20 6.4"/></svg><span><code>appendBuffer</code> 串行 + 追加前确认 <code>readyState==='open'</code>;起播用 <code>buffered.start(0)</code> 定位。</span></div>
+      <div class="check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="2.6" stroke-linecap="round"><path d="M4 12.6 9.4 18 20 6.4"/></svg><span>切后台是<b>降频续拉</b>(不是停止);<code>keepalive</code> 按档位传:前台 5 / 后台 45 / 暂停 60 / 停止 0。</span></div>
+      <div class="check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="2.6" stroke-linecap="round"><path d="M4 12.6 9.4 18 20 6.4"/></svg><span>必须设 MediaSession 元数据与 play/pause/stop 动作;不设 <code>setPositionState</code>。</span></div>
+      <div class="check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="2.6" stroke-linecap="round"><path d="M4 12.6 9.4 18 20 6.4"/></svg><span>本模块不引第三方库;只改 <code>frontend/</code> 下的文件;交付前 <code>npm run build</code> 必须通过。</span></div>
+      <div class="check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="2.6" stroke-linecap="round"><path d="M4 12.6 9.4 18 20 6.4"/></svg><span>特效按播放时间驱动(画布,DPR 计算);<code>prefers-reduced-motion</code> 时不动画,功能不变。</span></div>
+      <div class="check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="2.6" stroke-linecap="round"><path d="M4 12.6 9.4 18 20 6.4"/></svg><span>侧边栏图标在 <code>PortalLayout.icoOf()</code> 补 <code>serverAudioStream</code> 分支(声波/喇叭,见下)。</span></div>
+    </div>
+  </div>
+
+  <!-- ============ 联调风险 ============ -->
+  <div class="grid2" style="margin-top:var(--sp-5)">
+    <div class="risk">
+      <b>联调风险(最先排查):自定义响应头读出来是 null</b>
+      <div class="cap" style="margin-top:8px;line-height:21px;color:var(--color-text-2)">
+        页面在 80/443、接口在 39441,属<b>同站跨端口</b> —— 浏览器的 CORS 判定仍然生效。基座的 CORS 回显只下发
+        <code class="kbd">Access-Control-Allow-Origin</code> 与 <code class="kbd">Allow-Credentials</code>;
+        <code>X-Stream-Id</code> 这类自定义头属"非安全列头",<b>没有 <code class="kbd">Access-Control-Expose-Headers</code> 时前端读到 null 且不报错</b>。
+        <div style="margin-top:8px">排查方向:<b>先抓包确认响应里有没有该头</b>,不要加本地代理"绕过";缺口按交接文档 §8 记录,由服务端侧补齐,前端不改契约、不改服务端代码。</div>
+        <div style="margin-top:8px"><b>前端侧的自保</b>:握手成功后若 <code>X-Stream-Id</code> 为空,视为"契约未就绪"直接报错并给出可诊断的提示(不静默继续),避免表现成"播放没反应"。</div>
+      </div>
+    </div>
+    <div class="card card-pad">
+      <div class="card-title mb-3">服务端未就绪时的开发脚手架</div>
+      <div class="check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="2.6" stroke-linecap="round"><path d="M4 12.6 9.4 18 20 6.4"/></svg><span>向服务端要里程碑 1 产出的样例:<code>init.webm</code> + 一串簇文件,放 <code>frontend/mock-audio/</code>。</span></div>
+      <div class="check" style="margin-top:6px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="2.6" stroke-linecap="round"><path d="M4 12.6 9.4 18 20 6.4"/></svg><span>开发用 Node 静态服务(约 60 行)按 §5 契约返回、响应头照抄、按 seq/count 切片。</span></div>
+      <div class="check" style="margin-top:6px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="2.6" stroke-linecap="round"><path d="M4 12.6 9.4 18 20 6.4"/></svg><span><b>mock 只是脚手架</b>:不进交付物、不为迁就 mock 改契约,联调时切回真服务。</span></div>
+      <div class="sa-divider"></div>
+      <div class="cap muted" style="line-height:20px">
+        预算参考:单路 ≈8KB/s、16 路 ≈1Mbps;服务端内存 0.5MB(60s 环形缓冲)与听众数无关;
+        采集+编码+封装单线程,典型单核占用 &lt;5%。这些数字用于联调时判断"是否异常",不是界面文案。
+      </div>
+    </div>
+  </div>
+</main>
+
+<script src="audio.js"></script>
+<script>SA.initMockThemeBtn();</script>
+</body>
+</html>

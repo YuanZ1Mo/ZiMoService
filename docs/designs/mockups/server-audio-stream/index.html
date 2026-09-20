@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ZiMo 服务器音频 · 前端设计预览总览</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="audio.css">
+<style>
+  .wrap{max-width:1180px;margin:0 auto;padding:var(--sp-8) var(--sp-6) var(--sp-12)}
+  .cover{border-radius:24px;padding:var(--sp-10);color:#fff;position:relative;overflow:hidden;box-shadow:var(--shadow-pop);
+    background:radial-gradient(120% 90% at 12% 0%,rgba(56,189,248,.42),transparent 58%),linear-gradient(140deg,#0B2A47 0%,#0B1220 62%,#2A1030 100%)}
+  .cover::after{content:"";position:absolute;width:420px;height:420px;border-radius:50%;background:radial-gradient(circle,rgba(34,211,238,.22),transparent 70%);top:-150px;right:-90px}
+  .cover h1{font-size:34px;line-height:44px;font-weight:800;letter-spacing:.5px}
+  .cover p{opacity:.92;margin-top:10px;max-width:760px;color:#CBD5E1}
+  .page-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(315px,1fr));gap:var(--sp-4)}
+  .page-card{padding:var(--sp-5);cursor:pointer;position:relative;overflow:hidden}
+  .page-card .thumb{height:118px;border-radius:var(--r-md);margin-bottom:var(--sp-4);position:relative;overflow:hidden;
+    border:1px solid var(--color-border-soft);background:radial-gradient(110% 90% at 50% 0%,rgba(56,189,248,.24),transparent 62%),linear-gradient(162deg,#0B2A47,#0B1220 72%);
+    display:flex;align-items:center;justify-content:center}
+  .page-card .thumb .mini-disc{width:56px;height:56px;border-radius:50%;background:linear-gradient(150deg,#0284C7,#06B6D4 72%,#EC4899);
+    box-shadow:0 12px 26px -10px rgba(2,132,199,.9);display:flex;align-items:center;justify-content:center;color:#fff}
+  .page-card h3{font-size:var(--fs-h2);line-height:var(--lh-h2)}
+  .page-card .path{font-family:Consolas,monospace;font-size:12px;color:var(--color-primary)}
+  .page-card .arr{position:absolute;right:16px;top:50%;transform:translateY(-50%);opacity:0;transition:all var(--dur) var(--ease);color:var(--color-primary)}
+  .page-card:hover .arr{opacity:1;transform:translateY(-50%) translateX(4px)}
+  .sec{margin-top:var(--sp-10)}
+  .sec>h2{font-size:22px;margin-bottom:6px}
+  .sec>.sub{color:var(--color-text-2);margin-bottom:var(--sp-5);font-size:var(--fs-body)}
+  .st-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:var(--sp-3)}
+  .st-item{padding:var(--sp-4);border-radius:var(--r-lg);border:1px solid var(--color-border-soft);background:var(--color-card);text-align:center}
+  .st-item .d{width:58px;height:58px;border-radius:50%;margin:0 auto var(--sp-3);display:flex;align-items:center;justify-content:center;color:#fff}
+  .st-item b{display:block;font-size:var(--fs-body)}
+  .st-item span{font-size:var(--fs-cap);color:var(--color-text-3)}
+  .rule-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:var(--sp-4)}
+  .rule{padding:var(--sp-4) var(--sp-5)}
+  .rule b{display:flex;align-items:center;gap:8px;font-size:var(--fs-body)}
+  .rule p{font-size:var(--fs-cap);color:var(--color-text-2);margin-top:6px;line-height:20px}
+  .rule .no{width:22px;height:22px;border-radius:8px;background:var(--grad-brand);color:#fff;font-size:12px;display:inline-flex;align-items:center;justify-content:center;font-family:var(--font-num);flex:none}
+  .files{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:var(--sp-4)}
+  .file-list{display:flex;flex-direction:column;gap:8px;margin-top:var(--sp-3)}
+  .file-row{display:flex;align-items:center;gap:10px;font-size:var(--fs-cap);padding:8px 10px;border-radius:var(--r-md);background:var(--color-border-soft)}
+  .file-row code{font-family:Consolas,monospace;color:var(--color-text);font-size:12px}
+  .file-row .act{margin-left:auto;font-weight:700;color:var(--color-primary)}
+  .file-row .act.new{color:var(--color-success)}
+</style>
+</head>
+<body>
+<div class="mock-bar">
+  <span class="pg">ZiMo 服务器音频 · 前端设计预览</span><span class="path">Design Mockups · v1 · 2026-09-20</span>
+  <span class="spacer"></span>
+  <button class="theme-btn" id="themeBtn">🌗 亮/暗主题</button>
+</div>
+
+<div class="wrap">
+  <!-- 封面 -->
+  <div class="cover anim-fade-up">
+    <h1>ZiMo 服务器音频 · 前端设计方案</h1>
+    <p>聆听服务器正在播放的声音:一个单屏页面 + 一个播放器类 + 一份接口封装。
+       界面极简 —— 深色舞台里的圆盘主按钮、一行参数、一行收听信息、一个音量滑杆;
+       难度全在播放器:用 MediaSource 喂分片、交给媒体元素播,锁屏与切后台不断声。</p>
+    <div class="row gap-3 mt-6" style="position:relative;z-index:1;flex-wrap:wrap">
+      <span class="badge" style="background:rgba(255,255,255,.16);color:#fff">Vue 3 + Vite SPA · 零新依赖</span>
+      <span class="badge" style="background:rgba(255,255,255,.16);color:#fff">/portal/server-audio-stream</span>
+      <span class="badge" style="background:rgba(255,255,255,.16);color:#fff">媒体元素 + MSE(WebM/Opus)</span>
+      <span class="badge" style="background:rgba(255,255,255,.16);color:#fff">MediaSession 锁屏可控</span>
+      <span class="badge" style="background:rgba(255,255,255,.16);color:#fff">延迟 200~500ms</span>
+    </div>
+  </div>
+
+  <!-- 页面导航 -->
+  <div class="sec">
+    <h2>① 页面预览(点击进入)</h2>
+    <p class="sub">5 份交互式静态稿,覆盖本模块全部前端面;每页右上角可切换亮/暗主题与状态,01/02 页可直接点圆盘体验状态流转</p>
+    <div class="page-cards anim-stagger">
+      <div class="card card-hover page-card" onclick="location.href='01-player.html'">
+        <div class="thumb"><span class="mini-disc">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M8.6 5.4a1.2 1.2 0 0 1 1.82-1.03l8.1 5.6a1.2 1.2 0 0 1 0 1.98l-8.1 5.6A1.2 1.2 0 0 1 8.6 16.6Z"/></svg>
+        </span></div>
+        <h3>主播放页</h3><span class="path">/portal/server-audio-stream</span>
+        <p class="cap muted mt-2">深色舞台 + 圆盘主按钮 + 状态行 · 参数行(延迟折算) · 收听信息(两级可见) · 音量滑杆 · 五态切换与角色切换</p>
+        <span class="arr">→</span>
+      </div>
+      <div class="card card-hover page-card" onclick="location.href='02-mobile.html'">
+        <div class="thumb"><span class="mini-disc" style="background:linear-gradient(150deg,#0369A1,#06B6D4 66%,#EC4899 168%);width:44px;height:64px;border-radius:14px">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="7" y="3" width="10" height="18" rx="2.4"/><path d="M11 18.4h2"/></svg>
+        </span></div>
+        <h3>移动端 · 锁屏与后台</h3><span class="path">375px 单列 · MediaSession</span>
+        <p class="cap muted mt-2">手机屏实排 · 锁屏/通知栏可控分镜 · 后台缓冲与续约档位 · "添加到主屏幕"与边界告知</p>
+        <span class="arr">→</span>
+      </div>
+      <div class="card card-hover page-card" onclick="location.href='03-states.html'">
+        <div class="thumb"><span class="mini-disc" style="background:linear-gradient(150deg,#B45309,#F59E0B)">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 4.6 2.9 19.6a1.1 1.1 0 0 0 .95 1.65h16.3a1.1 1.1 0 0 0 .95-1.65Z"/><path d="M12 10.2v4.3"/></svg>
+        </span></div>
+        <h3>状态与错误处置</h3><span class="path">需求 §6.4 / §6.5</span>
+        <p class="cap muted mt-2">五态卡片(触发/按钮/文案) · 不支持浏览器 · 403/401 提示 · 错误码逐条处置 · 无障碍自查</p>
+        <span class="arr">→</span>
+      </div>
+      <div class="card card-hover page-card" onclick="location.href='04-listeners.html'">
+        <div class="thumb"><span class="mini-disc" style="background:linear-gradient(150deg,#0284C7,#06B6D4)">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="2.6" y="13.4" width="4.2" height="6.4" rx="1.6"/><rect x="17.2" y="13.4" width="4.2" height="6.4" rx="1.6"/></svg>
+        </span></div>
+        <h3>收听信息两级可见</h3><span class="path">GET /status</span>
+        <p class="cap muted mt-2">普通用户仅人数 · 开发者/管理员看账号/设备/IP/落后量 · 采集状态与格式参数 · 契约与三条纪律</p>
+        <span class="arr">→</span>
+      </div>
+      <div class="card card-hover page-card" onclick="location.href='05-spec.html'">
+        <div class="thumb"><span class="mini-disc" style="background:linear-gradient(150deg,#0369A1,#0891B2);border-radius:16px;width:44px;height:60px">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12h4l2.4-5 3.2 10 2.4-5h6"/></svg>
+        </span></div>
+        <h3>播放链路与规格</h3><span class="path">交接 §3 / §6</span>
+        <p class="cap muted mt-2">六步起播链路 · 延迟时间轴与缓冲档位 · 状态机 · 硬约束速览 · 自定义响应头联调风险</p>
+        <span class="arr">→</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 状态色板 -->
+  <div class="sec">
+    <h2>② 圆盘状态与配色</h2>
+    <p class="sub">主按钮的底色即状态:同一按钮在六个状态下的形态与图标;颜色不单独承载语义,始终配文案与图标(无障碍)</p>
+    <div class="st-strip">
+      <div class="st-item"><div class="d" style="background:linear-gradient(150deg,#0284C7,#06B6D4 72%,#22D3EE)">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M8.6 5.4a1.2 1.2 0 0 1 1.82-1.03l8.1 5.6a1.2 1.2 0 0 1 0 1.98l-8.1 5.6A1.2 1.2 0 0 1 8.6 16.6Z"/></svg></div>
+        <b>idle 空闲</b><span>品牌蓝渐变 · ▶ 开始</span></div>
+      <div class="st-item"><div class="d" style="background:linear-gradient(150deg,#1E3A5F,#243B55)">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 3.4a8.6 8.6 0 0 1 8.6 8.6"/><path d="M12 20.6A8.6 8.6 0 0 1 3.4 12" opacity=".45"/><path d="M3.4 12A8.6 8.6 0 0 1 12 3.4" opacity=".28"/></svg></div>
+        <b>connecting 连接中</b><span>深蓝灰 · 旋转环</span></div>
+      <div class="st-item"><div class="d" style="background:linear-gradient(150deg,#0369A1,#06B6D4 66%,#EC4899 168%)">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><rect x="6.6" y="5" width="3.9" height="14" rx="1.6"/><rect x="13.5" y="5" width="3.9" height="14" rx="1.6"/></svg></div>
+        <b>playing 播放中</b><span>蓝→青→粉 · 呼吸光环</span></div>
+      <div class="st-item"><div class="d" style="background:linear-gradient(150deg,#0369A1,#0891B2);filter:saturate(.72) brightness(.94)">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M8.6 5.4a1.2 1.2 0 0 1 1.82-1.03l8.1 5.6a1.2 1.2 0 0 1 0 1.98l-8.1 5.6A1.2 1.2 0 0 1 8.6 16.6Z"/></svg></div>
+        <b>paused 已暂停</b><span>同色降饱和 · ▶ 继续</span></div>
+      <div class="st-item"><div class="d" style="background:linear-gradient(150deg,#B45309,#F59E0B)">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><path d="M20.6 12a8.6 8.6 0 1 1-2.5-6.05"/><path d="M20.6 4.2v5.4h-5.4"/></svg></div>
+        <b>reconnecting 重连中</b><span>琥珀 · 重连箭头</span></div>
+      <div class="st-item"><div class="d" style="background:linear-gradient(150deg,#334155,#1E293B);color:#FCD34D;box-shadow:inset 0 0 0 1px rgba(252,211,77,.3)">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.6 2.9 19.6a1.1 1.1 0 0 0 .95 1.65h16.3a1.1 1.1 0 0 0 .95-1.65Z"/><path d="M12 10.2v4.3"/></svg></div>
+        <b>no-device 无设备</b><span>石板 + 琥珀 ⚠ · 重试</span></div>
+    </div>
+  </div>
+
+  <!-- 设计决策 -->
+  <div class="sec">
+    <h2>③ 设计决策(评审要点)</h2>
+    <div class="rule-grid">
+      <div class="card rule"><b><span class="no">1</span>舞台恒为深底</b><p>亮暗两主题下舞台都保持深色 —— 声音是唯一主角,律动与发光成为焦点;信息卡跟随壳主题,保证表单类对比度 ≥4.5:1。</p></div>
+      <div class="card rule"><b><span class="no">2</span>单一状态出口</b><p>所有状态只从状态行表达(<span class="kbd">role="status"</span> + <span class="kbd">aria-live="polite"</span>);状态变化不移动焦点,读屏播报完整语义而非裸数字。</p></div>
+      <div class="card rule"><b><span class="no">3</span>特效不碰音频</b><p>画布按播放时间驱动(呼吸/放射律动),<b>禁止</b> WebAudio 分析;DPR 计算、resize 与 onActivated 重算,reduced-motion 时静止。</p></div>
+      <div class="card rule"><b><span class="no">4</span>单列 + 约束宽度</b><p>手机与桌面同一套布局:桌面居中 720px,不出现横向滚动;参数行与收听信息自然换行,主按钮触达区 138px。</p></div>
+      <div class="card rule"><b><span class="no">5</span>音量是相对的</b><p>滑杆作用于 <span class="kbd">audio.volume</span>(默认 100、不记忆);文案说明"相对系统音量、手机也可用音量键",不试图接管系统音量。</p></div>
+      <div class="card rule"><b><span class="no">6</span>收听信息两级</b><p>人数人人可见;账号/设备/IP/落后量仅 level ≥ 2。前端按"字段是否存在"决定渲染,不自己判权限。</p></div>
+      <div class="card rule"><b><span class="no">7</span>后台边界如实说</b><p>页面明说:锁屏/切后台可继续听;关闭页面、系统回收、手机重启后不会继续;安卓建议"添加到主屏幕"。</p></div>
+      <div class="card rule"><b><span class="no">8</span>延迟可解释</b><p>参数行的延迟按 <span class="kbd">X-Edge-Ms − currentTime×1000</span> 折算、每秒刷新;并标注 200~500ms 为正常区间,避免被当成故障。</p></div>
+    </div>
+  </div>
+
+  <!-- 交付物与壳集成 -->
+  <div class="sec">
+    <h2>④ 交付物与壳集成</h2>
+    <div class="files">
+      <div class="card card-pad">
+        <div class="card-title">文件落点</div>
+        <div class="file-list">
+          <div class="file-row"><code>src/modules/server-audio-stream/index.vue</code><span class="act new">新建</span></div>
+          <div class="file-row"><code>src/modules/server-audio-stream/player.js</code><span class="act new">新建</span></div>
+          <div class="file-row"><code>src/modules/server-audio-stream/audio-stream.css</code><span class="act new">新建</span></div>
+          <div class="file-row"><code>src/api/audio.js</code><span class="act new">新建</span></div>
+          <div class="file-row"><code>src/layouts/PortalLayout.vue</code><span class="act">改 icoOf()</span></div>
+        </div>
+        <div class="cap muted mt-3" style="line-height:20px">
+          路由与侧边栏不需要改:目录名即路由(<code>import.meta.glob</code> 自动挂载),菜单由服务端权限点的 url / index 驱动。
+        </div>
+      </div>
+      <div class="card card-pad">
+        <div class="card-title">侧边栏图标(供 icoOf 使用)</div>
+        <div class="row gap-4 mt-3" style="align-items:center">
+          <span style="width:56px;height:56px;border-radius:16px;background:var(--grad-brand-soft);color:var(--color-primary);display:flex;align-items:center;justify-content:center">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 5.2 7 8.8H3.6v6.4H7l4.5 3.6z"/><path d="M15.4 9.3a4 4 0 0 1 0 5.4"/><path d="M18.3 6.5a8 8 0 0 1 0 11"/></svg>
+          </span>
+          <div class="grow">
+            <div class="cap faint mb-3" style="margin-bottom:var(--sp-2)">声波/喇叭 · 与现有图标同为 stroke 风格</div>
+            <div class="file-row" style="align-items:flex-start"><code style="white-space:normal;line-height:18px">'&lt;path d="M11.5 5.2 7 8.8H3.6v6.4H7l4.5 3.6z"/&gt;&lt;path d="M15.4 9.3a4 4 0 0 1 0 5.4"/&gt;&lt;path d="M18.3 6.5a8 8 0 0 1 0 11"/&gt;'</code></div>
+          </div>
+        </div>
+        <div class="cap muted mt-3" style="line-height:20px">
+          权限点:<code>serverAudioStream</code> · 门户模块(type=0) · index=3(排在用户主页、文件中心之后) · 默认授予 developer。
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p class="cap faint" style="margin-top:var(--sp-10);text-align:center">
+    ZiMo 服务器音频 · 前端设计稿 v1 · 2026-09-20 ·
+    依据《2026-09-20-服务器音频监听业务需求》§6 与《2026-09-20-服务器音频模块设计》§8、《2026-09-20-服务器音频前端交接》
+  </p>
+</div>
+
+<script src="audio.js"></script>
+<script>SA.initMockThemeBtn();</script>
+</body>
+</html>

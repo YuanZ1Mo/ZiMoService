@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>服务器音频 · 03 状态与错误处置 — ZiMo 服务器音频设计稿</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="audio.css">
+<style>
+  .st-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:var(--sp-4)}
+  .st-card{padding:var(--sp-4);display:flex;flex-direction:column;gap:var(--sp-3)}
+  .st-card .sa-mini{min-height:210px}
+  .st-meta{display:flex;flex-direction:column;gap:5px;font-size:var(--fs-cap);color:var(--color-text-2)}
+  .st-meta b{color:var(--color-text);font-size:var(--fs-body)}
+  .st-meta .kv{display:flex;gap:6px}
+  .st-meta .kv span:first-child{color:var(--color-text-3);flex:none;width:56px}
+  .toast-wrap{position:relative;min-height:150px;display:flex;align-items:center;justify-content:center;background:var(--color-border-soft);border-radius:var(--r-lg);padding:var(--sp-4)}
+  .toast-wrap .toasts{position:static}
+</style>
+</head>
+<body>
+<div class="mock-bar">
+  <span class="pg">服务器音频 · 03 状态与错误处置</span><span class="path">需求 §6.4 / §6.5 · 交接 §6.4</span>
+  <span class="spacer"></span>
+  <a href="01-player.html">← 主播放页</a>
+  <a href="04-listeners.html">下一页:收听信息 →</a>
+  <button class="theme-btn" id="themeBtn">🌗 亮/暗</button>
+</div>
+
+<main class="workspace" style="margin-left:0">
+  <div class="page-head">
+    <div>
+      <h1>状态与错误处置</h1>
+      <div class="sub">五个状态覆盖全部界面文案;错误在拉片循环里随时可能出现 —— 收敛动作必须写在播放器里,不能只看握手结果</div>
+    </div>
+    <div class="row gap-2"><span class="badge badge-info">状态行是唯一状态出口</span></div>
+  </div>
+
+  <!-- ============ 状态矩阵 ============ -->
+  <div class="st-grid" id="grid"></div>
+
+  <!-- ============ 边界态 ============ -->
+  <div class="sec" style="margin-top:var(--sp-8)">
+    <h2 style="font-size:var(--fs-h2);margin-bottom:6px">边界态(不进状态机,进入即不再启动播放)</h2>
+    <p class="cap muted mb-4" style="margin-bottom:var(--sp-4)">这两类情形必须在点开始之前或之后立即给出明确结果,不做"看起来在播其实没声音"的静默降级</p>
+    <div class="st-grid">
+      <!-- 不支持的浏览器 -->
+      <div class="card st-card">
+        <div class="empty" style="padding:var(--sp-6) 0">
+          <span class="art" style="background:var(--color-border-soft);font-size:0">
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-2)" stroke-width="1.9" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18"/><circle cx="12" cy="15" r="3.1"/><path d="M6.2 6.6h.01M9 6.6h.01"/></svg>
+          </span>
+          <b style="color:var(--color-text)">不支持的浏览器</b>
+          <p class="cap">当前浏览器不支持实时收听,请在安卓 Chrome(或同内核浏览器)中打开。</p>
+          <span class="tag-cap">不显示开始按钮</span>
+        </div>
+        <div class="st-meta">
+          <b>判定:能力检测,不认浏览器名</b>
+          <div class="kv"><span>检测</span><span><code class="kbd">MediaSource.isTypeSupported('audio/webm; codecs="opus"')</code></span></div>
+          <div class="kv"><span>前置</span><span>安全上下文(HTTPS)</span></div>
+          <div class="kv"><span>不做</span><span>不提示"升级浏览器"以外的引导;不尝试降级通道</span></div>
+        </div>
+      </div>
+
+      <!-- 权限 / 会话 -->
+      <div class="card st-card">
+        <div class="toast-wrap">
+          <div class="toasts">
+            <div class="toast error">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--color-danger)" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.6v5.2"/><circle cx="12" cy="16.2" r="1.05" fill="currentColor" stroke="none"/></svg>
+              <div><div class="t-title">权限不足,收听已停止</div><div class="t-msg">serverAudioStream 权限已被取消,请联系管理员</div></div>
+            </div>
+            <div class="toast warning">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--color-warning)" stroke-width="2.2" stroke-linecap="round"><path d="M12 4.6 2.9 19.6a1.1 1.1 0 0 0 .95 1.65h16.3a1.1 1.1 0 0 0 .95-1.65Z"/><path d="M12 10.2v4.3"/></svg>
+              <div><div class="t-title">会话已失效</div><div class="t-msg">正在跳转登录 · 登录后回到服务器音频</div></div>
+            </div>
+          </div>
+        </div>
+        <div class="st-meta">
+          <b>403 / 401 的处置</b>
+          <div class="kv"><span>403</span><span>立即停止播放并释放媒体元素;回到空闲,按钮保留(再点仍是 403)</span></div>
+          <div class="kv"><span>401</span><span>提示并跳登录(带回跳 <code class="kbd">/portal/server-audio-stream</code>)</span></div>
+          <div class="kv"><span>触达</span><span>拉片每秒多次、每次都鉴权 → <b>权限收回后 ≤1 批内收敛</b></span></div>
+          <div class="kv"><span>提示</span><span>用壳层 <code class="kbd">inject('toast')</code>,不写模块私有弹窗</span></div>
+        </div>
+      </div>
+
+      <!-- 重连与缓冲不变量 -->
+      <div class="card st-card">
+        <div class="sa-mini" style="background:radial-gradient(110% 90% at 50% 0%,rgba(251,191,36,.20),transparent 62%),linear-gradient(162deg,#2A2113,#0B1220 72%)">
+          <div class="sa-mrow">
+            <span class="tag-cap">退避 1s → 2s → 4s → 8s(上限)</span>
+          </div>
+          <div class="sa-mrow">
+            <span class="tag-cap">恢复后跳到直播边缘</span>
+          </div>
+          <div class="sa-mrow">
+            <span class="tag-cap">媒体元素继续播完已缓冲内容</span>
+          </div>
+        </div>
+        <div class="st-meta">
+          <b>弱网 / 断网的三条不变量</b>
+          <div class="kv"><span>退避</span><span>拉片失败 1s 起 ×2,上限 8s;成功后按 <code class="kbd">X-Next-Poll-Ms</code> 恢复节奏</span></div>
+          <div class="kv"><span>不补课</span><span>恢复后<b>跳回直播边缘</b>,不"补听"断网期间的旧内容</span></div>
+          <div class="kv"><span>不退避</span><span>连续拿到 0 片是正常情况(还没生成新片),按建议等待即可</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 错误处置表 ============ -->
+  <div class="card card-pad" style="margin-top:var(--sp-8)">
+    <div class="card-title mb-3">错误码与前端处置(逐条实现)</div>
+    <table class="spec-tbl">
+      <thead><tr><th style="width:180px">情形</th><th>前端行为</th><th style="width:230px">状态行/提示</th></tr></thead>
+      <tbody>
+        <tr><td><code>401</code> 会话已失效</td><td>提示并跳登录(带回跳);自写的 <code>fetch</code> 要自己判,不能只靠 <code>client.js</code></td><td>会话已失效 · 正在跳转登录</td></tr>
+        <tr><td><code>403</code> 权限不足</td><td><b>立即停止播放并释放媒体元素</b>;回到空闲,保留按钮</td><td>权限不足,收听已停止</td></tr>
+        <tr><td><code>410 STREAM_GONE</code></td><td>重新握手(旧 MediaSource 结束并重建),<code>seq</code> 从新的 <code>X-Live-Seq</code> 起</td><td>状态不变,参数行提示一次</td></tr>
+        <tr><td><code>410 SEGMENT_GONE</code></td><td><b>不清缓冲</b>,把 <code>seq</code> 跳到 <code>X-Live-Seq</code> 附近继续拉,让浏览器自己跳过空洞</td><td>状态不变,参数行提示一次</td></tr>
+        <tr><td><code>503 AUDIO_NO_DEVICE</code></td><td>状态置无设备,停止拉片,回到空闲(按钮可重试)</td><td>服务器无可用音频设备</td></tr>
+        <tr><td>网络异常 / 超时</td><td>指数退避重连;媒体元素继续播完已缓冲内容</td><td>连接中断,重连中…(附原因)</td></tr>
+        <tr><td>连续 0 片</td><td><b>正常</b>:按 <code>X-Next-Poll-Ms</code> 等待,不加退避、不当故障</td><td>状态不变</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ============ 无障碍与可达性 ============ -->
+  <div class="card card-pad" style="margin-top:var(--sp-5)">
+    <div class="card-title mb-3">无障碍与可达性(交付前自查)</div>
+    <div class="sa-tips-grid">
+      <div class="sa-tip">
+        <span class="ti"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 12a8 8 0 0 1 16 0"/><rect x="2.6" y="11.4" width="4.2" height="6.4" rx="1.6"/><rect x="17.2" y="11.4" width="4.2" height="6.4" rx="1.6"/></svg></span>
+        <div><b>单一状态出口</b><p>状态行 <span class="kbd">role="status"</span> <span class="kbd">aria-live="polite"</span> <span class="kbd">aria-atomic="true"</span>:只播报完整语义("正在播放"),不播报裸数字;状态变化<b>不移动焦点</b>。</p></div>
+      </div>
+      <div class="sa-tip">
+        <span class="ti"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="6" width="18" height="12" rx="3"/><path d="M7 10h.01M11 10h.01"/></svg></span>
+        <div><b>键盘与焦点</b><p>主按钮与滑杆均可用键盘操作,<span class="kbd">:focus-visible</span> 有可见环(主按钮 4px 光环);主按钮 <span class="kbd">aria-label</span> 随状态切换(开始/停止/取消/重试)。</p></div>
+      </div>
+      <div class="sa-tip">
+        <span class="ti"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.4 12.6 11 15l4.8-6"/></svg></span>
+        <div><b>降低动态</b><p><span class="kbd">prefers-reduced-motion: reduce</span> 时特效静止(画布只画一帧),功能与播放不受影响;呼吸光环等只做 transform/opacity。</p></div>
+      </div>
+      <div class="sa-tip">
+        <span class="ti"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18"/></svg></span>
+        <div><b>对比度双主题</b><p>舞台恒为深底、文字 #F1F5F9 以上;信息卡正文 ≥4.5:1;亮暗两套令牌都要实测,状态色不单独承载信息(配文案与图标)。</p></div>
+      </div>
+      <div class="sa-tip">
+        <span class="ti"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="3" width="14" height="18" rx="3"/><path d="M11 18h2"/></svg></span>
+        <div><b>触达尺寸</b><p>主按钮 138px、滑杆高 26px、图标按钮 36px;移动端不出现横向滚动,内容单列排布。</p></div>
+      </div>
+      <div class="sa-tip">
+        <span class="ti"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v6m0 0-4-4m4 4 4-4"/><path d="M4 15v2a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-2"/></svg></span>
+        <div><b>文案即契约</b><p>五态文案照抄需求/交接表格实现,不做同义改写 —— 联调与验收按文案逐条核对。</p></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script src="audio.js"></script>
+<script>
+SA.initTheme();
+document.getElementById('themeBtn').addEventListener('click', SA.toggleTheme);
+
+var META = {
+  idle: { trig: '初始 / 用户停止 / 无设备返回', act: '主按钮 ▶ 开始(→ connecting)', note: '空闲态也显示参数与音量,便于先调音量再开始' },
+  connecting: { trig: '点击开始后:握手 + 等首片(≤1s)', act: '主按钮显示旋转环,点击即取消', note: '≤1.5s 出声是验收线;首片由服务端"有界等待"保证' },
+  playing: { trig: '媒体元素 playing 事件', act: '主按钮 ⏸ 点击停止;锁屏可暂停', note: '延迟 200~500ms 稳定;缓冲 2~3 片' },
+  paused: { trig: '用户暂停(页面或锁屏)', act: '主按钮 ▶ 恢复(不重新握手)', note: 'keepalive=60 保留流;窗口到期无人则服务端停采' },
+  reconnecting: { trig: '拉片连续失败(非主动停止)', act: '主按钮显示重连箭头,点击停止', note: '退避 1s×2 上限 8s;恢复后跳直播边缘' },
+  'no-device': { trig: '握手或拉片 503', act: '主按钮 ⚠ 点击重试', note: '如实在界面上说"无可用音频设备",不静默降级' }
+};
+var grid = document.getElementById('grid');
+['idle', 'connecting', 'playing', 'paused', 'reconnecting', 'no-device'].forEach(function (k) {
+  var s = SA.STATES[k], m = META[k];
+  var el = document.createElement('div');
+  el.className = 'card st-card';
+  el.innerHTML =
+    '<div class="sa-mini">' +
+      '<canvas class="sa-canvas"></canvas>' +
+      '<button class="sa-disc is-' + s.cls + '" tabindex="-1"><span class="sa-disc-ico"></span></button>' +
+      '<div class="sa-disc-cap">' + s.cap + '</div>' +
+      '<div class="sa-status' + (s.tone ? ' is-' + s.tone : '') + '" role="status" aria-live="polite" aria-atomic="true">' +
+        '<span class="sa-status-ico"></span><span class="sa-status-text">' + s.text + '</span>' +
+        '<span class="sa-status-extra">' + (s.extra || '') + '</span>' +
+      '</div>' +
+    '</div>' +
+    '<div class="st-meta">' +
+      '<b>' + k + ' · ' + s.text + '</b>' +
+      '<div class="kv"><span>触发</span><span>' + m.trig + '</span></div>' +
+      '<div class="kv"><span>按钮</span><span>' + m.act + '</span></div>' +
+      '<div class="kv"><span>备注</span><span>' + m.note + '</span></div>' +
+    '</div>';
+  grid.appendChild(el);
+
+  SA.mount({
+    state: k,
+    canvas: el.querySelector('canvas'),
+    disc: el.querySelector('.sa-disc'),
+    ico: el.querySelector('.sa-disc-ico'),
+    text: el.querySelector('.sa-status-text'),
+    extra: el.querySelector('.sa-status-extra'),
+    status: el.querySelector('.sa-status'),
+    statusIco: el.querySelector('.sa-status-ico')
+  });
+});
+</script>
+</body>
+</html>

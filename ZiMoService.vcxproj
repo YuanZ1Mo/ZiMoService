@@ -1484,6 +1484,9 @@
     <ClInclude Include="modules\module_auth.h" />
     <ClInclude Include="modules\module_user_admin.h" />
     <ClInclude Include="modules\module_portal.h" />
+    <ClInclude Include="modules\module_server_audio_stream.h" />
+    <ClInclude Include="modules\util\audio_capturer.h" />
+    <ClInclude Include="modules\util\webm_muxer.h" />
     <ClInclude Include="modules\module_file_admin.h" />
     <ClInclude Include="modules\module_file_share.h" />
     <ClInclude Include="modules\module_file_pack.h" />
@@ -1518,6 +1521,9 @@
     <ClCompile Include="modules\module_auth.cpp" />
     <ClCompile Include="modules\module_user_admin.cpp" />
     <ClCompile Include="modules\module_portal.cpp" />
+    <ClCompile Include="modules\module_server_audio_stream.cpp" />
+    <ClCompile Include="modules\util\audio_capturer.cpp" />
+    <ClCompile Include="modules\util\webm_muxer.cpp" />
     <ClCompile Include="modules\module_file_admin.cpp" />
     <ClCompile Include="modules\module_file_share.cpp" />
     <ClCompile Include="modules\module_file_pack.cpp" />

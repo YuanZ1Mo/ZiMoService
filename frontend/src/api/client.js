@@ -1,7 +1,6 @@
 // fetch 封装:credentials include、401 统一跳登录(记录回跳)、错误码映射
 
-// 业务 API 基址:页面端口(80/443)与 RESTful 端口(39441)为同站跨端口
-const API_BASE = `${location.protocol}//${location.hostname}:39441/zimo/api`
+import { API_BASE } from './base'
 
 const CONTENT_JSON = { 'Content-Type': 'application/json' }
 

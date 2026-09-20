@@ -372,6 +372,15 @@
     <ClCompile Include="modules\module_file_token.cpp">
       <Filter>源文件\modules</Filter>
     </ClCompile>
+    <ClCompile Include="modules\util\audio_capturer.cpp">
+      <Filter>源文件\modules\util</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\util\webm_muxer.cpp">
+      <Filter>源文件\modules\util</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\module_server_audio_stream.cpp">
+      <Filter>源文件\modules</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="resource.h">
@@ -4648,6 +4657,15 @@
     </ClInclude>
     <ClInclude Include="modules\module_file_upload.h">
       <Filter>头文件\modules</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\module_server_audio_stream.h">
+      <Filter>头文件\modules</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\util\audio_capturer.h">
+      <Filter>头文件\modules\util</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\util\webm_muxer.h">
+      <Filter>头文件\modules\util</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

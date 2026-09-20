@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>服务器音频 · 04 收听信息两级可见 — ZiMo 服务器音频设计稿</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="audio.css">
+<style>
+  .dup{display:grid;grid-template-columns:repeat(auto-fit,minmax(400px,1fr));gap:var(--sp-5);align-items:start}
+  .dup .span-all{grid-column:1/-1}
+  .lgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:var(--sp-3);margin-top:var(--sp-3)}
+  .lcell{background:var(--color-border-soft);border-radius:var(--r-md);padding:10px 12px}
+  .lcell .k{font-size:var(--fs-cap);color:var(--color-text-3);font-weight:600}
+  .lcell .v{font-family:var(--font-num);font-weight:800;font-size:19px;margin-top:2px}
+  .lcell .u{font-size:11px;color:var(--color-text-3);font-weight:600;margin-left:3px}
+  .role-tag{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;border-radius:var(--r-pill);
+    font-size:var(--fs-cap);font-weight:700;background:var(--color-primary-soft);color:var(--color-primary)}
+  pre.json{background:var(--color-card);border:1px solid var(--color-border-soft);border-radius:var(--r-md);
+    padding:var(--sp-4);font-family:Consolas,monospace;font-size:12px;line-height:20px;color:var(--color-text-2);overflow:auto}
+  pre.json b{color:var(--color-primary);font-weight:600}
+</style>
+</head>
+<body>
+<div class="mock-bar">
+  <span class="pg">服务器音频 · 04 收听信息与监听者</span><span class="path">GET /zimo/api/serverAudioStream/status</span>
+  <span class="spacer"></span>
+  <a href="03-states.html">← 状态与错误</a>
+  <a href="05-spec.html">下一页:链路与规格 →</a>
+  <button class="theme-btn" id="themeBtn">🌗 亮/暗</button>
+</div>
+
+<main class="workspace" style="margin-left:0">
+  <div class="page-head">
+    <div>
+      <h1>收听信息与监听者</h1>
+      <div class="sub">一份数据两种呈现:普通用户只看到人数,开发者/管理员额外看到账号与地址明细 —— 由服务端"字段是否存在"决定,前端不做权限判断</div>
+    </div>
+    <div class="row gap-2"><span class="badge badge-info">每 5 秒轮询 · 未播放时不轮询</span></div>
+  </div>
+
+  <div class="dup">
+    <!-- ============ 普通用户 ============ -->
+    <section class="card sa-info">
+      <div class="row between mb-3" style="margin-bottom:var(--sp-3)">
+        <div class="card-title">普通用户(仅人数)</div>
+        <span class="role-tag">level ≤ 1</span>
+      </div>
+      <div class="sa-listen-head">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="2.6" y="13.4" width="4.2" height="6.4" rx="1.6"/><rect x="17.2" y="13.4" width="4.2" height="6.4" rx="1.6"/></svg>
+        <span>当前 <span class="cnt">2</span> 个会话在收听</span>
+        <span class="hint">明细仅开发者与管理员可见</span>
+      </div>
+      <div class="sa-empty" style="margin-top:var(--sp-3)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11.2v5"/><circle cx="12" cy="7.8" r="1.05" fill="currentColor" stroke="none"/></svg>
+        <span><code class="kbd">listeners</code> 字段<b>整体不下发</b>(不是空数组)—— 前端按字段是否存在决定渲染,不写死"没人听"。</span>
+      </div>
+      <div class="sa-divider"></div>
+      <div class="sa-listen-head" style="color:var(--color-text-3);font-weight:600">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8.4v4.2l3 1.8"/></svg>
+        <span style="font-size:var(--fs-body)">未在收听(空闲态)</span>
+      </div>
+      <div class="sa-empty" style="margin-top:var(--sp-2)">
+        <span>无人续约时采集线程自行停止并释放音频设备 —— 界面用"未在收听"如实表达,不用 0 伪装在线。</span>
+      </div>
+    </section>
+
+    <!-- ============ 采集状态与格式(人人可见) ============ -->
+    <section class="card sa-info">
+      <div class="row between mb-3">
+        <div class="card-title">采集状态与格式参数(所有具权限者可见)</div>
+        <span class="badge badge-success"><span class="dot"></span>capturing: true</span>
+      </div>
+      <div class="lgrid">
+        <div class="lcell"><div class="k">采样率</div><div class="v">48<span class="u">kHz</span></div></div>
+        <div class="lcell"><div class="k">声道</div><div class="v">2<span class="u">ch</span></div></div>
+        <div class="lcell"><div class="k">码率</div><div class="v">64<span class="u">kbps</span></div></div>
+        <div class="lcell"><div class="k">分片时长</div><div class="v">100<span class="u">ms</span></div></div>
+        <div class="lcell"><div class="k">缓冲窗口</div><div class="v">60<span class="u">s</span></div></div>
+        <div class="lcell"><div class="k">缓冲已填充</div><div class="v">12.5<span class="u">s</span></div></div>
+      </div>
+      <div class="cap muted" style="margin-top:var(--sp-3);line-height:20px">
+        分片时长等参数<b>由握手响应头返回,客户端不写死</b>;此处仅用于展示与联调核对。
+        环形缓冲与听众表都只在内存(不建表、不落盘),进程重启即回到空闲态。
+      </div>
+    </section>
+
+    <!-- ============ 开发者 / 管理员 ============ -->
+    <section class="card sa-info span-all">
+      <div class="row between mb-3" style="margin-bottom:var(--sp-3)">
+        <div class="card-title">开发者 / 管理员(含明细)</div>
+        <span class="role-tag">level ≥ 2</span>
+      </div>
+      <div class="sa-listen-head">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="2.6" y="13.4" width="4.2" height="6.4" rx="1.6"/><rect x="17.2" y="13.4" width="4.2" height="6.4" rx="1.6"/></svg>
+        <span>当前 <span class="cnt">3</span> 个会话在收听</span>
+        <span class="hint">其中 1 个后台降频(落后 4.2s)</span>
+      </div>
+      <div class="sa-listen-list">
+        <div class="sa-lrow">
+          <span class="dot"></span>
+          <span class="who">知墨 <span class="you">本机</span></span>
+          <span class="cl">client a1b2c3</span>
+          <span class="ip">192.168.1.20</span>
+          <span class="lag">落后 0.3s · 已听 12 分</span>
+        </div>
+        <div class="sa-lrow">
+          <span class="dot"></span>
+          <span class="who">我的手机 · 小爱</span>
+          <span class="cl">client ph7k2m</span>
+          <span class="ip">192.168.1.37</span>
+          <span class="lag">落后 0.5s · 已听 8 分</span>
+        </div>
+        <div class="sa-lrow">
+          <span class="dot stale"></span>
+          <span class="who">平板(后台降频)</span>
+          <span class="cl">client tab9x1</span>
+          <span class="ip">192.168.1.51</span>
+          <span class="lag warn">落后 4.2s · 已听 26 分</span>
+        </div>
+      </div>
+      <div class="sa-divider"></div>
+      <div class="cap muted" style="line-height:20px">
+        明细列口径:<b>账号</b>取 nickname(无昵称退 account);<b>设备</b>取客户端自报的 <code class="kbd">client</code>(区分同一账号的多端/多标签);
+        <b>落后</b> = <code class="kbd">lagMs</code> = (liveSeq − lastSeq) × 片长;<b>已听时长</b> = now − <code class="kbd">sinceMs</code>。
+        明细卡片默认折叠为一行摘要(见主播放页形态),展开后本卡全量显示。
+      </div>
+    </section>
+
+  </div>
+
+  <!-- ============ 契约与口径(全宽) ============ -->
+  <section class="card card-pad" style="margin-top:var(--sp-5)">
+      <div class="card-title mb-3">/status 响应(节选)与三条纪律</div>
+      <pre class="json">{
+  <b>"capturing"</b>: true, <b>"streamId"</b>: "18f3a2c1b40-7",
+  <b>"sampleRate"</b>: 48000, <b>"channels"</b>: 2, <b>"bitrate"</b>: 64000,
+  <b>"segmentDurationMs"</b>: 100, <b>"segmentWindowSec"</b>: 60, <b>"bufferFillSec"</b>: 12.5,
+  <b>"listenerCount"</b>: 2,
+  <b>"listeners"</b>: [            // level ≥ 2 才有此字段;普通用户整体不下发
+    { "uid": 3, "account": "zimo_dev", "nickname": "知墨", "ip": "192.168.1.20",
+      "client": "a1b2c3", "level": 2, "sinceMs": 0, "lastSeenMs": 0, "lagMs": 300 }
+  ]
+}</pre>
+      <div class="sa-tips-grid" style="grid-template-columns:1fr;margin-top:var(--sp-4)">
+        <div class="sa-tip">
+          <span class="ti"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 7v5l4 2"/><circle cx="12" cy="12" r="9"/></svg></span>
+          <div><b>列表口径 = 续约窗口未过期</b><p>与"按需采集的离场判定"同一口径:窗口过期即移出,不做"最近听过的人"这类模糊集合。</p></div>
+        </div>
+        <div class="sa-tip">
+          <span class="ti"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg></span>
+          <div><b>本接口不计入活跃度</b><p>它只做观察,<b>不延长任何人的续约窗口</b> —— 否则"开着页面不播放"会让采集永不停止。</p></div>
+        </div>
+        <div class="sa-tip">
+          <span class="ti"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M5 6h14M5 18h9"/></svg></span>
+          <div><b>不下发任何凭据</b><p>只给账号、角色等级、IP 与时间;不含会话、令牌、密码类字段。轮询失败按普通网络错误静默重试,不打断播放。</p></div>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script src="audio.js"></script>
+<script>SA.initMockThemeBtn();</script>
+</body>
+</html>

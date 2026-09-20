@@ -29,6 +29,9 @@ class ZmAuthModule;
 class ZmUserAdminModule;
 class ZmPortalModule;
 
+// 服务器音频
+class ZmServerAudioStreamModule;
+
 // 文件中心
 class ZmFileDbModule;
 class ZmFileStoreModule;
@@ -109,6 +112,9 @@ private:
     std::unique_ptr<ZmAuthModule> m_auth;
     std::unique_ptr<ZmUserAdminModule> m_admin;
     std::unique_ptr<ZmPortalModule> m_portal;
+
+    // 服务器音频(无独立数据模块:状态全在内存)
+    std::unique_ptr<ZmServerAudioStreamModule> m_audio;
 
     // 文件中心(数据访问 → 存储 → 条目/任务 → 上传/打包/令牌/分享 → 编排)
     std::unique_ptr<ZmFileDbModule> m_fileDb;

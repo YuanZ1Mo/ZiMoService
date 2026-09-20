@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>服务器音频 · 02 移动端与锁屏/后台 — ZiMo 服务器音频设计稿</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="audio.css">
+<style>
+  /* 页面私有:手机框内的播放页压缩排版 */
+  .ph-screen .sa-shell{max-width:none;gap:var(--sp-3)}
+  .ph-screen .sa-stage{min-height:352px;border-radius:20px;padding:var(--sp-4) var(--sp-4) var(--sp-5)}
+  .ph-screen .sa-disc{width:116px;height:116px}
+  .ph-screen .sa-disc .sa-disc-ico svg{width:38px;height:38px}
+  .ph-screen .sa-disc-wrap{padding:var(--sp-6) 0 var(--sp-5)}
+  .ph-screen .sa-info{padding:var(--sp-4)}
+  .ph-screen .sa-params{font-size:var(--fs-cap);gap:7px}
+  .ph-screen .sa-params .sa-delay{margin-left:0}
+  .ph-screen .sa-listen-head{font-size:var(--fs-cap)}
+  .ph-screen .sa-stage-foot{font-size:11px;margin-top:var(--sp-3)}
+  .two{display:grid;grid-template-columns:minmax(0,378px) minmax(0,1fr);gap:var(--sp-6);align-items:start}
+  @media (max-width:980px){.two{grid-template-columns:1fr}}
+  .notice{border-radius:var(--r-lg);border:1px solid var(--color-border-soft);background:var(--color-card);padding:var(--sp-3) var(--sp-4);
+    display:flex;align-items:center;gap:var(--sp-3);box-shadow:var(--shadow-sm)}
+  .notice .ni{width:34px;height:34px;border-radius:11px;background:var(--grad-brand);color:#fff;display:flex;align-items:center;justify-content:center;flex:none}
+</style>
+</head>
+<body>
+<div class="mock-bar">
+  <span class="pg">服务器音频 · 02 移动端 / 锁屏与后台</span><span class="path">/portal/server-audio-stream(375px)</span>
+  <span class="spacer"></span>
+  <span class="grp"><span class="lbl">状态</span>
+    <button class="mbtn on" data-st="playing">播放中</button>
+    <button class="mbtn" data-st="idle">空闲</button>
+    <button class="mbtn" data-st="no-device">无设备</button>
+  </span>
+  <a href="01-player.html">← 主播放页</a>
+  <a href="index.html">总览</a>
+  <button class="theme-btn" id="themeBtn">🌗 亮/暗</button>
+</div>
+
+<main class="workspace" style="margin-left:0">
+  <div class="page-head">
+    <div>
+      <h1>移动端 · 锁屏与后台</h1>
+      <div class="sub">同一套单列布局(桌面亦是它,只约束宽度);后台保活靠"媒体元素 + 缓冲 + 续约"三件事,不靠页面脚本常驻</div>
+    </div>
+    <div class="row gap-2"><span class="badge badge-info">本期验收目标:安卓 Chrome 及同内核浏览器</span></div>
+  </div>
+
+  <div class="two">
+    <!-- ============ 手机屏:模块页移动端 ============ -->
+    <div>
+      <div class="ph">
+        <div class="ph-screen">
+          <div class="ph-notch"></div>
+          <div class="ph-bar"><span class="num">9:41</span><span class="num">ZiMo · 已连接</span></div>
+          <div class="ph-topbar">
+            <button class="icon-btn" style="width:32px;height:32px" aria-label="打开导航">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+            </button>
+            <div class="brand"><span class="brand-logo" style="width:26px;height:26px;font-size:14px">Z</span>服务器音频</div>
+            <span class="sa-chip idle" style="margin-left:auto;height:22px"><i class="dot"></i><span id="mChip">采集中</span></span>
+          </div>
+          <div class="ph-body">
+            <div class="sa-shell">
+              <section class="sa-stage" id="mStage">
+                <canvas class="sa-canvas" id="mCv" aria-hidden="true"></canvas>
+                <div class="sa-disc-wrap">
+                  <button class="sa-disc is-playing" id="mDisc" aria-label="暂停">
+                    <span class="sa-disc-ico" id="mIco"></span>
+                  </button>
+                </div>
+                <div class="sa-status" id="mStatus" role="status" aria-live="polite" aria-atomic="true">
+                  <span class="sa-status-ico" id="mStatusIco"></span>
+                  <span class="sa-status-text" id="mText">正在播放</span>
+                  <span class="sa-status-extra" id="mExtra"></span>
+                </div>
+                <div class="sa-stage-foot">锁屏 / 切后台可继续收听</div>
+              </section>
+
+              <section class="card sa-info">
+                <div class="sa-params">
+                  <span class="sa-pv">48kHz</span><span class="sep">·</span>
+                  <span class="sa-pv">64kbps</span><span class="sep">·</span>
+                  <span class="sa-pv">立体声</span>
+                  <span class="sa-delay">延迟 <b class="num">320</b> ms</span>
+                </div>
+                <div class="sa-divider" style="margin:var(--sp-3) 0"></div>
+                <div class="sa-listen-head">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="2.6" y="13.4" width="4.2" height="6.4" rx="1.6"/><rect x="17.2" y="13.4" width="4.2" height="6.4" rx="1.6"/></svg>
+                  <span>当前 <span class="cnt">2</span> 个会话在收听</span>
+                </div>
+                <div class="sa-vol" style="margin-top:var(--sp-3)">
+                  <span class="sa-vol-ico">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 5.2 7 8.8H3.6v6.4H7l4.5 3.6z"/><path d="M15.4 9.3a4 4 0 0 1 0 5.4"/></svg>
+                  </span>
+                  <input class="sa-range grow" id="mVol" type="range" min="0" max="100" value="80" aria-label="音量">
+                  <span class="sa-vol-val num" id="mVolVal" style="width:46px;height:26px">80</span>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="annotate mt-4" style="margin-top:var(--sp-4)">
+        <b>移动端要点</b> · 单列不横向滚动;主按钮 138px(可点区域远大于 44pt);参数行与收听信息自动换行;
+        音量滑杆触达区高 26px,<b>手机端更常用系统音量键</b>(页面音量是相对调节)。
+      </div>
+    </div>
+
+    <!-- ============ 锁屏 / 通知栏 / 后台策略 ============ -->
+    <div class="col gap-4" style="display:flex;flex-direction:column;gap:var(--sp-5)">
+      <!-- 锁屏分镜 -->
+      <div class="ls">
+        <div>
+          <div class="ls-time num">22:47</div>
+          <div class="ls-date">9月20日 星期日 · 锁屏</div>
+        </div>
+        <div class="ls-card">
+          <span class="ls-art">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 5.2 7 8.8H3.6v6.4H7l4.5 3.6z"/><path d="M15.4 9.3a4 4 0 0 1 0 5.4"/><path d="M18.3 6.5a8 8 0 0 1 0 11"/></svg>
+          </span>
+          <span class="ls-meta"><b>服务器音频</b><span>来自 ZiMo 服务器 · 2 个会话在收听</span></span>
+          <span class="ls-ctrl">
+            <button class="ls-btn" aria-label="暂停">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6.8" y="5" width="3.7" height="14" rx="1.5"/><rect x="13.5" y="5" width="3.7" height="14" rx="1.5"/></svg>
+            </button>
+            <button class="ls-btn primary" aria-label="停止">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2.4"/></svg>
+            </button>
+          </span>
+        </div>
+      </div>
+      <div class="annotate">
+        <b>MediaSession 契约</b> · 标题「服务器音频」+ 副题(如「来自 ZiMo 服务器」),动作对接
+        <span class="kbd">play</span> <span class="kbd">pause</span> <span class="kbd">stop</span>;
+        <b>不设 setPositionState</b>(直播无终点、界面也没有进度条)。锁屏与通知栏的控制必须可用,否则用户没法在锁屏上停。
+      </div>
+
+      <!-- 通知栏 -->
+      <div class="notice">
+        <span class="ni">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 5.2 7 8.8H3.6v6.4H7l4.5 3.6z"/><path d="M15.4 9.3a4 4 0 0 1 0 5.4"/></svg>
+        </span>
+        <div class="grow">
+          <div style="font-weight:700;font-size:var(--fs-body)">服务器音频 · 正在播放</div>
+          <div class="cap faint">下拉通知栏可见:标题 / 暂停 / 停止(与锁屏同一套 MediaSession 动作)</div>
+        </div>
+        <div class="row gap-2">
+          <span class="tag-cap">暂停</span><span class="tag-cap">停止</span>
+        </div>
+      </div>
+
+      <!-- 后台策略表 -->
+      <div class="card card-pad">
+        <div class="card-title mb-3">切后台 / 回到前台的前端动作</div>
+        <table class="spec-tbl">
+          <thead><tr><th>时机</th><th>缓冲目标</th><th>拉片</th><th>续约</th></tr></thead>
+          <tbody>
+            <tr><td><b>前台播放</b></td><td>2~3 片(≈300ms)</td><td>每批 3 片,按 <code>X-Next-Poll-Ms</code></td><td><code>keepalive=5</code></td></tr>
+            <tr><td><b>切后台 / 锁屏</b></td><td>15~30s</td><td>降频续拉:每 3~5s 一批、每批 5 片</td><td><code>keepalive=45</code></td></tr>
+            <tr><td><b>回到前台</b></td><td>削回 2~3 片</td><td>丢弃超目标缓冲,恢复低延迟</td><td><code>keepalive=5</code></td></tr>
+            <tr><td><b>暂停</b></td><td>—</td><td>停止拉片(发一次 <code>count=1</code> 的轻量请求)</td><td><code>keepalive=60</code></td></tr>
+            <tr><td><b>停止</b></td><td>—</td><td>结束 MediaSource 并释放媒体元素</td><td><code>keepalive=0</code></td></tr>
+          </tbody>
+        </table>
+        <div class="annotate mt-4" style="margin-top:var(--sp-4)">
+          <b>为什么切后台是"降频续拉"而不是"停止拉片"</b> · 页面没被冻结时继续拉片,续约窗口才不会过期;
+          一旦被系统冻结,已缓冲的 15~30s 顶住这段时间 —— 服务端因 45s 窗口仍保持采集,回来即无缝续听。
+          若"拉满就不管了",续约到期服务端会停采,缓冲耗尽后声音彻底停住。
+        </div>
+      </div>
+
+      <!-- 边界告知 -->
+      <div class="card card-pad">
+        <div class="card-title mb-3">如实告知的边界(页面文案)</div>
+        <div class="sa-tips-grid" style="grid-template-columns:1fr">
+          <div class="sa-tip">
+            <span class="ti"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v10m0 0-4-4m4 4 4-4"/><path d="M4 17v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1"/></svg></span>
+            <div><b>安卓建议"添加到主屏幕"</b><p>标签页在内存紧张时可能被系统回收;主屏幕方式打开时后台表现更稳。</p></div>
+          </div>
+          <div class="sa-tip">
+            <span class="ti"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M6.5 6.5l11 11"/></svg></span>
+            <div><b>不做的事</b><p>不常驻、不自启、不做录音存档;"页面被系统回收 / 浏览器被完全关闭 / 手机重启"后不会继续播放。</p></div>
+          </div>
+          <div class="sa-tip">
+            <span class="ti"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12h4l2.4-5 3.2 10 2.4-5h6"/></svg></span>
+            <div><b>延迟口径</b><p>200~500ms 属正常(受片长与播放器缓冲下限约束);几十毫秒在本方案不可达,不承诺。</p></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script src="audio.js"></script>
+<script>
+SA.initTheme();
+document.getElementById('themeBtn').addEventListener('click', SA.toggleTheme);
+
+var api = SA.mount({
+  canvas: document.getElementById('mCv'),
+  disc: document.getElementById('mDisc'),
+  ico: document.getElementById('mIco'),
+  text: document.getElementById('mText'),
+  extra: document.getElementById('mExtra'),
+  status: document.getElementById('mStatus'),
+  statusIco: document.getElementById('mStatusIco'),
+  chip: document.getElementById('mChip'),
+  chipText: document.getElementById('mChip')
+});
+api.setState(SA.pickStateFromQuery('playing'));
+
+var v = document.getElementById('mVol');
+SA.setRange(v);
+v.addEventListener('input', function () { document.getElementById('mVolVal').textContent = v.value; });
+
+document.querySelectorAll('.mock-bar [data-st]').forEach(function (b) {
+  b.addEventListener('click', function () {
+    api.setState(b.dataset.st);
+    document.querySelectorAll('.mock-bar [data-st]').forEach(function (x) { x.classList.toggle('on', x === b); });
+  });
+});
+</script>
+</body>
+</html>

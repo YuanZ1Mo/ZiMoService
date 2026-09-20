@@ -24,6 +24,7 @@
 #include "modules/module_auth.h"
 #include "modules/module_user_admin.h"
 #include "modules/module_portal.h"
+#include "modules/module_server_audio_stream.h"
 
 // 文件中心
 #include "modules/module_file_db.h"
@@ -102,6 +103,9 @@ void ServicePortal::Init()
 /// 先调本函数、再调 NetDock::Close(的"业务线程先收尾")
 void ServicePortal::Shutdown()
 {
+    // 先收业务后台线程:服务器音频的采集线程持有系统音频设备,必须在网络层关闭前停下
+    if (m_audio)
+        m_audio->Shutdown();
 }
 
 /**
@@ -161,6 +165,10 @@ void ServicePortal::CreateModules()
                                                   m_security.get(), m_audit.get(), m_db.get(), m_gate.get());
     m_portal = std::make_unique<ZmPortalModule>(m_restful, m_user.get(), m_session.get(),
                                                 m_permission.get(), m_gate.get());
+    // 服务器音频(无独立数据模块:采集按需启停,分片只留内存)
+    m_audio = std::make_unique<ZmServerAudioStreamModule>(m_restful, m_session.get(),
+                                                          m_permission.get(), m_gate.get());
+    m_audio->RegisterPermissions();
 
     // ── 文件中心:独立库 filehub.db + 物理根 modules\\filehub ──
     const std::string fileHubRoot = ZmExeDir() + "modules\\filehub";
@@ -293,6 +301,7 @@ void ServicePortal::RegisterRestfulRoutes(ZmHttpRestfulServer* rest)
     m_portal->RegisterRoutes();
     m_fileHub->RegisterRoutes();
     m_fileAdmin->RegisterRoutes();
+    m_audio->RegisterRoutes();
 }
 
 // ============================================================================

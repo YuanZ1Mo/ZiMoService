@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia'
 
+import { API_BASE } from '../api/base'
+
 // 会话 / 用户上下文 / force_change 状态
 // isLoggedIn 三态:null=未探测(冷启动/整页刷新后) / true=已登录 / false=未登录
 export const useSessionStore = defineStore('session', {
@@ -31,8 +33,7 @@ export const useSessionStore = defineStore('session', {
     async probe() {
       this.checked = true
       try {
-        const base = `${location.protocol}//${location.hostname}:39441/zimo/api`
-        const resp = await fetch(base + '/portal/home', { credentials: 'include' })
+        const resp = await fetch(API_BASE + '/portal/home', { credentials: 'include' })
         if (!resp.ok) return false
         const data = await resp.json()
         this.user = {

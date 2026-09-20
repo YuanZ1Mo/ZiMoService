@@ -121,38 +121,70 @@ drogon::Task<ZmSessionCtx> ZmSessionModule::AuthAndTouch(const std::string& cook
     ZmSessionCtx ctx;
     if (cookieValue.empty())
         co_return ctx;
-    std::string tokenHash = Sha256Hex(cookieValue);
-    auto row = co_await m_db->QueryRow(
-        "SELECT s.uid, s.last_active, s.expire_time, s.absolute_expire, "
-        "u.account, u.nickname, u.role_code, u.force_change, u.status, u.deleted, "
-        "COALESCE(r.level,0) AS level "
-        "FROM sessions s JOIN users u ON s.uid=u.uid "
-        "LEFT JOIN roles r ON u.role_code=r.code "
-        "WHERE s.token_hash=?1;",
-        {tokenHash});
-    if (!zm_json_has(row, "uid"))
+    const std::string tokenHash = Sha256Hex(cookieValue);
+
+    // 只读缓存命中(短 TTL):服务器音频拉片等高频接口每个请求都走这里,命中免一遍
+    // sessions+users+roles 三表 join。有效期内的吊销/改密由 DropCache 系列显式清除。
     {
-        DropCache(tokenHash);
-        co_return ctx;   // 会话不存在(已吊销/过期清理)
+        std::lock_guard<std::mutex> lock(m_cacheMtx);
+        auto it = m_ctxCache.find(tokenHash);
+        if (it != m_ctxCache.end() && ZmDbModule::Now() - it->second.first < kCtxCacheTtlS)
+            ctx = it->second.second;
     }
-    int64_t now = ZmDbModule::Now();
-    int64_t absolute = zm_json_get_int(row, "absolute_expire", 0);
-    int64_t sliding = zm_json_get_int(row, "expire_time", 0);
-    if (now > absolute)
+    if (!ctx.valid)
     {
-        co_await m_db->Exec("DELETE FROM sessions WHERE token_hash=?1;", {tokenHash});
-        DropCache(tokenHash);
-        co_return ctx;
-    }
-    if (now > sliding)
-    {
-        // 滑动过期(30 天未活跃):失效
-        co_await m_db->Exec("DELETE FROM sessions WHERE token_hash=?1;", {tokenHash});
-        DropCache(tokenHash);
-        co_return ctx;
+        auto row = co_await m_db->QueryRow(
+            "SELECT s.uid, s.last_active, s.expire_time, s.absolute_expire, "
+            "u.account, u.nickname, u.role_code, u.force_change, u.status, u.deleted, "
+            "COALESCE(r.level,0) AS level "
+            "FROM sessions s JOIN users u ON s.uid=u.uid "
+            "LEFT JOIN roles r ON u.role_code=r.code "
+            "WHERE s.token_hash=?1;",
+            {tokenHash});
+        if (!zm_json_has(row, "uid"))
+        {
+            DropCache(tokenHash);
+            co_return ctx;   // 会话不存在(已吊销/过期清理)
+        }
+        int64_t now = ZmDbModule::Now();
+        int64_t absolute = zm_json_get_int(row, "absolute_expire", 0);
+        int64_t sliding = zm_json_get_int(row, "expire_time", 0);
+        if (now > absolute)
+        {
+            co_await m_db->Exec("DELETE FROM sessions WHERE token_hash=?1;", {tokenHash});
+            DropCache(tokenHash);
+            co_return ctx;
+        }
+        if (now > sliding)
+        {
+            // 滑动过期(30 天未活跃):失效
+            co_await m_db->Exec("DELETE FROM sessions WHERE token_hash=?1;", {tokenHash});
+            DropCache(tokenHash);
+            co_return ctx;
+        }
+
+        ctx.valid = true;
+        ctx.uid = zm_json_get_int(row, "uid", 0);
+        ctx.account = zm_json_get_str(row, "account");
+        ctx.nickname = zm_json_get_str(row, "nickname");
+        ctx.roleCode = zm_json_get_str(row, "role_code");
+        ctx.level = zm_json_get_int(row, "level", 0);
+        ctx.forceChange = zm_json_get_int(row, "force_change", 0);
+        ctx.status = zm_json_get_int(row, "status", 1);
+        ctx.deleted = zm_json_get_int(row, "deleted", 0);
+        ctx.tokenHash = tokenHash;
+
+        // 只缓存"可用"状态的上下文:被停用/删除的会话不缓存,下一次请求仍会查库,
+        // 由门禁按最新状态拦截,避免缓存把停用状态拖长
+        if (ctx.status == 1 && !ctx.deleted)
+        {
+            std::lock_guard<std::mutex> lock(m_cacheMtx);
+            m_ctxCache[tokenHash] = {ZmDbModule::Now(), ctx};
+        }
     }
 
     // 续期写库节流:last_active / expire_time 每 ≥5 分钟落库一次,窗口内仅内存判定
+    int64_t now = ZmDbModule::Now();
     bool needWrite = false;
     {
         std::lock_guard<std::mutex> lock(m_cacheMtx);
@@ -172,16 +204,6 @@ drogon::Task<ZmSessionCtx> ZmSessionModule::AuthAndTouch(const std::string& cook
             {std::to_string(now), std::to_string(newSliding), tokenHash});
     }
 
-    ctx.valid = true;
-    ctx.uid = zm_json_get_int(row, "uid", 0);
-    ctx.account = zm_json_get_str(row, "account");
-    ctx.nickname = zm_json_get_str(row, "nickname");
-    ctx.roleCode = zm_json_get_str(row, "role_code");
-    ctx.level = zm_json_get_int(row, "level", 0);
-    ctx.forceChange = zm_json_get_int(row, "force_change", 0);
-    ctx.status = zm_json_get_int(row, "status", 1);
-    ctx.deleted = zm_json_get_int(row, "deleted", 0);
-    ctx.tokenHash = tokenHash;
     ctx.ip = ip;
     co_return ctx;
 }
@@ -220,6 +242,7 @@ void ZmSessionModule::DropCache(const std::string& tokenHash)
 {
     std::lock_guard<std::mutex> lock(m_cacheMtx);
     m_lastWrite.erase(tokenHash);
+    m_ctxCache.erase(tokenHash);
 }
 
 void ZmSessionModule::DropCacheByUid(int64_t uid)
@@ -228,4 +251,5 @@ void ZmSessionModule::DropCacheByUid(int64_t uid)
     (void)uid;
     std::lock_guard<std::mutex> lock(m_cacheMtx);
     m_lastWrite.clear();
+    m_ctxCache.clear();
 }

@@ -1,0 +1,165 @@
+/* ============================================================
+   audio-stream.css —— 服务器音频模块页样式
+   设计稿:docs/designs/mockups/server-audio-stream(已评审)
+   基调:深色舞台 + 圆盘主按钮 + 信息卡(跟随壳主题)
+   约束:动画仅 transform/opacity(特效画布按播放时间驱动) · prefers-reduced-motion 降级
+   ============================================================ */
+
+/* ---------- 1. 页面骨架:手机与桌面同一套单列布局,桌面居中约束宽度 ---------- */
+.sa-shell{display:flex;flex-direction:column;gap:var(--sp-4);max-width:720px;margin:0 auto}
+@media (max-width:760px){.sa-shell{gap:var(--sp-3)}}
+
+/* ---------- 2. 深色舞台:特效区 + 圆盘主按钮 + 状态行 ---------- */
+/* 舞台在亮暗两主题下都保持深底:声音是主角,律动与发光是唯一焦点 */
+.sa-stage{
+  position:relative;overflow:hidden;border-radius:24px;
+  min-height:clamp(330px,42vh,426px);padding:var(--sp-5) var(--sp-6) var(--sp-6);
+  display:flex;flex-direction:column;
+  background:
+    radial-gradient(120% 86% at 50% 4%,rgba(56,189,248,.22),transparent 62%),
+    radial-gradient(90% 70% at 88% 96%,rgba(236,72,153,.20),transparent 58%),
+    linear-gradient(162deg,#0B2A47 0%,#0B1220 58%,#131B34 100%);
+  box-shadow:var(--shadow-lg),inset 0 1px 0 rgba(255,255,255,.09);
+  color:#E2E8F0;
+}
+[data-theme="dark"] .sa-stage{
+  background:
+    radial-gradient(120% 86% at 50% 4%,rgba(56,189,248,.18),transparent 62%),
+    radial-gradient(90% 70% at 88% 96%,rgba(236,72,153,.16),transparent 58%),
+    linear-gradient(162deg,#061A2E 0%,#060B14 60%,#0B1424 100%);
+  box-shadow:var(--shadow-lg),inset 0 1px 0 rgba(255,255,255,.06);
+}
+.sa-canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+
+.sa-stage-top{position:relative;display:flex;align-items:center;gap:var(--sp-2);flex-wrap:wrap}
+.sa-chip{
+  display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:var(--r-pill);
+  background:rgba(255,255,255,.10);color:#CBD5E1;font-size:var(--fs-cap);font-weight:600;
+  border:1px solid rgba(255,255,255,.08);
+}
+.sa-chip .dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex:none}
+.sa-chip.ok{color:#5EEAD4;background:rgba(45,212,191,.14);border-color:rgba(45,212,191,.22)}
+.sa-chip.warn{color:#FCD34D;background:rgba(251,191,36,.14);border-color:rgba(251,191,36,.24)}
+.sa-chip.idle{color:#94A3B8}
+.sa-chip .mono{font-family:Consolas,monospace;letter-spacing:.2px;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sa-chip.text-only{border-color:transparent;background:rgba(255,255,255,.06)}
+
+.sa-disc-wrap{position:relative;flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:var(--sp-6) 0 var(--sp-5)}
+.sa-disc{
+  position:relative;width:138px;height:138px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(150deg,#0284C7 0%,#06B6D4 72%,#22D3EE 100%);
+  color:#fff;isolation:isolate;
+  box-shadow:0 20px 46px -16px rgba(2,132,199,.85),0 0 0 1px rgba(255,255,255,.16) inset,0 2px 0 rgba(255,255,255,.32) inset;
+  transition:transform var(--dur) var(--ease),box-shadow var(--dur) var(--ease),background var(--dur-slow),filter var(--dur);
+}
+.sa-disc:hover{transform:translateY(-2px) scale(1.015)}
+.sa-disc:active{transform:scale(.975)}
+.sa-disc:focus-visible{outline:none;box-shadow:0 0 0 4px rgba(56,189,248,.45),0 20px 46px -16px rgba(2,132,199,.85)}
+.sa-disc .sa-disc-ico{position:relative;z-index:2;display:flex;align-items:center;justify-content:center;filter:drop-shadow(0 2px 6px rgba(2,44,71,.45))}
+/* 呼吸光环:只做 transform/opacity,不改变布局尺寸 */
+.sa-disc::after{content:"";position:absolute;inset:-14px;border-radius:50%;border:1px solid rgba(255,255,255,.22);opacity:0;z-index:1;transition:opacity var(--dur)}
+.sa-disc.is-playing::after{opacity:1;animation:sa-breathe 2.6s var(--ease) infinite}
+@keyframes sa-breathe{0%{transform:scale(.97);opacity:.55}70%{transform:scale(1.10);opacity:0}100%{transform:scale(1.10);opacity:0}}
+.sa-disc.is-connecting{cursor:progress}
+.sa-disc.is-connecting .sa-disc-ico{animation:sa-spin 1.5s linear infinite}
+@keyframes sa-spin{to{transform:rotate(360deg)}}
+
+/* 圆盘状态变体:底色即状态(不单独承载语义,始终配状态行文案) */
+.sa-disc.is-idle{background:linear-gradient(150deg,#0284C7,#06B6D4 72%,#22D3EE)}
+.sa-disc.is-connecting{background:linear-gradient(150deg,#1E3A5F,#243B55);box-shadow:0 16px 36px -18px rgba(2,44,71,.9),0 0 0 1px rgba(255,255,255,.12) inset}
+.sa-disc.is-playing{background:linear-gradient(150deg,#0369A1 0%,#06B6D4 66%,#EC4899 168%)}
+.sa-disc.is-paused{background:linear-gradient(150deg,#0369A1,#0891B2);filter:saturate(.72) brightness(.94)}
+.sa-disc.is-reconnecting{background:linear-gradient(150deg,#B45309,#F59E0B);box-shadow:0 18px 40px -18px rgba(245,158,11,.8),0 0 0 1px rgba(255,255,255,.14) inset}
+.sa-disc.is-reconnecting .sa-disc-ico{animation:sa-spin 2.6s linear infinite}
+.sa-disc.is-nodevice{background:linear-gradient(150deg,#334155,#1E293B);color:#FCD34D;box-shadow:0 14px 32px -20px rgba(15,23,42,.9),0 0 0 1px rgba(252,211,77,.28) inset}
+
+/* 状态行:状态变化的唯一出口(role=status 由模板给出) */
+.sa-status{position:relative;display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;min-height:30px;text-align:center}
+.sa-status .sa-status-ico{display:flex;color:#7DD3FC}
+.sa-status .sa-status-text{font-size:17px;font-weight:700;letter-spacing:.2px;color:#F1F5F9}
+.sa-status .sa-status-extra{font-size:var(--fs-body);color:rgba(203,213,225,.78)}
+.sa-status.is-ok .sa-status-ico{color:#5EEAD4}
+.sa-status.is-warn .sa-status-ico{color:#FCD34D}
+.sa-status.is-err .sa-status-ico{color:#FCD34D}
+
+.sa-stage-hint{position:relative;margin-top:6px;text-align:center;font-size:var(--fs-cap);color:#FCD34D;min-height:18px}
+
+/* ---------- 3. 信息卡:参数行 / 收听信息 / 音量 ---------- */
+.sa-info{padding:var(--sp-5) var(--sp-6)}
+.sa-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.sa-params{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:var(--fs-body);color:var(--color-text-2)}
+.sa-params .sa-pv{font-weight:700;color:var(--color-text);font-family:var(--font-num)}
+.sa-params .sep{color:var(--color-text-3)}
+.sa-params .sa-delay{
+  margin-left:auto;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;
+  border-radius:var(--r-pill);background:var(--color-primary-soft);color:var(--color-primary);font-weight:600;
+  transition:opacity var(--dur);
+}
+.sa-params .sa-delay b{font-family:var(--font-num);font-weight:800}
+.sa-params-cap{font-size:var(--fs-cap);color:var(--color-text-3);margin-top:6px;line-height:18px}
+.sa-divider{height:1px;background:var(--color-border-soft);margin:var(--sp-4) 0}
+
+.sa-listen-head{display:flex;align-items:center;gap:8px;font-size:var(--fs-body);font-weight:600;color:var(--color-text);flex-wrap:wrap}
+.sa-listen-head .cnt{color:var(--color-primary);font-family:var(--font-num);font-weight:800}
+.sa-listen-head .hint{margin-left:auto;font-size:var(--fs-cap);color:var(--color-text-3);font-weight:400}
+.sa-listen-list{margin-top:var(--sp-3);display:flex;flex-direction:column;gap:6px}
+.sa-lrow{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--r-md);background:var(--color-border-soft);font-size:var(--fs-cap)}
+.sa-lrow .who{display:flex;align-items:center;gap:8px;min-width:0;font-weight:600;color:var(--color-text)}
+.sa-lrow .who .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:170px}
+.sa-lrow .dot{width:7px;height:7px;border-radius:50%;background:var(--color-ok);flex:none}
+.sa-lrow .dot.stale{background:var(--color-warn)}
+.sa-lrow .cl,.sa-lrow .ip{color:var(--color-text-3);font-family:Consolas,monospace}
+.sa-lrow .lag{margin-left:auto;color:var(--color-text-2);font-family:var(--font-num);white-space:nowrap}
+.sa-lrow .lag.warn{color:var(--color-warn);font-weight:700}
+.sa-lrow .you{background:var(--color-primary);color:#fff;border-radius:var(--r-pill);padding:1px 7px;font-size:11px;font-weight:700}
+.sa-empty{display:flex;align-items:center;gap:8px;margin-top:var(--sp-3);font-size:var(--fs-cap);color:var(--color-text-3);line-height:18px}
+.sa-empty svg{flex:none}
+
+.sa-vol{display:flex;align-items:center;gap:var(--sp-3);margin-top:var(--sp-4)}
+.sa-vol .sa-vol-ico{display:flex;color:var(--color-text-3);flex:none}
+.sa-vol .sa-vol-val{width:52px;text-align:center;font-family:var(--font-num);font-weight:800;color:var(--color-text);
+  background:var(--color-border-soft);border-radius:var(--r-sm);height:28px;display:inline-flex;align-items:center;justify-content:center}
+
+/* 区间滑杆(0~100):作用于媒体元素音量,不接管系统音量 */
+.sa-range{appearance:none;-webkit-appearance:none;height:26px;background:transparent;cursor:pointer;flex:1;min-width:80px}
+.sa-range::-webkit-slider-runnable-track{height:6px;border-radius:3px;
+  background:linear-gradient(90deg,var(--color-primary) 0 var(--v,100%),var(--color-border) var(--v,100%) 100%)}
+.sa-range::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;margin-top:-6px;border-radius:50%;
+  background:#fff;border:2.5px solid var(--color-primary);box-shadow:var(--shadow-card);transition:transform var(--dur-fast) var(--ease)}
+.sa-range:hover::-webkit-slider-thumb{transform:scale(1.08)}
+.sa-range:active::-webkit-slider-thumb{transform:scale(1.16)}
+.sa-range:focus-visible{outline:none}
+.sa-range:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 4px var(--color-ring)}
+.sa-range::-moz-range-track{height:6px;border-radius:3px;background:var(--color-border)}
+.sa-range::-moz-range-progress{height:6px;border-radius:3px;background:var(--color-primary)}
+.sa-range::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:#fff;border:2.5px solid var(--color-primary);box-shadow:var(--shadow-card)}
+
+/* ---------- 4. 提示卡:一句话 + 图标,不放技术说明 ---------- */
+.sa-tips{display:flex;align-items:center;gap:10px;padding:var(--sp-4) var(--sp-5);font-size:var(--fs-body);color:var(--color-text-2)}
+.sa-tips .ti{width:30px;height:30px;border-radius:10px;background:var(--grad-brand-soft);color:var(--color-primary);
+  display:flex;align-items:center;justify-content:center;flex:none}
+
+/* ---------- 5. 不支持浏览器(能力检测未过:不显示开始按钮) ---------- */
+.sa-unsupported{max-width:720px;margin:0 auto;padding:40px var(--sp-6);text-align:center;
+  display:flex;flex-direction:column;align-items:center;gap:var(--sp-3)}
+.sa-unsupported .art{width:72px;height:72px;border-radius:24px;background:var(--color-border-soft);
+  display:flex;align-items:center;justify-content:center;color:var(--color-text-2)}
+.sa-unsupported b{font-size:var(--fs-h2)}
+.sa-unsupported p{margin:0;color:var(--color-text-2);font-size:var(--fs-body);max-width:460px}
+
+/* ---------- 6. 响应式:移动端单列、不横向滚动 ---------- */
+@media (max-width:640px){
+  .sa-stage{padding:var(--sp-4) var(--sp-4) var(--sp-5);border-radius:20px}
+  .sa-disc{width:118px;height:118px}
+  .sa-disc .sa-disc-ico svg{width:38px;height:38px}
+  .sa-info{padding:var(--sp-4)}
+  .sa-params{font-size:var(--fs-cap);gap:7px}
+  .sa-params .sa-delay{margin-left:0}
+  .sa-listen-head{font-size:var(--fs-cap)}
+  .sa-vol .sa-vol-val{width:46px;height:26px}
+}
+
+/* 降低动态:呼吸光环与连接中旋转停下(功能不变) */
+@media (prefers-reduced-motion:reduce){
+  .sa-disc::after,.sa-disc.is-connecting .sa-disc-ico,.sa-disc.is-reconnecting .sa-disc-ico{animation:none !important}
+}

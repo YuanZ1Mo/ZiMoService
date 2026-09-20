@@ -1,6 +1,7 @@
 // /filehub/* 接口封装(照 api/admin.js 写法)
 // 全部走真实 HTTP:上传的元数据走请求头、体为原始字节(§6.5)
 import { api } from './client'
+import { API_BASE } from './base'
 
 // 查询参数序列化(GET)
 function qs(params = {}) {
@@ -100,7 +101,7 @@ async function uploadFile(file, { space, dirId, conflict, signal, onProgress, on
 
 // 原始请求(上传专用:非 JSON 体;401 仍走统一跳登录逻辑 —— 复用 client 语义的精简版)
 async function rawRequest(path, { method, headers, body, signal }) {
-  const resp = await fetch(`${location.protocol}//${location.hostname}:39441/zimo/api${path}`, {
+  const resp = await fetch(`${API_BASE}${path}`, {
     method, credentials: 'include', headers, body, signal
   })
   // 与 client.js 同一套会话语义:401 带查询串回跳、403 强制改密跳转

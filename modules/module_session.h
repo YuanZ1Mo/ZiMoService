@@ -91,6 +91,12 @@ private:
     // 续期写库节流:token_hash → 最近落库时间(unix 秒)
     std::mutex m_cacheMtx;
     std::unordered_map<std::string, int64_t> m_lastWrite;
+    /// 会话只读热路径缓存:token_hash → (unix 秒, 上下文快照)
+    /// 服务器音频拉片等高频接口每请求走一次鉴权,命中免一遍三表 join;有效期内的
+    /// 吊销/改密由 DropCache / DropCacheByUid 显式清除。
+    std::unordered_map<std::string, std::pair<int64_t, ZmSessionCtx>> m_ctxCache;
+    /// 只读缓存有效期(秒)
+    static constexpr int64_t kCtxCacheTtlS = 10;
 };
 
 #endif // ZM_MODULE_SESSION_H
