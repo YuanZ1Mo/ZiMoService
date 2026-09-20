@@ -11,6 +11,7 @@
 #include "zm_util_logger.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 
 using namespace drogon;
@@ -236,6 +237,13 @@ ZmStoreResult ZmFileStoreModule::EnsureDir(const std::string& path)
     std::wstring w = Utf8ToWide(ToExtended(path));
     if (w.empty())
         return ZmStoreResult::Fail(static_cast<int>(ZmErrCode::IoError), "路径编码失败");
+    // 同名文件与同名目录都回 ERROR_ALREADY_EXISTS:必须确认那一级确实是目录,
+    // 否则会把"路径上挡着一个同名文件"当成成功,后续写入以难定位的方式失败
+    auto dirExists = [](const std::wstring& p) -> bool
+    {
+        DWORD attr = GetFileAttributesW(p.c_str());
+        return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    };
     // CreateDirectoryW 只建最末一级:逐级补齐中间目录(space_cache\<space>\chunk\<id> 这类)
     size_t start = 4; // 跳过 "\\?\"
     if (w.size() > 8 && w.compare(0, 8, L"\\\\?\\UNC\\") == 0)
@@ -253,13 +261,21 @@ ZmStoreResult ZmFileStoreModule::EnsureDir(const std::string& path)
             if (err != ERROR_ALREADY_EXISTS)
                 return ZmStoreResult::Fail(MapWin32Error(err),
                                            "创建目录失败(错误码 " + std::to_string(err) + ")");
+            if (!dirExists(sub))
+                return ZmStoreResult::Fail(static_cast<int>(ZmErrCode::IoError),
+                                           "路径被同名文件占用,无法创建目录");
         }
     }
     if (CreateDirectoryW(w.c_str(), nullptr))
         return ZmStoreResult::Good();
     unsigned long err = GetLastError();
     if (err == ERROR_ALREADY_EXISTS)
-        return ZmStoreResult::Good();
+    {
+        if (dirExists(w))
+            return ZmStoreResult::Good();
+        return ZmStoreResult::Fail(static_cast<int>(ZmErrCode::IoError),
+                                   "同名文件已存在,无法创建目录");
+    }
     return ZmStoreResult::Fail(MapWin32Error(err),
                                "创建目录失败(错误码 " + std::to_string(err) + ")");
 }
@@ -353,7 +369,22 @@ ZmStoreResult ZmFileStoreModule::CopyTreeSync(const std::string& src, const std:
 
 bool ZmFileStoreModule::IsCopyTempName(const std::string& name)
 {
-    return name.find(kCopyTempSuffix) != std::string::npos;
+    // 只认"本层生成的临时名"形态:<目标名>.zmtmp<进程号>.<时间戳>
+    // (用 find 判定会把用户自己叫 a.zmtmp.bak 的文件也当成临时文件,一致性同步便永远跳过它)
+    const std::string suffix(kCopyTempSuffix);
+    size_t            pos = name.rfind(suffix);
+    if (pos == std::string::npos)
+        return false;
+    size_t after = pos + suffix.size();
+    if (after >= name.size())
+        return false;
+    for (size_t i = after; i < name.size(); ++i)
+    {
+        unsigned char c = static_cast<unsigned char>(name[i]);
+        if (!std::isdigit(c) && c != '.')
+            return false;
+    }
+    return true;
 }
 
 ZmStoreResult ZmFileStoreModule::RemoveTreeImpl(const std::string& path)
@@ -493,26 +524,31 @@ ZmStoreResult ZmFileStoreModule::WriteFileSync(const std::string& path, const ch
         return ZmStoreResult::Fail(MapWin32Error(err),
                                    "写入文件失败(错误码 " + std::to_string(err) + ")");
     }
-    size_t written = 0;
-    bool   ok      = true;
+    size_t        written = 0;
+    bool          ok      = true;
+    unsigned long err     = 0;
     while (written < len)
     {
         DWORD chunk = static_cast<DWORD>(std::min<size_t>(len - written, 1u << 20));
         DWORD done  = 0;
-        if (!WriteFile(h, data + written, chunk, &done, nullptr) || done == 0)
+        if (!WriteFile(h, data + written, chunk, &done, nullptr))
         {
-            ok = false;
+            err = GetLastError(); // 先取错误码再关句柄:CloseHandle 会把它冲掉
+            ok  = false;
+            break;
+        }
+        if (done == 0)
+        {
+            err = ERROR_WRITE_FAULT;
+            ok  = false;
             break;
         }
         written += done;
     }
     CloseHandle(h);
     if (!ok)
-    {
-        unsigned long err = GetLastError();
         return ZmStoreResult::Fail(MapWin32Error(err),
                                    "写入文件失败(错误码 " + std::to_string(err) + ")");
-    }
     return ZmStoreResult::Good();
 }
 
@@ -530,26 +566,31 @@ ZmStoreResult ZmFileStoreModule::AppendFileSync(const std::string& path, const c
         return ZmStoreResult::Fail(MapWin32Error(err),
                                    "追加写入失败(错误码 " + std::to_string(err) + ")");
     }
-    size_t written = 0;
-    bool   ok      = true;
+    size_t        written = 0;
+    bool          ok      = true;
+    unsigned long err     = 0;
     while (written < len)
     {
         DWORD chunk = static_cast<DWORD>(std::min<size_t>(len - written, 1u << 20));
         DWORD done  = 0;
-        if (!WriteFile(h, data + written, chunk, &done, nullptr) || done == 0)
+        if (!WriteFile(h, data + written, chunk, &done, nullptr))
         {
-            ok = false;
+            err = GetLastError(); // 先取错误码再关句柄:CloseHandle 会把它冲掉
+            ok  = false;
+            break;
+        }
+        if (done == 0)
+        {
+            err = ERROR_WRITE_FAULT;
+            ok  = false;
             break;
         }
         written += done;
     }
     CloseHandle(h);
     if (!ok)
-    {
-        unsigned long err = GetLastError();
         return ZmStoreResult::Fail(MapWin32Error(err),
                                    "追加写入失败(错误码 " + std::to_string(err) + ")");
-    }
     return ZmStoreResult::Good();
 }
 
@@ -585,12 +626,25 @@ ZmStoreResult ZmFileStoreModule::ReadFileSync(const std::string& path, std::stri
     {
         DWORD chunk = static_cast<DWORD>(std::min<size_t>(out.size() - readTotal, 1u << 20));
         DWORD done  = 0;
-        if (!ReadFile(h, &out[readTotal], chunk, &done, nullptr) || done == 0)
-            break;
+        if (!ReadFile(h, &out[readTotal], chunk, &done, nullptr))
+        {
+            unsigned long err = GetLastError();
+            CloseHandle(h);
+            out.clear();
+            return ZmStoreResult::Fail(MapWin32Error(err),
+                                       "读取文件失败(错误码 " + std::to_string(err) + ")");
+        }
+        if (done == 0)
+        {
+            // 文件比读之前变小了(被覆盖/截断):读到的不是完整内容,不能当成功返回
+            CloseHandle(h);
+            out.clear();
+            return ZmStoreResult::Fail(static_cast<int>(ZmErrCode::IoError),
+                                       "读取文件不完整(文件被改动)");
+        }
         readTotal += done;
     }
     CloseHandle(h);
-    out.resize(readTotal);
     return ZmStoreResult::Good();
 }
 

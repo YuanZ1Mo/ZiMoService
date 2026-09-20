@@ -129,6 +129,89 @@ ZMJSON SubtreeRows(ZmFileDbModule* db, int64_t nodeId)
 }
 
 /**
+ * @brief 批量取一批目录的子树条目数与文件字节数
+ *
+ * 一次递归 CTE 把所有根目录一起算完。逐目录各跑一次 CTE 在回收站列表上是
+ * "一页多少个目录就多少次查询",条目一多页面就顶不住。
+ *
+ * @param db 数据模块
+ * @param ids 目录 id 列表(内部 id,直接拼进 IN)
+ * @param items [out] id → 子树条目数(含目录自身)
+ * @param bytes [out] id → 子树文件字节数
+ */
+void SubtreeStatBatch(ZmFileDbModule* db, const std::vector<int64_t>& ids,
+                      std::map<int64_t, int64_t>& items, std::map<int64_t, int64_t>& bytes)
+{
+    if (ids.empty())
+        return;
+    std::string in;
+    for (size_t i = 0; i < ids.size(); ++i)
+    {
+        if (i)
+            in += ",";
+        in += std::to_string(ids[i]);
+    }
+    ZMJSON rows = db->QueryRowsSync(
+        "WITH RECURSIVE sub(id, size, type, root, depth) AS ("
+        " SELECT id, size, type, id, 0 FROM nodes WHERE id IN (" + in + ")"
+        " UNION ALL"
+        " SELECT n.id, n.size, n.type, s.root, s.depth + 1 FROM nodes n JOIN sub s"
+        " ON n.parent_id = s.id WHERE s.depth < 64)"
+        " SELECT root, COUNT(*) AS items,"
+        " COALESCE(SUM(CASE WHEN type = 2 THEN size ELSE 0 END),0) AS bytes"
+        " FROM sub GROUP BY root;",
+        {});
+    for (const auto& r : rows)
+    {
+        int64_t id       = zm_file_row_int(r, "root", 0);
+        items[id]        = zm_file_row_int(r, "items", 0);
+        bytes[id]        = zm_file_row_int(r, "bytes", 0);
+    }
+}
+
+/**
+ * @brief 批量取一批条目相对空间根的路径与可见性(供回收站"原位置"列)
+ *
+ * 一次递归 CTE 走完所有条目的祖先链:任一行 deleted=1 即不可见,
+ * 深度最大的那一行带着拼好的完整路径。逐条 VisibleSync + RelPathSync 是每条两次查询。
+ *
+ * @param db 数据模块
+ * @param ids 条目 id 列表
+ * @param paths [out] id → 相对空间根路径(以 / 分隔);不可见或不存在则不在表中
+ * @param visible [out] id → 祖先链上是否无 deleted=1
+ */
+void RelPathBatch(ZmFileDbModule* db, const std::vector<int64_t>& ids,
+                  std::map<int64_t, std::string>& paths, std::map<int64_t, bool>& visible)
+{
+    if (ids.empty())
+        return;
+    std::string in;
+    for (size_t i = 0; i < ids.size(); ++i)
+    {
+        if (i)
+            in += ",";
+        in += std::to_string(ids[i]);
+    }
+    ZMJSON rows = db->QueryRowsSync(
+        "WITH RECURSIVE up(root, id, parent_id, deleted, path, depth) AS ("
+        " SELECT id, id, parent_id, deleted, name, 0 FROM nodes WHERE id IN (" + in + ")"
+        " UNION ALL"
+        " SELECT up.root, n.id, n.parent_id, n.deleted, n.name || '\\' || up.path,"
+        " up.depth + 1 FROM nodes n JOIN up ON n.id = up.parent_id WHERE up.depth < 64)"
+        " SELECT root, path, depth, deleted FROM up ORDER BY root, depth ASC;",
+        {});
+    for (const auto& r : rows)
+    {
+        int64_t id = zm_file_row_int(r, "root", 0);
+        if (!visible.count(id))
+            visible[id] = true;
+        if (zm_file_row_int(r, "deleted", 0) != 0)
+            visible[id] = false;
+        paths[id] = ToSlash(zm_file_row_str(r, "path")); // depth 递增,末行即完整路径
+    }
+}
+
+/**
  * @brief 取目录的物理路径(调用方保证空间正确)
  *
  * @param db 数据模块
@@ -1549,6 +1632,29 @@ ZMJSON ZmFileNodeModule::TrashListSync(int64_t space, const ZmListQuery& q, int6
                                           std::to_string(lp.size()),
                                       lp);
 
+    // 一页的目录子树规模与原位置路径都批量取:逐条查询在回收站条目多时是几千次
+    std::vector<int64_t> pageDirIds;
+    std::vector<int64_t> originIds;
+    for (const auto& r : rows)
+    {
+        if (zm_file_row_int(r, "type", 0) == zm_file::kTypeDir)
+            pageDirIds.push_back(zm_file_row_int(r, "id", 0));
+        int64_t origin = zm_file_row_int(r, "origin_parent_id", 0);
+        if (origin != 0)
+            originIds.push_back(origin);
+    }
+    std::sort(pageDirIds.begin(), pageDirIds.end());
+    pageDirIds.erase(std::unique(pageDirIds.begin(), pageDirIds.end()), pageDirIds.end());
+    std::sort(originIds.begin(), originIds.end());
+    originIds.erase(std::unique(originIds.begin(), originIds.end()), originIds.end());
+
+    std::map<int64_t, int64_t> subItems;
+    std::map<int64_t, int64_t> subBytes;
+    SubtreeStatBatch(m_db, pageDirIds, subItems, subBytes);
+    std::map<int64_t, std::string> originPath;
+    std::map<int64_t, bool>        originVisible;
+    RelPathBatch(m_db, originIds, originPath, originVisible);
+
     ZMJSON list = ZMJSON::array();
     for (const auto& r : rows)
     {
@@ -1563,12 +1669,10 @@ ZMJSON ZmFileNodeModule::TrashListSync(int64_t space, const ZmListQuery& q, int6
         // 既估不出彻底删除的耗时,也看不出这块占用有多大
         if (n.type == zm_file::kTypeDir)
         {
-            int64_t subItems = 0;
-            int64_t subBytes = 0;
-            SubtreeStat(m_db, n.id, subItems, subBytes);
-            // SubtreeStat 含自身,展示口径与列表视图一致 → 减去自身得到"内容物数量"
-            item["items"] = subItems > 0 ? subItems - 1 : 0;
-            item["bytes"] = subBytes;
+            int64_t si = subItems.count(n.id) ? subItems[n.id] : 0;
+            // 子树统计含自身,展示口径与列表视图一致 → 减去自身得到"内容物数量"
+            item["items"] = si > 0 ? si - 1 : 0;
+            item["bytes"] = subBytes.count(n.id) ? subBytes[n.id] : 0;
         }
         item["delete_time"]   = n.deleteTime;
         item["del_owner_uid"] = n.delOwnerUid;
@@ -1576,13 +1680,15 @@ ZMJSON ZmFileNodeModule::TrashListSync(int64_t space, const ZmListQuery& q, int6
         item["origin_parent_id"] = n.originParentId;
         // 原路径 = 原父目录的路径;原父目录已删除(或原本就在空间根)时给空串
         std::string path;
-        if (n.originParentId != 0 && VisibleSync(n.originParentId))
-            path = RelPathSync(n.originParentId);
+        if (n.originParentId != 0 && originVisible.count(n.originParentId) &&
+            originVisible[n.originParentId])
+            path = originPath.count(n.originParentId) ? originPath[n.originParentId] : "";
         item["path"] = path;
         list.push_back(std::move(item));
     }
 
-    // 顶部占用:用户侧 = 我删的;管理侧 = 范围内全量
+    // 顶部占用:用户侧 = 我删的;管理侧 = 范围内全量。
+    // 一条递归 CTE 把范围内全部被删目录的子树一起算完(逐目录算同样是 N+1 次)
     int64_t usedSize  = 0;
     int64_t usedItems = 0;
     {
@@ -1600,24 +1706,17 @@ ZMJSON ZmFileNodeModule::TrashListSync(int64_t space, const ZmListQuery& q, int6
         }
         // 目录的 size 为 0:占用必须按子树字节累加,否则"回收站占用"会漏掉被删目录
         // 里的全部文件(用户会看到"删了 1.6 GB 却显示占用 0")
-        ZMJSON urows = m_db->QueryRowsSync("SELECT id, type, size FROM nodes" + uwhere, up);
-        for (const auto& r : urows)
-        {
-            const int64_t id   = zm_file_row_int(r, "id", 0);
-            const int64_t type = zm_file_row_int(r, "type", 0);
-            ++usedItems;
-            if (type == zm_file::kTypeDir)
-            {
-                int64_t si = 0;
-                int64_t sb = 0;
-                SubtreeStat(m_db, id, si, sb);
-                usedSize += sb;
-            }
-            else
-            {
-                usedSize += zm_file_row_int(r, "size", 0);
-            }
-        }
+        ZMJSON t = m_db->QueryRowSync(
+            "WITH RECURSIVE sub(id, type, size, root, depth) AS ("
+            " SELECT id, type, size, id, 0 FROM nodes" + uwhere +
+            " UNION ALL"
+            " SELECT n.id, n.type, n.size, s.root, s.depth + 1 FROM nodes n JOIN sub s"
+            " ON n.parent_id = s.id WHERE s.depth < 64)"
+            " SELECT COUNT(DISTINCT root) AS items,"
+            " COALESCE(SUM(CASE WHEN type = 2 THEN size ELSE 0 END),0) AS bytes FROM sub;",
+            up);
+        usedItems = zm_file_row_int(t, "items", 0);
+        usedSize  = zm_file_row_int(t, "bytes", 0);
     }
 
     ZMJSON out         = ZMJSON::object();

@@ -11,8 +11,7 @@ import { filehubApi, fmtSize } from '../../api/filehub'
 const props = defineProps({
   show: { type: Boolean, default: false },
   nodes: { type: Array, default: () => [] },  // 分享目标(1~N 条)
-  space: { type: Number, default: 0 },        // 目标所在空间(条目行不带 space,由调用方给)
-  isPublic: { type: Boolean, default: true }  // 公共空间分享不提供"仅登录可见"开关(§3.12.2)
+  space: { type: Number, default: 0 }         // 目标所在空间(条目行不带 space,由调用方给)
 })
 const emit = defineEmits(['close', 'created'])
 const toast = inject('toast')
@@ -114,7 +113,8 @@ const expireOptions = EXPIRES.map(e => ({ value: e.v, label: e.n }))
           <input v-model.number="form.max_downloads" class="input" type="number" min="0" step="1" />
         </div>
       </div>
-      <div v-if="!isPublic" class="row between" style="background:var(--color-bg);border:1px solid var(--color-border-soft);border-radius:var(--r-md);padding:10px 14px">
+      <!-- 公共空间同样提供该开关:公共内容所有登录用户本就能看,勾上只是要求先登录 -->
+      <div class="row between" style="background:var(--color-bg);border:1px solid var(--color-border-soft);border-radius:var(--r-md);padding:10px 14px">
         <div>
           <b style="font-size:var(--fs-body)">仅登录可见</b>
           <div class="form-hint">开启后未登录访客先跳登录,登录后回到分享页</div>

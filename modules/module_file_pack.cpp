@@ -3,6 +3,8 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
+#include <openssl/evp.h>
+
 #include <minizip-ng/mz.h>
 #include <minizip-ng/mz_zip.h>
 #include <minizip-ng/mz_os.h>
@@ -204,8 +206,27 @@ std::string ZmFilePackModule::DisplayName(const ZMJSON& firstNode, size_t count)
 // ============================================================================
 // 创建打包任务
 // ============================================================================
+std::string ZmFilePackModule::DedupeHash(const std::string& key)
+{
+    if (key.empty())
+        return "";
+    unsigned char md[EVP_MAX_MD_SIZE];
+    unsigned int  mdLen = 0;
+    if (EVP_Digest(key.data(), key.size(), md, &mdLen, EVP_sha256(), nullptr) != 1)
+        return "";
+    static const char* hex = "0123456789abcdef";
+    std::string        s;
+    s.reserve(32);
+    for (unsigned int i = 0; i < mdLen && s.size() < 32; ++i)
+    {
+        s += hex[md[i] >> 4];
+        s += hex[md[i] & 0x0F];
+    }
+    return s;
+}
+
 drogon::Task<ZMJSON> ZmFilePackModule::Create(int64_t space, const std::vector<int64_t>& ids,
-                                              const ZmOpCtx& ctx)
+                                              const ZmOpCtx& ctx, const std::string& dedupeKey)
 {
     // 上限前置:条目数 ≤5000、总字节 ≤20GB,超出直接拒,不进入排队
     int64_t              items = 0;
@@ -268,8 +289,10 @@ drogon::Task<ZMJSON> ZmFilePackModule::Create(int64_t space, const std::vector<i
                               "进行中的打包任务已达上限,请等前一个完成");
 
     std::string display = DisplayName(firstNode, uniq.size());
+    // 幂等键记进 ref_id:分享页对同一批条目的重复请求据此复用任务(不落进程内表,重启也在)
+    std::string refId   = DedupeHash(dedupeKey);
     ZMJSON      task = co_await m_task->Create(zm_file::kTaskPack, ctx.uid, space, display, "",
-                                               bytes, items, "");
+                                               bytes, items, refId);
     std::string taskNo = zm_file_row_str(task, "task_no");
     if (taskNo.empty())
         co_return ZmFileError(zm_file_err::kInternal, 500, "创建打包任务失败");

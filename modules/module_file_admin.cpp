@@ -373,17 +373,31 @@ drogon::Task<HttpResponsePtr> ZmFileAdminModule::HandleStats(HttpRequestPtr req)
             t["name"] = names.contains(key) ? names[key].get<std::string>() : ("用户 " + key);
         }
     }
-    // 缓存区与库大小(文件系统侧)
-    int64_t cacheBytes = 0;
-    int64_t zips       = 0;
-    int64_t chunks     = 0;
+    // 缓存区占用要扫盘(含递归统计分片目录):走工作池,别在事件循环上做
     if (m_pack)
-        m_pack->StatCache(cacheBytes, zips, chunks);
-    out["cache"]           = ZMJSON::object();
-    out["cache"]["bytes"]  = cacheBytes;
-    out["cache"]["zips"]   = zips;
-    out["cache"]["chunks"] = chunks;
-    out["db_size"]         = co_await m_db->DbFileSize();
+    {
+        out["cache"] = co_await ZmHttpServer::RunOnPool<ZMJSON>(
+            [this]() -> ZMJSON
+            {
+                int64_t b  = 0;
+                int64_t z  = 0;
+                int64_t ch = 0;
+                m_pack->StatCache(b, z, ch);
+                ZMJSON j    = ZMJSON::object();
+                j["bytes"]  = b;
+                j["zips"]   = z;
+                j["chunks"] = ch;
+                return j;
+            });
+    }
+    else
+    {
+        out["cache"]           = ZMJSON::object();
+        out["cache"]["bytes"]  = 0;
+        out["cache"]["zips"]   = 0;
+        out["cache"]["chunks"] = 0;
+    }
+    out["db_size"] = co_await m_db->DbFileSize();
     co_return Respond(out);
 }
 

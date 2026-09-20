@@ -324,10 +324,9 @@ drogon::Task<ZMJSON> ZmFileShareModule::Create(const ZmOpCtx& ctx, int64_t space
                                        "选中的条目必须来自同一空间");
                 rows.push_back(std::move(row));
             }
-            // 公共空间不提供"仅登录可见"(§3.12.2):按**条目实际所在空间**判定 —— 入参 space
-            // 只是客户端的说法(传空即为 0),真实空间以 nodes 为准(见上方 realSpace)。
-            // 拿入参判定会把个人空间的分享误判成公共空间,开关怎么点都存不下来
-            bool effectiveLoginOnly = (realSpace == 0) ? false : loginOnly;
+            // "仅登录可见"对两种空间一视同仁:公共空间的内容本来所有登录用户都能看,
+            // 勾上它只是"要求先登录"(挡住拿到链接的未登录访客),不构成越权
+            bool effectiveLoginOnly = loginOnly;
             if (!ZmFileNodeModule::SpaceWritable(realSpace, ctx.uid))
                 return ZmFileError(zm_file_err::kPermDenied, 403, "无权分享该空间的条目");
             ZMJSON cnt = m_db->QueryRowSync(
@@ -1298,7 +1297,7 @@ drogon::Task<ZMJSON> ZmFileShareModule::Download(const std::string&          tok
         }
     }
 
-    // 多条目 / 目录:打包(同一请求重复调用幂等)
+    // 多条目 / 目录:打包(同一分享 + 同一批条目的重复请求复用同一任务)
     std::string key = token + "|";
     {
         std::vector<int64_t> sorted = ids;
@@ -1306,17 +1305,15 @@ drogon::Task<ZMJSON> ZmFileShareModule::Download(const std::string&          tok
         for (int64_t id : sorted)
             key += std::to_string(id) + ",";
     }
-    std::string existTask;
-    {
-        std::lock_guard<std::mutex> lk(m_packMtx);
-        auto                        it = m_packKeys.find(key);
-        if (it != m_packKeys.end())
-            existTask = it->second;
-    }
-    if (!existTask.empty())
+    // 幂等依据落在任务表的 ref_id(幂等键的短哈希)里:服务重启后仍然有效,
+    // 也不占着进程内的一张只增不减的表
+    std::string dedupeKey = ZmFilePackModule::DedupeHash(key);
+    if (!dedupeKey.empty())
     {
         ZMJSON trow = co_await m_db->QueryRow(
-            "SELECT * FROM transfer_tasks WHERE task_no = ?1", {existTask});
+            "SELECT * FROM transfer_tasks WHERE type = ?1 AND uid = ?2 AND ref_id = ?3 "
+            "ORDER BY id DESC LIMIT 1",
+            {std::to_string(zm_file::kTaskPack), std::to_string(ownerUid), dedupeKey});
         if (!trow.empty())
         {
             int st = static_cast<int>(zm_file_row_int(trow, "status", 0));
@@ -1331,7 +1328,8 @@ drogon::Task<ZMJSON> ZmFileShareModule::Download(const std::string&          tok
                         { return m_store->Exists(m_store->ZipDir(space) + "\\" + zipName); });
                     if (exists)
                     {
-                        ZMJSON t = co_await m_token->IssuePack(ownerUid, existTask);
+                        std::string existNo = zm_file_row_str(trow, "task_no");
+                        ZMJSON      t       = co_await m_token->IssuePack(ownerUid, existNo);
                         if (!ZmFileHasError(t))
                         {
                             co_await m_db->Exec(
@@ -1355,26 +1353,20 @@ drogon::Task<ZMJSON> ZmFileShareModule::Download(const std::string&          tok
             {
                 // 压缩中:幂等返回同一任务号,前端 2s 后重试
                 ZMJSON out     = ZMJSON::object();
-                out["task_no"] = existTask;
+                out["task_no"] = zm_file_row_str(trow, "task_no");
                 co_return out;
             }
+            // 已失败/已取消/压缩包被清理:落到下面重新发起(新任务记同一 ref_id,查询取最新一条)
         }
-        // 任务已失败/被清理:重新发起
-        std::lock_guard<std::mutex> lk(m_packMtx);
-        m_packKeys.erase(key);
     }
 
     ZmOpCtx ctx;
     ctx.uid        = ownerUid;
     ctx.ip         = ip;
-    ZMJSON created = co_await m_pack->Create(space, ids, ctx);
+    ZMJSON created = co_await m_pack->Create(space, ids, ctx, key);
     if (ZmFileHasError(created))
         co_return created;
     std::string taskNo = zm_file_row_str(created, "task_no");
-    {
-        std::lock_guard<std::mutex> lk(m_packMtx);
-        m_packKeys[key] = taskNo;
-    }
     if (m_audit)
         co_await m_audit->RecordShareAccess(shareId, token, zm_file::kShareLogPack, 1,
                                             viewerUid, ip, ua, "打包中");

@@ -1491,10 +1491,7 @@ onMounted(() => {
                     @close="mcDlg.show = false" @done="onMcDone" />
 
     <!-- 分享 -->
-    <!-- is-public 取"当前所在空间":列表条目的 NodeView 不下发 space,按 nodes[0].space 判会
-         恒为 false,于是公共空间的分享也会出现"仅登录可见"开关(§3.12.2 规定公共空间不提供) -->
     <ShareDialog :show="shareDlg.show" :nodes="shareDlg.nodes" :space="Number(space)"
-                 :is-public="Number(space) === 0"
                  @close="shareDlg.show = false" @created="loadShares" />
 
     <!-- 详情 -->

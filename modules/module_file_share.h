@@ -231,10 +231,6 @@ class ZmFileShareModule
     };
     std::mutex                            m_credMtx;
     std::unordered_map<std::string, Cred> m_creds;
-
-    /// 公开面打包去重:分享 token + 条目集合 → 任务号(幂等重试的依据)
-    std::mutex                                   m_packMtx;
-    std::unordered_map<std::string, std::string> m_packKeys;
 };
 
 #endif // ZM_MODULE_FILE_SHARE_H

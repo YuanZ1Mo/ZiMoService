@@ -125,9 +125,13 @@ std::string ZmFileUploadModule::HashFileSha256(const std::string& path)
     while (ok)
     {
         DWORD done = 0;
-        if (!ReadFile(h, buf.data(), static_cast<DWORD>(buf.size()), &done, nullptr) ||
-            done == 0)
+        if (!ReadFile(h, buf.data(), static_cast<DWORD>(buf.size()), &done, nullptr))
+        {
+            ok = false; // 读失败:不能把"半截内容"的哈希当成文件哈希返回
             break;
+        }
+        if (done == 0)
+            break; // 读到文件尾
         ok = EVP_DigestUpdate(ctx, buf.data(), done) == 1;
     }
     unsigned char md[EVP_MAX_MD_SIZE];
@@ -713,6 +717,12 @@ drogon::Task<ZMJSON> ZmFileUploadModule::Complete(const ZmOpCtx&     ctx,
             if (!hash.empty())
             {
                 std::string actual = HashFileSha256(tmp);
+                if (actual.empty())
+                {
+                    // 读盘出错与"内容不符"要分开报:前者重传也没用,得先查磁盘
+                    m_store->RemoveFileSync(tmp);
+                    return ZmFileError(zm_file_err::kInternal, 500, "读取文件失败,无法校验");
+                }
                 if (actual != hash)
                 {
                     m_store->RemoveFileSync(tmp);

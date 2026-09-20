@@ -43,10 +43,17 @@ class ZmFilePackModule
  *
  * @param space 空间;ids 待打包条目(目录递归)
  * @param ctx 操作者
+ * @param dedupeKey 幂等键(空 = 不去重);非空时把其短哈希记进 transfer_tasks.ref_id,
+ *                  调用方据此复用同一批条目的既有任务(分享页重复点下载)
  * @return {task_no};超上限 → {"error":{...}}(PACK_TOO_LARGE)
  */
     drogon::Task<ZMJSON> Create(int64_t space, const std::vector<int64_t>& ids,
-                                const ZmOpCtx& ctx);
+                                const ZmOpCtx& ctx, const std::string& dedupeKey = "");
+
+    /// @brief 幂等键 → 短哈希(SHA-256 前 32 个十六进制字符;ref_id 列长 40)
+    /// @param key 幂等键(如 "分享令牌|id,id,id")
+    /// @return 哈希串;失败返回空串(空串视为不去重)
+    static std::string DedupeHash(const std::string& key);
 
     /// @brief 打包任务执行体(工作池线程内运行;由 Create / 重试路径调用)
     /// @param taskNo 任务号
