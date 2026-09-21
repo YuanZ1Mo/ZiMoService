@@ -82,8 +82,8 @@ class ZmServerAudioStreamModule
     static constexpr int64_t kPauseHoldMs        = 60000;   ///< 暂停保持上限(毫秒;超时释放设备)
     static constexpr int64_t kBootTimeoutMs      = 10000;   ///< 引导(含 sync)完成上限(毫秒)
     static constexpr double  kRecheckSec         = 30.0;    ///< 鉴权复检周期(秒)
-    static constexpr uint64_t kBackfillSegs      = 3;       ///< 起播补发片数(≈300ms)
-    static constexpr size_t  kRingSegments       = 10;      ///< 起播缓冲窗口(片;只服务起播补发)
+    static constexpr uint64_t kBackfillSegs      = 5;       ///< 起播补发片数(≈200ms;客户端起播门槛 ≥0.12s,5 片过线)
+    static constexpr size_t  kRingSegments       = 25;      ///< 起播缓冲窗口(≈1 秒:片长变了这里要跟着变)
     static constexpr int     kDetailLevel        = 2;       ///< /status 明细可见等级(admin=2)
 
   private:

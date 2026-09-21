@@ -503,34 +503,15 @@ void ZmAudioCapturer::ThreadMain()
         }
     };
 
-    while (!m_exit.load())
-    {
-        if (WaitForSingleObject(static_cast<HANDLE>(m_event.load()), kWaitMs) != WAIT_OBJECT_0)
-        {
-            // 超时:引擎未交付数据(可能设备已失效)→ 探测一次
-            UINT32  probe = 0;
-            HRESULT h     = m_capture->GetNextPacketSize(&probe);
-            if (FAILED(h) && h != AUDCLNT_E_BUFFER_ERROR)
-            {
-                DEFAULT_LOG_WARN("{} 采集失败 hr=0x{:08x},停止采集", kLogTag, (unsigned)h);
-                deviceLost = true;
-                break;
-            }
-            // 空闲设备(整机没有任何声音在播)时引擎可能一个包都不交付:
-            // 由下面的"按真实时间补齐"负责出声,这里只需继续走时间轴
-            topUpSilence();
-            if (m_onTick)
-                m_onTick();
-            continue;
-        }
-
+    // 排空当前可取的包(含静音包);失败(设备失效)时置 deviceLost 并返回 false
+    auto drainPackets = [&]() -> bool {
         UINT32  packetCount = 0;
         HRESULT hr          = m_capture->GetNextPacketSize(&packetCount);
         if (FAILED(hr) && hr != AUDCLNT_E_BUFFER_ERROR)
         {
             DEFAULT_LOG_WARN("{} 采集失败 hr=0x{:08x},停止采集", kLogTag, (unsigned)hr);
             deviceLost = true;
-            break;
+            return false;
         }
         while (hr == S_OK && packetCount > 0 && !m_exit.load())
         {
@@ -559,6 +540,17 @@ void ZmAudioCapturer::ThreadMain()
             // 排空循环的通行写法:释放后重新查询包数
             hr = m_capture->GetNextPacketSize(&packetCount);
         }
+        return true;
+    };
+
+    while (!m_exit.load())
+    {
+        // 等引擎就绪事件;超时即继续(空闲设备可能长时间不交付包,按真实时间补齐出声)。
+        // 返回值有意忽略:下面无论事件是否触发都排空一次 —— 事件偶发丢失时积压的包
+        // 在这里被回收,不必等到下一次置位(引擎每来一个包都会重新置位,故最多迟一个包)
+        WaitForSingleObject(static_cast<HANDLE>(m_event.load()), kWaitMs);
+        if (!drainPackets())
+            break;
 
         topUpSilence();
         if (m_onTick)

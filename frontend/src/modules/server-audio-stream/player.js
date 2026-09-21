@@ -23,7 +23,12 @@ const LEAD_MIN_SEC = 0.2        // 缓冲余量起点(= 2 个分片)
                                 // 这是读数的下限来源:媒体元素至少要这么多数据才肯持续出声。
                                 // 真机上若出现起播不出声/频繁卡顿,把它调回 0.3(代价是读数 +100ms)
 const LEAD_MAX_SEC = 2          // 余量上限(卡顿后自适应上调到此为止)
-const CATCHUP_SLACK_SEC = 1.5   // 落后超过"余量 + 该值"即前跳追平
+const CATCHUP_SLACK_SEC = 1.5   // 落后超过"余量 + 该值"即前跳追平(紧急:立即追)
+const LEAD_SETTLE_MARGIN = 0.35 // 余量的窗口最小值高于目标多少才算"卡住"(秒)
+const LEAD_SETTLE_MS = 3000     // "多余"须持续多久才回收(毫秒)
+                                // 推流下"追加速度 = 播放速度":余量一旦被某次事件(起播落点 /
+                                // 卡顿 / 投递成串)推高就不会自己落回。没有这条回收,落后就
+                                // 永久停在高位 —— 表现为"延迟稳定在几百毫秒下不来"。
 const LEAD_DECAY_MS = 45000     // 连续多久不卡,就把自适应余量减半收回来
 const TRIM_EVERY_TICKS = 30     // 每 30 秒裁剪一次旧数据(内存与收听时长解耦)
 const KEEP_BEHIND_SEC = 10      // 裁剪时保留播放头之后(已播过)的秒数
@@ -103,6 +108,11 @@ export class AudioPlayer {
     this._lastFrameAt = 0        // 最近一帧(meta/批)到达时刻:滞留哨兵依据
     this._jitterEwma = 0         // 帧到达间隔抖动(毫秒;驱动动态余量)
     this._lastFrameGapAt = 0
+    /// 诊断计数(仅 ?debug=1 时看,不参与任何行为)
+    this._diag = { ticks: 0, jumps: 0, over: 0 }
+    this._settleSince = 0        // '多余余量'开始出现的时刻(持续够久才回收)
+    this._leadWinAt = 0          // 余量窗口起点
+    this._leadMin = 0            // 窗口内最小余量(避开 100ms 锯齿)
     this._onPlayingEv = () => this._handlePlaying()
     this._onSourceEnd = () => { this._sourceDead = true }
     this._onOnline = () => {
@@ -221,6 +231,26 @@ export class AudioPlayer {
   /// 是否处于活动态(连接中/播放中/暂停/重连)
   get active() {
     return !this._stopped
+  }
+
+  /// 诊断读数:把"延迟由哪一项决定"摊开(界面带 ?debug=1 时显示)
+  /// target = max(reserve, jitter, segLead):谁最大就是谁在决定延迟
+  get debugInfo() {
+    const a = this.audio
+    const n = a.buffered ? a.buffered.length : 0
+    const lead = n ? Math.max(0, a.buffered.end(n - 1) - a.currentTime) : 0
+    return {
+      reserve: Number(this._leadSec.toFixed(2)),
+      jitter: Math.round(this._jitterEwma),
+      target: Number(this._baseTargetSec().toFixed(2)),
+      lead: Number(lead.toFixed(2)),
+      slack: CATCHUP_SLACK_SEC,
+      lag: this.delayMs,
+      ticks: this._diag.ticks,  // 稳态定时器跑了多少拍(不涨 = 定时器没在跑)
+      jumps: this._diag.jumps,  // 前跳实际执行了几次
+      over: this._diag.over,     // 落后超出紧急触发线多少毫秒(负数 = 还不到线)
+      min: this._diag.min        // 2 秒窗口内的最小余量(判定回收用的是它)
+    }
   }
 
   /// 播放头对应的片号(设计口径:第 N 片覆盖 [(N−1)×segmentMs, N×segmentMs))
@@ -719,6 +749,7 @@ export class AudioPlayer {
   /// 稳态定时器:看门狗 / 前跳 / 状态收敛 / 周期裁剪 / 收帧哨兵
   _tick() {
     if (this._stopped) return
+    this._diag.ticks += 1
     if (this._paused) return
     if (!this._playing && this._connectAt && Date.now() - this._connectAt > CONNECT_STALL_MS) {
       this._stalled = true      // 建连成功但长时间没有可播数据:如实显示原因
@@ -748,7 +779,32 @@ export class AudioPlayer {
     const start = a.buffered.start(n - 1)
     const end = a.buffered.end(n - 1)
     const target = this._baseTargetSec()
-    if (end - a.currentTime <= target + CATCHUP_SLACK_SEC) return
+    const lead = end - a.currentTime
+    // 诊断:落后超出"紧急触发线"多少毫秒(负数 = 没到线)
+    this._diag.over = Math.round((lead - (target + CATCHUP_SLACK_SEC)) * 1000)
+
+    // 片是每 100ms 到一次的,所以瞬时余量必然锯齿(约 0.1s 幅度)。判定"余量偏高"要看
+    // 窗口内的最小值,否则每次都撞在锯齿低点、永远攒不满持续时间。
+    const now = Date.now()
+    if (!this._leadWinAt || now - this._leadWinAt > 2000) {
+      this._leadWinAt = now
+      this._leadMin = lead
+    } else {
+      this._leadMin = Math.min(this._leadMin, lead)
+    }
+    this._diag.min = Number(this._leadMin.toFixed(2))
+
+    let urgent = false
+    if (lead > target + CATCHUP_SLACK_SEC) {
+      urgent = true   // 落后过多(抖动 / 卡顿之后):立即追平(瞬时值即可)
+    } else if (this._leadMin > target + LEAD_SETTLE_MARGIN) {
+      // 只是"多余的余量"(量的是窗口最小值):持续够久才回收一次
+      if (!this._settleSince) this._settleSince = now
+      if (now - this._settleSince < LEAD_SETTLE_MS) return
+    } else {
+      this._settleSince = 0
+      return
+    }
 
     const want = Math.max(start, end - target)
     if (want <= a.currentTime + 0.05) return
@@ -757,8 +813,11 @@ export class AudioPlayer {
     } catch {
       return
     }
+    this._diag.jumps += 1
+    this._settleSince = 0
     this._lastCt = -1
-    this.onNotice('segmentGone', '')     // 复用现有提示:跳过一段
+    if (urgent)
+      this.onNotice('segmentGone', '')   // 只有紧急追平才提示;例行回收不打扰
   }
 
   /// 播放头停滞看门狗:元素"在播"但时间不前进时自愈
@@ -798,7 +857,7 @@ export class AudioPlayer {
       this._leadSec = Math.min(this._leadSec * 2, LEAD_MAX_SEC)
       if (this._stallFixes > 1) {
         try {
-          a.currentTime = Math.max(a.buffered.start(0), end - 0.4)
+          a.currentTime = Math.max(a.buffered.start(0), end - this._baseTargetSec())
         } catch {
           /* 定位失败则交由下面的重新推起处理 */
         }

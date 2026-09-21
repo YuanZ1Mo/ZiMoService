@@ -47,6 +47,9 @@ const hint = ref('')             // 参数行/舞台下方的一次性提示(410
 const format = ref({ sampleRate: 0, channels: 0, bitrate: 0 })
 const segmentMs = ref(100)
 const delayMs = ref(null)
+/// 诊断读数:URL 带 ?debug=1 时显示(默认不显示,不打扰普通使用)
+const debugOn = new URLSearchParams(location.search).has('debug')
+const debugText = ref('')
 /// 音量记忆:默认 100,用户调过就记住(只存本地)
 const VOLUME_KEY = 'zimo-audio-volume'
 function loadVolume() {
@@ -355,6 +358,12 @@ onMounted(() => {
     if (raw == null) delayMs.value = null
     else if (delayMs.value == null) delayMs.value = raw
     else delayMs.value = Math.round(delayMs.value * 0.5 + raw * 0.5)
+    // 诊断行(?debug=1):目标 = max(余量, 抖动折算, 起播片数)——谁最大谁在决定延迟
+    if (debugOn && player && player.active) {
+      const d = player.debugInfo
+      debugText.value =
+        `余量 ${d.reserve}s · 抖动 ${d.jitter}ms · 目标 ${d.target}s · 实测余量 ${d.lead}s · 额度 ${d.slack}s · 落后 ${d.lag}ms · 超紧急线 ${d.over}ms · 窗口最小余量 ${d.min}s · tick ${d.ticks} · 已跳 ${d.jumps}`
+    }
   }, 1000)
   // 收听信息 5s 轮询:仅播放期间(未播放不必轮询)
   statusTimer = setInterval(() => {
@@ -465,6 +474,7 @@ function onVolume(e) {
             延迟 <b>{{ delayText }}</b> ms
           </span>
         </div>
+        <div v-if="debugOn" class="sa-params-cap">{{ debugText }}</div>
 
         <div class="sa-divider"></div>
 

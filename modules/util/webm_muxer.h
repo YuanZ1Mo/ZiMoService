@@ -61,7 +61,7 @@ public:
     /// 曾试过缩到 2 帧(40ms)以压低延迟,实测**没有收益**:媒体元素在数据太少时不肯进入
     /// 播放态,稳态缓冲余量压不下去(反而更难稳定),片长不是延迟的瓶颈 —— 客户端"与直播
     /// 边缘的距离"才是。
-    static constexpr uint32_t kFramesPerSegment = 5;
+    static constexpr uint32_t kFramesPerSegment = 2;   // 40ms 分片(压低延迟用;片长 = 该值 × 20ms)
 
 private:
     /// @brief 构造 OpusHead(19 字节;映射族 0)
