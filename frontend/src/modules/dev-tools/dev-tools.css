@@ -18,6 +18,12 @@
 .dt-page .utab:hover{color:var(--color-text)}
 .dt-page .utab.on{color:var(--color-primary);border-color:var(--color-primary)}
 .dt-body{flex:1;min-height:0;display:flex;flex-direction:column;padding-top:16px}
+/* 工具切换(二期:分组下拉替代平铺 tab) */
+.dt-switch{display:flex;align-items:center;gap:10px;flex:none}
+.dt-switch .zsel{width:260px}
+@media (max-width:768px){
+  .dt-switch .zsel{width:100%}
+}
 .dt-body > *{flex:1;min-height:0;display:flex;flex-direction:column;gap:10px}
 
 /* ---------- 通用小件 ---------- */
@@ -35,6 +41,10 @@
   display:flex;align-items:center;gap:8px;padding:8px 12px;flex:none;
   border-bottom:1px solid var(--color-border-soft);background:var(--color-primary-soft);
 }
+/* 面板高度分配:固定高度(选项行)与撑满剩余(结果区),与 .dt-cols 的双栏同高口径一致 */
+.dt-pane-fixed{flex:none}
+.dt-pane-fill{flex:1;min-height:0}
+.dt-pane-body{flex:1;min-height:0;overflow:auto;padding:14px}
 .dt-pane-title{font-size:var(--fs-cap);font-weight:700;color:var(--color-text-2)}
 .dt-ta{
   flex:1;min-height:0;width:100%;resize:none;border:0;outline:none;
@@ -58,12 +68,33 @@
 .dt-stats{display:flex;align-items:center;gap:14px;flex:none;font-size:var(--fs-cap);color:var(--color-text-3)}
 .dt-stats b{font-weight:600;color:var(--color-text-2)}
 
-/* ---------- JSON 格式化 ---------- */
-.dt-json-cols{display:flex;gap:12px;flex:1;min-height:0}
-.dt-json-cols > .dt-pane{flex:1}
+/* ---------- 二期基座(ToolShell + 共用件) ---------- */
+.dt-tool{flex:1;min-height:0;display:flex;flex-direction:column;gap:10px}
+.dt-tool-main{flex:1;min-height:0;display:flex;flex-direction:column;gap:10px}
+/* 双栏输入/输出:一期 JSON 与二期多数工具共用 */
+.dt-cols{display:flex;gap:12px;flex:1;min-height:0}
+.dt-cols > .dt-pane{flex:1}
 @media (max-width:768px){
-  .dt-json-cols{flex-direction:column}
+  .dt-cols{flex-direction:column}
 }
+/* 工具条内的紧凑控件 */
+.dt-field{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-cap);color:var(--color-text-2)}
+.dt-num{width:76px;height:30px;padding:0 8px;font-size:var(--fs-cap)}
+.dt-checks{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.dt-checks label{display:inline-flex;align-items:center;gap:5px;font-size:var(--fs-cap);color:var(--color-text-2);user-select:none}
+/* 结果键值表(进制、颜色、时间戳等) */
+.dt-kv{display:grid;grid-template-columns:104px 1fr;gap:8px 12px;align-items:center;margin:0}
+.dt-kv dt{font-size:var(--fs-cap);color:var(--color-text-3)}
+.dt-kv dd{margin:0;font-family:Consolas,"Cascadia Mono",monospace;font-size:13px;color:var(--color-text);word-break:break-all}
+.dt-swatch{width:44px;height:44px;border-radius:var(--r-sm);border:1px solid var(--color-border);flex:none}
+.dt-hint{font-size:var(--fs-cap);color:var(--color-text-3)}
+/* 单行输入(时间戳、进制、颜色等) */
+.dt-in{width:100%;height:38px;padding:0 12px;background:var(--color-card);color:var(--color-text);
+  border:1.5px solid var(--color-border);border-radius:var(--r-md);font-size:var(--fs-body);
+  font-family:Consolas,"Cascadia Mono",monospace}
+.dt-in:focus{border-color:var(--color-primary);box-shadow:0 0 0 3px var(--color-ring);outline:none}
+.dt-in.err{border-color:var(--color-err)}
+.dt-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 
 /* ---------- Markdown 编辑器 ---------- */
 .md-toolbar{

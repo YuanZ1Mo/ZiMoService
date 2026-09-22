@@ -4,6 +4,8 @@
 // 原因优先给中文文案,未命中映射时原样展示引擎消息;>2MB 关闭自动重算改按钮触发。
 import { ref, computed, watch, nextTick, onBeforeUnmount, inject } from 'vue'
 import Modal from '../../components/Modal.vue'
+import ToolShell from './ToolShell.vue'
+import { copyText } from './toolbox'
 import { countStats } from './stats'
 
 const toast = inject('toast')
@@ -31,11 +33,14 @@ const dropping = ref(false)
 const askSample = ref(false)
 
 const srcTa = ref(null)
+const outTa = ref(null)
 
 const inStats = computed(() => countStats(src.value))
 const outStats = computed(() => countStats(out.value))
 const errWhere = computed(() =>
   err.value && err.value.line ? `第 ${err.value.line} 行第 ${err.value.col} 列:` : '')
+/// ToolShell 错误条文案:错误条与输入区同处一屏,不再塞在输出面板内部
+const errText = computed(() => (err.value ? `${errWhere.value}${err.value.msg}` : ''))
 const indentLabel = computed(() =>
   mode.value === 'compact' ? '压缩(单行)' : `格式化(缩进 ${indent.value === 'tab' ? 'Tab' : indent.value + ' 空格'})`)
 
@@ -185,31 +190,13 @@ function applySample() {
 }
 
 async function copyOut() {
-  const text = out.value
-  if (!text) {
-    toast('没有可复制的内容', 'warn')
-    return
-  }
-  try {
-    await navigator.clipboard.writeText(text)
+  const r = await copyText(out.value, outTa.value)
+  if (r === 'ok')
     toast('已复制到剪贴板', 'ok')
-    return
-  } catch { /* 被拒或环境不支持:走回退 */ }
-  try {
-    const ta = document.createElement('textarea')
-    ta.value = text
-    ta.style.position = 'fixed'
-    ta.style.opacity = '0'
-    document.body.appendChild(ta)
-    ta.select()
-    const ok = document.execCommand('copy')
-    document.body.removeChild(ta)
-    if (ok) {
-      toast('已复制到剪贴板', 'ok')
-      return
-    }
-  } catch { /* 继续兜底 */ }
-  toast('已选中,请手动复制(Ctrl+C)', 'warn')
+  else if (r === 'fail')
+    toast('没有可复制的内容', 'warn')
+  else
+    toast('已选中,请手动复制(Ctrl+C)', 'warn')
 }
 
 function fillBack() {
@@ -248,15 +235,15 @@ function onDrop(e) {
 </script>
 
 <template>
-  <div class="dt-json">
-    <div class="dt-bar">
+  <ToolShell :error="errText">
+    <template #bar>
       <div class="seg dt-seg" role="group" aria-label="缩进方式">
         <button type="button" class="seg-item" :class="{ active: indent === '2' }"
-                @click="setIndent('2')">2 空格</button>
+                :aria-pressed="indent === '2'" @click="setIndent('2')">2 空格</button>
         <button type="button" class="seg-item" :class="{ active: indent === '4' }"
-                @click="setIndent('4')">4 空格</button>
+                :aria-pressed="indent === '4'" @click="setIndent('4')">4 空格</button>
         <button type="button" class="seg-item" :class="{ active: indent === 'tab' }"
-                @click="setIndent('tab')">Tab</button>
+                :aria-pressed="indent === 'tab'" @click="setIndent('tab')">Tab</button>
       </div>
       <button type="button" class="btn btn-primary btn-sm" @click="doPretty">格式化</button>
       <button type="button" class="btn btn-secondary btn-sm" @click="doMinify">压缩</button>
@@ -264,14 +251,16 @@ function onDrop(e) {
       <button type="button" class="btn btn-ghost btn-sm" @click="loadSample">载入示例</button>
       <button type="button" class="btn btn-ghost btn-sm" :disabled="!out" @click="copyOut">复制结果</button>
       <button type="button" class="btn btn-ghost btn-sm" :disabled="!out" @click="fillBack">回填到输入</button>
-    </div>
+    </template>
 
-    <div v-if="big" class="dt-warn">
-      <span aria-hidden="true">⚠</span>
-      <span>内容较大(超过 2MB),已暂停自动重算 —— 请点「格式化」或「压缩」手动执行</span>
-    </div>
+    <template #notice>
+      <div v-if="big" class="dt-warn">
+        <span aria-hidden="true">⚠</span>
+        <span>内容较大(超过 200 万字符),已暂停自动重算 —— 请点「格式化」或「压缩」手动执行</span>
+      </div>
+    </template>
 
-    <div class="dt-json-cols">
+    <div class="dt-cols">
       <div class="dt-pane" :class="{ 'dt-drop': dropping }"
            @dragover.prevent="dropping = true" @dragleave="dropping = false" @drop.prevent="onDrop">
         <div class="dt-pane-head">
@@ -287,19 +276,15 @@ function onDrop(e) {
           <span class="dt-pane-title">输出</span>
           <span class="dt-cap">{{ indentLabel }}</span>
         </div>
-        <div v-if="err" class="dt-err">
-          <span aria-hidden="true">✕</span>
-          <span>{{ errWhere }}{{ err.msg }}</span>
-        </div>
-        <textarea class="dt-ta wrap" readonly :value="out"
+        <textarea ref="outTa" class="dt-ta wrap" readonly :value="out"
                   :placeholder="err ? '语法错误:已在输入区标出位置' : '格式化 / 压缩结果会显示在这里'"></textarea>
       </div>
     </div>
 
-    <div class="dt-stats">
+    <template #status>
       <span>输入:<b>{{ inStats.chars }}</b> 字符 · <b>{{ inStats.lines }}</b> 行</span>
       <span>输出:<b>{{ outStats.chars }}</b> 字符 · <b>{{ outStats.lines }}</b> 行</span>
-    </div>
+    </template>
 
     <Modal :show="askSample" title="载入示例" @close="askSample = false">
       <p class="dlg-tip" style="margin:0">载入示例会覆盖当前输入内容,确定继续?</p>
@@ -308,5 +293,5 @@ function onDrop(e) {
         <button type="button" class="btn btn-primary" @click="applySample">覆盖并载入</button>
       </template>
     </Modal>
-  </div>
+  </ToolShell>
 </template>

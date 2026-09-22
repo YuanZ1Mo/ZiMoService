@@ -462,11 +462,11 @@ onBeforeUnmount(() => {
     <div class="dt-bar">
       <div class="seg dt-seg" role="group" aria-label="视图模式">
         <button type="button" class="seg-item" :class="{ active: mode === 'edit' }"
-                @click="mode = 'edit'">仅编辑</button>
+                :aria-pressed="mode === 'edit'" @click="mode = 'edit'">仅编辑</button>
         <button type="button" class="seg-item" :class="{ active: mode === 'preview' }"
-                @click="mode = 'preview'">仅预览</button>
+                :aria-pressed="mode === 'preview'" @click="mode = 'preview'">仅预览</button>
         <button v-if="!narrow" type="button" class="seg-item" :class="{ active: mode === 'split' }"
-                @click="mode = 'split'">分栏</button>
+                :aria-pressed="mode === 'split'" @click="mode = 'split'">分栏</button>
       </div>
       <span class="sp"></span>
       <span class="dt-cap">草稿保存在本机浏览器,不区分账号</span>
