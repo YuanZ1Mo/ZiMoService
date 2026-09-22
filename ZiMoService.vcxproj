@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Release|x64">
@@ -1485,6 +1485,7 @@
     <ClInclude Include="modules\module_user_admin.h" />
     <ClInclude Include="modules\module_portal.h" />
     <ClInclude Include="modules\module_server_audio_stream.h" />
+    <ClInclude Include="modules\module_dev_tools.h" />
     <ClInclude Include="modules\util\audio_capturer.h" />
     <ClInclude Include="modules\util\webm_muxer.h" />
     <ClInclude Include="modules\module_file_admin.h" />
@@ -1522,6 +1523,7 @@
     <ClCompile Include="modules\module_user_admin.cpp" />
     <ClCompile Include="modules\module_portal.cpp" />
     <ClCompile Include="modules\module_server_audio_stream.cpp" />
+    <ClCompile Include="modules\module_dev_tools.cpp" />
     <ClCompile Include="modules\util\audio_capturer.cpp" />
     <ClCompile Include="modules\util\webm_muxer.cpp" />
     <ClCompile Include="modules\module_file_admin.cpp" />

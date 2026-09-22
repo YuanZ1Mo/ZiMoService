@@ -25,6 +25,7 @@
 #include "modules/module_user_admin.h"
 #include "modules/module_portal.h"
 #include "modules/module_server_audio_stream.h"
+#include "modules/module_dev_tools.h"
 
 // 文件中心
 #include "modules/module_file_db.h"
@@ -170,6 +171,11 @@ void ServicePortal::CreateModules()
                                                           m_permission.get(), m_gate.get());
     m_audio->RegisterPermissions();
 
+    // 小工具(无数据面:仅权限点登记 + check 鉴权接口)
+    m_devTools = std::make_unique<ZmDevToolsModule>(m_restful, m_session.get(),
+                                                    m_permission.get(), m_gate.get());
+    m_devTools->RegisterPermissions();
+
     // ── 文件中心:独立库 filehub.db + 物理根 modules\\filehub ──
     const std::string fileHubRoot = ZmExeDir() + "modules\\filehub";
     m_fileDb = std::make_unique<ZmFileDbModule>();
@@ -302,6 +308,7 @@ void ServicePortal::RegisterRestfulRoutes(ZmHttpRestfulServer* rest)
     m_fileHub->RegisterRoutes();
     m_fileAdmin->RegisterRoutes();
     m_audio->RegisterRoutes();
+    m_devTools->RegisterRoutes();
 }
 
 // ============================================================================

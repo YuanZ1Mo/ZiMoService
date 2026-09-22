@@ -32,6 +32,9 @@ class ZmPortalModule;
 // 服务器音频
 class ZmServerAudioStreamModule;
 
+// 小工具
+class ZmDevToolsModule;
+
 // 文件中心
 class ZmFileDbModule;
 class ZmFileStoreModule;
@@ -115,6 +118,9 @@ private:
 
     // 服务器音频(无独立数据模块:状态全在内存)
     std::unique_ptr<ZmServerAudioStreamModule> m_audio;
+
+    // 小工具(无数据面:仅权限点登记 + check 鉴权接口)
+    std::unique_ptr<ZmDevToolsModule> m_devTools;
 
     // 文件中心(数据访问 → 存储 → 条目/任务 → 上传/打包/令牌/分享 → 编排)
     std::unique_ptr<ZmFileDbModule> m_fileDb;
