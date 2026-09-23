@@ -52,9 +52,6 @@
     <Filter Include="头文件\Public\spdlog\sinks">
       <UniqueIdentifier>{e15ad7b5-b437-456c-8a83-656ea5c77a1b}</UniqueIdentifier>
     </Filter>
-    <Filter Include="头文件\Public\ssl">
-      <UniqueIdentifier>{168c591b-d192-4652-99cf-82b39218084f}</UniqueIdentifier>
-    </Filter>
     <Filter Include="头文件\Public\util">
       <UniqueIdentifier>{33b081b1-cab4-41a0-84f3-7ff924f230b1}</UniqueIdentifier>
     </Filter>
@@ -399,9 +396,6 @@
       <Filter>头文件\Public\define</Filter>
     </ClInclude>
     <ClInclude Include="..\ZiMoPublic\json\json.hpp">
-      <Filter>头文件\Public\json</Filter>
-    </ClInclude>
-    <ClInclude Include="..\ZiMoPublic\json\zm_json.h">
       <Filter>头文件\Public\json</Filter>
     </ClInclude>
     <ClInclude Include="..\ZiMoPublic\libevent\include\evconfig-private.h">
@@ -836,9 +830,6 @@
     <ClInclude Include="..\ZiMoPublic\util\zm_util_libevent.h">
       <Filter>头文件\Public\util</Filter>
     </ClInclude>
-    <ClInclude Include="..\ZiMoPublic\spdlog\zm_logger.h">
-      <Filter>头文件\Public\spdlog</Filter>
-    </ClInclude>
     <ClInclude Include="..\ZiMoPublic\util\zm_util_container.h">
       <Filter>头文件\Public\util</Filter>
     </ClInclude>
@@ -847,12 +838,6 @@
     </ClInclude>
     <ClInclude Include="..\ZiMoPublic\net\zm_net_ip.h">
       <Filter>头文件\Public\net</Filter>
-    </ClInclude>
-    <ClInclude Include="..\ZiMoPublic\ssl\zm_ssl_ctx.h">
-      <Filter>头文件\Public\ssl</Filter>
-    </ClInclude>
-    <ClInclude Include="..\ZiMoPublic\ssl\zm_ssl_fingerprint.h">
-      <Filter>头文件\Public\ssl</Filter>
     </ClInclude>
     <ClInclude Include="net_dock.h">
       <Filter>头文件</Filter>

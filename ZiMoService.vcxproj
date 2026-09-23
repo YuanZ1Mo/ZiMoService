@@ -1274,7 +1274,6 @@
     <ClInclude Include="..\ZiMoPublic\drogon\include\zconf.h" />
     <ClInclude Include="..\ZiMoPublic\drogon\include\zlib.h" />
     <ClInclude Include="..\ZiMoPublic\json\json.hpp" />
-    <ClInclude Include="..\ZiMoPublic\json\zm_json.h" />
     <ClInclude Include="..\ZiMoPublic\libevent\include\evconfig-private.h" />
     <ClInclude Include="..\ZiMoPublic\libevent\include\evdns.h" />
     <ClInclude Include="..\ZiMoPublic\libevent\include\event.h" />
@@ -1448,9 +1447,6 @@
     <ClInclude Include="..\ZiMoPublic\spdlog\stopwatch.h" />
     <ClInclude Include="..\ZiMoPublic\spdlog\tweakme.h" />
     <ClInclude Include="..\ZiMoPublic\spdlog\version.h" />
-    <ClInclude Include="..\ZiMoPublic\spdlog\zm_logger.h" />
-    <ClInclude Include="..\ZiMoPublic\ssl\zm_ssl_ctx.h" />
-    <ClInclude Include="..\ZiMoPublic\ssl\zm_ssl_fingerprint.h" />
     <ClInclude Include="..\ZiMoPublic\util\zm_util_container.h" />
     <ClInclude Include="..\ZiMoPublic\util\zm_util_evbase_runloop.h" />
     <ClInclude Include="..\ZiMoPublic\util\zm_util_file.h" />
