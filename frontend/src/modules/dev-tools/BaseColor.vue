@@ -18,7 +18,18 @@ const RADIX = [
 ]
 const mode = ref('radix')
 const radixIn = ref(10)
-const input = ref('')
+// 两种模式各留一份输入:共用一个输入框会在切换时串味("255" 在颜色模式下会被当作 #255 解析)
+const radixInput = ref('')
+const colorInput = ref('')
+const input = computed({
+  get: () => (mode.value === 'radix' ? radixInput.value : colorInput.value),
+  set: (v) => {
+    if (mode.value === 'radix')
+      radixInput.value = v
+    else
+      colorInput.value = v
+  }
+})
 const errMsg = ref('')
 const result = ref(null)   // 进制:{2,8,10,16} / 颜色:{hex,rgb,hsl,alpha}
 const outEl = ref(null)
@@ -162,12 +173,6 @@ function compute() {
 }
 watch([input, mode, radixIn], compute, { immediate: true })
 
-function switchMode(m) {
-  mode.value = m
-  input.value = ''
-  result.value = null
-  errMsg.value = ''
-}
 /// 结果区文本(复制用):进制 4 行;颜色 3 行
 const resultText = computed(() => {
   const r = result.value
@@ -194,7 +199,7 @@ async function doCopy() {
       <div class="seg dt-seg" role="group" aria-label="转换类型">
         <button v-for="m in MODE" :key="m.key" type="button" class="seg-item"
                 :class="{ active: mode === m.key }" :aria-pressed="mode === m.key"
-                @click="switchMode(m.key)">{{ m.name }}</button>
+                @click="mode = m.key">{{ m.name }}</button>
       </div>
       <template v-if="mode === 'radix'">
         <div class="seg dt-seg" role="group" aria-label="输入进制">
